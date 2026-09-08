@@ -63,6 +63,10 @@ include = ["dataforge*"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
+markers = [
+  "integration: runs against the real exports in Data/; skipped when absent",
+  "slow: takes more than a few seconds",
+]
 
 [tool.ruff]
 line-length = 100

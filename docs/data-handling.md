@@ -2,41 +2,31 @@
 
 Read this before adding any dataset to the repository.
 
-## The current state of `Data/`
+## `Data/` — decision on record
 
-`Data/` contains ~50 MB of **real skip-traced records**, committed to git
-history: names, home addresses, phone numbers and email addresses of identifiable
-private individuals across California, Texas and Arizona.
+`Data/` holds ~53 MB of **real skip-traced records** across 18 vendor exports:
+names, home addresses, phone numbers and email addresses of identifiable private
+individuals in California, Texas and Arizona.
 
-This is worth a deliberate decision, because:
+**The decision is to keep these files, as test data.** They are the exports the
+matching engine was built for, and `tests/integration/` now measures the engine
+against them — real vendor column naming from two different schemas, real
+address formatting, and enough volume to catch a performance regression. No
+synthetic fixture covers that ground.
 
-- If the repository is or ever becomes public, that data is published. Deleting
-  the files in a later commit does **not** remove them — they remain in history
-  and in every existing clone and fork.
-- Skip-traced contact data is personal data under the CCPA/CPRA (California) and
-  comparable regimes. Publishing or redistributing it can carry obligations the
-  repository cannot satisfy.
-- It makes every clone of the repository a copy of that data, on machines and in
-  CI runners that were never meant to hold it.
+Two consequences follow, and they are not optional:
 
-The files are left in place because removing them rewrites history and is the
-repository owner's call, not something to do silently. **Decide explicitly.**
+- **The repository must stay private.** The data is in git history. Making the
+  repository public publishes it, and deleting the files in a later commit does
+  not undo that — history, existing clones and any fork keep the data. Treat
+  "make public" as irreversible here.
+- **Access is distribution.** Every collaborator, fork and CI runner with access
+  to the repository holds a copy of this data. Add people deliberately.
 
-### Options
-
-1. **Keep it, and keep the repository private.** Confirm that the visibility
-   setting is private and that fork and collaborator access are limited.
-2. **Remove it from history.** Use `git filter-repo` (or the BFG) to strip
-   `Data/` from every commit, force-push, and treat the previously exposed data
-   as disclosed — anyone who cloned still has it.
-   ```bash
-   git filter-repo --path Data/ --invert-paths
-   ```
-3. **Replace it with a small synthetic sample.** Keep a few hundred fabricated
-   rows in `data/samples/` for development and tests; keep the real exports
-   outside the repository entirely.
-
-Option 3 is what the layout below assumes.
+If the repository ever needs to be published, the exports must be removed from
+history first (`git filter-repo --path Data/ --invert-paths`), the integration
+tests will skip automatically once `Data/` is absent, and any data already
+exposed should be treated as disclosed.
 
 ## Where data belongs
 
@@ -54,12 +44,17 @@ models/       # trained models — *.joblib gitignored
 
 ## Rules
 
-- **Never commit real personal data.** If a dataset contains a real person's
-  name, address, phone number or email, it goes outside the repository.
+- **Never add new personal data.** The exports in `Data/` are a recorded
+  exception, made knowingly and documented above. New datasets containing real
+  people's names, addresses, phone numbers or emails belong in `data/raw/`,
+  which is gitignored.
 - **Never commit credentials.** No passwords or tokens in recipes, `.env`, or
   test fixtures. `.env` is gitignored; `.env.example` holds defaults only.
-- **Keep test fixtures synthetic.** Everything in `tests/` uses fabricated
-  records (see `tests/conftest.py`) — no production rows.
+- **Unit tests stay synthetic.** Everything in `tests/` outside
+  `tests/integration/` uses fabricated records (see `tests/conftest.py`), so the
+  suite is meaningful in a checkout without `Data/`.
+- **Integration tests assert on counts, not contents.** They check how many rows
+  matched, never what a record says, so a CI log never prints personal data.
 - **Mind what you scrape.** Data collected by a spider is subject to the same
   rules as data you were given.
 - **Redact before sharing.** Deduplication summaries are safe to share; the
@@ -67,6 +62,7 @@ models/       # trained models — *.joblib gitignored
 
 ## Retention
 
-Skip-traced contact data has a purpose and a lifetime. Delete raw exports from
-`data/raw/` once the processed output exists, and do not keep contact records
-past the campaign they were acquired for.
+Skip-traced contact data has a purpose and a lifetime. The `Data/` exports are
+retained as a test corpus; working copies do not get the same latitude. Delete
+raw exports from `data/raw/` once the processed output exists, and do not keep
+contact records past the campaign they were acquired for.

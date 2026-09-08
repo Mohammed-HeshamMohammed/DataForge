@@ -96,7 +96,8 @@ Two rules do most of the work in keeping precision high:
 
 Measured on this repository's own data: 58,533 rows across two exports in 2.5
 seconds; exact recall (every duplicate found) and no false positives on a
-half-overlapping split.
+half-overlapping split. These are assertions in `tests/integration/`, not
+one-off measurements.
 
 ## Configuration
 
@@ -115,9 +116,14 @@ Every setting is an environment variable prefixed `DATAFORGE_`, or a line in
 
 ```bash
 pip install -e ".[all,dev]"
-pytest              # 60 tests
+pytest                          # 70 tests
+pytest -m "not integration"     # unit tests only; no Data/ needed
 ruff check . && ruff format --check .
 ```
+
+`tests/integration/` runs the engine against the real exports in `Data/` —
+vendor column naming, real address formatting, and a guard against a return to
+quadratic matching. It skips automatically when `Data/` is absent.
 
 ## License
 

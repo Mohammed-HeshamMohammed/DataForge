@@ -41,5 +41,10 @@ jobs:
         run: mypy dataforge
         continue-on-error: true
 
-      - name: Test
-        run: pytest --cov=dataforge --cov-report=term-missing
+      # Split so a failure says whether the engine's logic broke or only its
+      # behaviour on the real exports did.
+      - name: Unit tests
+        run: pytest -m "not integration" --cov=dataforge --cov-report=term-missing
+
+      - name: Integration tests (real exports in Data/)
+        run: pytest -m integration

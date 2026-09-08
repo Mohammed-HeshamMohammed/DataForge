@@ -105,7 +105,8 @@ another's.
 
 ## Measured behaviour
 
-On this repository's `Data/` exports:
+Each row below is asserted in `tests/integration/test_real_exports.py`,
+running against the real exports in `Data/`:
 
 | Case | Result |
 | --- | --- |
@@ -113,3 +114,5 @@ On this repository's `Data/` exports:
 | One export deduplicated against itself | every row matched, exactly |
 | Half-overlapping split (1,000 shared rows) | exactly 1,000 removed |
 | Within a single clean export | 0 false positives |
+| Two near-identical exports combined | collapses to one file's worth of rows |
+| A record with no phone, email or address | left alone — nothing to block on |
