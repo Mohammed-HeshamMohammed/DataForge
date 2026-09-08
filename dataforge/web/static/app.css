@@ -1,0 +1,24 @@
+/* HTMX shows elements carrying .htmx-indicator only while a request is in flight. */
+.htmx-indicator {
+  opacity: 0;
+  transition: opacity 150ms ease-in;
+}
+.htmx-request .htmx-indicator,
+.htmx-request.htmx-indicator {
+  opacity: 1;
+}
+
+/* The dedupe endpoint returns JSON; render it readably in the result panel. */
+#dedupe-result:not(:empty) {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.75rem;
+  line-height: 1.5;
+  background: #fff;
+  border: 1px solid #e2e8f0;
+  border-radius: 0.5rem;
+  padding: 1rem;
+  max-height: 28rem;
+  overflow: auto;
+}

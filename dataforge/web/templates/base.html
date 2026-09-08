@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en" class="h-full">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}DataForge{% endblock %}</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body class="h-full bg-slate-50 text-slate-900 antialiased">
+  <header class="border-b border-slate-200 bg-white">
+    <div class="mx-auto flex max-w-5xl items-center justify-between px-6 py-4">
+      <a href="/" class="flex items-baseline gap-2">
+        <span class="text-lg font-semibold tracking-tight">DataForge</span>
+        <span class="text-xs text-slate-500">v{{ version }}</span>
+      </a>
+      <nav class="flex gap-4 text-sm text-slate-600">
+        <a class="hover:text-slate-900" href="/docs">API</a>
+        <a class="hover:text-slate-900" href="/health">Health</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="mx-auto max-w-5xl px-6 py-10">
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer class="mx-auto max-w-5xl px-6 pb-10 text-xs text-slate-400">
+    Scrape, match, deduplicate and enter records.
+  </footer>
+</body>
+</html>

@@ -1,4 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
 
-.idea/workspace.xml
+# Virtual environments
+myvenv/
+venv/
+.venv/
+env/
 
-*.pyc
+# IDE
+.idea/
+.vscode/
+
+# Tooling caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Local config and secrets
+.env
+.env.*
+!.env.example
+
+# Runtime artifacts
+artifacts/
+outputs/
+*.log
+models/*.joblib
+
+# Scraped / scratch data (see docs/data-handling.md before committing any dataset)
+data/raw/
+data/interim/

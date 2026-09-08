@@ -1,0 +1,33 @@
+# Example data-entry recipe. Copy and edit for a real target system.
+# Values in braces are filled from the columns of the record being entered.
+name: example-crm-lead
+url: https://crm.example.com/leads/new
+
+# A record missing any of these is skipped rather than half-submitted.
+required_fields:
+  - "Owner 1 First Name"
+  - "Owner 1 Last Name"
+
+steps:
+  - action: type
+    selector: "#first_name"
+    value: "{Owner 1 First Name}"
+  - action: type
+    selector: "#last_name"
+    value: "{Owner 1 Last Name}"
+  - action: type
+    selector: "#phone"
+    value: "{Phone 1}"
+    optional: true
+  - action: type
+    selector: "#email"
+    value: "{Email 1}"
+    optional: true
+  - action: select
+    selector: "#state"
+    value: "{State}"
+    optional: true
+  - action: click
+    selector: "button[type=submit]"
+  - action: wait_for
+    selector: ".flash-success"

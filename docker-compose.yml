@@ -1,0 +1,21 @@
+services:
+  web:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      DATAFORGE_WEB_HOST: 0.0.0.0
+      # Point browser automation at the Selenium container below.
+      DATAFORGE_SELENIUM_REMOTE_URL: http://selenium:4444/wd/hub
+    volumes:
+      - ./data:/app/data
+      - ./models:/app/models
+      - ./artifacts:/app/artifacts
+    depends_on:
+      - selenium
+
+  selenium:
+    image: selenium/standalone-chromium:latest
+    shm_size: 2gb
+    ports:
+      - "4444:4444"
