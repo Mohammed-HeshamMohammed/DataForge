@@ -1,0 +1,20 @@
+{
+  "name": "dataforge",
+  "private": true,
+  "version": "0.1.0",
+  "description": "DataForge local-first desktop platform",
+  "scripts": {
+    "setup:desktop": "npm install --prefix apps/desktop",
+    "dev": "npm run dev --prefix apps/desktop",
+    "dev:tauri": "npm run dev:tauri --prefix apps/desktop",
+    "build": "npm run build --prefix apps/desktop",
+    "build:tauri": "npm run build:tauri --prefix apps/desktop",
+    "typecheck": "npm run typecheck --prefix apps/desktop",
+    "test:desktop": "npm run test --prefix apps/desktop",
+    "test:python": "cd services/application && python -m pytest -q && cd ../../workers/scraping && python -m pytest -q && cd ../matching && python -m pytest -q",
+    "dev:bridge": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/dev-bridge.ps1"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

@@ -1,0 +1,131 @@
+{
+  "id": "hackernews.search_api",
+  "version": "1.0.0",
+  "display_name": "Hacker News — Search (Algolia API)",
+  "category": "news_community",
+  "provider": {
+    "name": "Hacker News",
+    "homepage": "https://news.ycombinator.com/",
+    "api_docs": "https://hn.algolia.com/api"
+  },
+  "page_type": "api_collection",
+  "status": "active",
+  "owner": "dataforge-core",
+  "maintenance_review_date": "2027-03-01",
+  "description": "One record per story from the documented HN Search API. Start URL example: https://hn.algolia.com/api/v1/search?query=data&tags=story",
+  "url_scope": {
+    "allowed_hosts": [
+      "hn.algolia.com"
+    ],
+    "allowed_path_patterns": [
+      "^/api/v1/search(_by_date)?$"
+    ]
+  },
+  "policy": {
+    "collection_basis": "public_api",
+    "requires_user_authorization_acknowledgement": true,
+    "robots_policy": "respect",
+    "authentication": "forbidden",
+    "captcha_or_access_challenge": "stop",
+    "paywall_or_rate_limit": "stop",
+    "personal_data_classification": "limited",
+    "notes": "Documented public API. Follow the provider's API terms and rate limits; use only for data you are authorized to process."
+  },
+  "strategy": {
+    "preferred": "api",
+    "allowed": [
+      "api"
+    ],
+    "api_integration": null
+  },
+  "request_limits": {
+    "max_concurrency": 1,
+    "min_delay_ms": 1000,
+    "max_pages_default": 5,
+    "max_records_default": 250,
+    "max_duration_seconds": 300
+  },
+  "extraction": {
+    "item_path": "hits",
+    "fields": [
+      {
+        "key": "story_id",
+        "type": "string",
+        "required": true,
+        "path": "objectID"
+      },
+      {
+        "key": "title",
+        "type": "string",
+        "required": true,
+        "path": "title",
+        "transforms": [
+          "trim"
+        ]
+      },
+      {
+        "key": "url",
+        "type": "url",
+        "path": "url"
+      },
+      {
+        "key": "author",
+        "type": "string",
+        "path": "author"
+      },
+      {
+        "key": "points",
+        "type": "integer",
+        "path": "points"
+      },
+      {
+        "key": "comments",
+        "type": "integer",
+        "path": "num_comments"
+      },
+      {
+        "key": "created_at",
+        "type": "string",
+        "path": "created_at"
+      }
+    ]
+  },
+  "pagination": {
+    "type": "page_parameter",
+    "parameter": "page",
+    "start": 0,
+    "stop_conditions": [
+      "max_pages",
+      "max_records",
+      "no_new_records"
+    ]
+  },
+  "validation": {
+    "minimum_record_coverage": 0.8,
+    "unique_by": [
+      "story_id"
+    ]
+  },
+  "field_mappings": {
+    "canonical_entity": "article",
+    "output": {
+      "title": "title",
+      "source_url": "url",
+      "author": "author",
+      "published_at": "created_at"
+    }
+  },
+  "health": {
+    "fixture_tests": [
+      "fixtures/hackernews/search.json"
+    ],
+    "expected": {
+      "minimum_records": 2,
+      "required_field_coverage": 0.95
+    },
+    "live_check": {
+      "enabled": false,
+      "only_when_permitted": true
+    }
+  }
+}

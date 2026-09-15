@@ -1,0 +1,106 @@
+{
+  "id": "generic.html_table",
+  "version": "1.0.0",
+  "display_name": "Generic Table",
+  "page_type": "table",
+  "description": "One record per data row of a public HTML table.",
+  "status": "deprecated",
+  "owner": "dataforge-core",
+  "maintenance_review_date": "2027-03-01",
+  "provider": {
+    "name": "Generic"
+  },
+  "category": "generic",
+  "policy": {
+    "collection_basis": "public_html",
+    "requires_user_authorization_acknowledgement": true,
+    "robots_policy": "respect",
+    "authentication": "forbidden",
+    "captcha_or_access_challenge": "stop",
+    "paywall_or_rate_limit": "stop",
+    "personal_data_classification": "unknown",
+    "notes": "Use only for data you are authorized to collect and process."
+  },
+  "request_limits": {
+    "max_concurrency": 1,
+    "min_delay_ms": 2000,
+    "max_pages_default": 10,
+    "max_records_default": 500,
+    "max_duration_seconds": 900
+  },
+  "url_scope": {
+    "allowed_hosts": [],
+    "user_supplied_host": true,
+    "allowed_path_patterns": []
+  },
+  "strategy": {
+    "preferred": "http",
+    "allowed": [
+      "http"
+    ]
+  },
+  "extraction": {
+    "record_root": {
+      "css": "table tr:has(td)"
+    },
+    "fields": [
+      {
+        "key": "column_1",
+        "type": "string",
+        "required": true,
+        "selectors": [
+          {
+            "css": "td:nth-of-type(1)"
+          }
+        ],
+        "transforms": [
+          "trim"
+        ]
+      },
+      {
+        "key": "column_2",
+        "type": "string",
+        "selectors": [
+          {
+            "css": "td:nth-of-type(2)"
+          }
+        ],
+        "transforms": [
+          "trim"
+        ]
+      },
+      {
+        "key": "column_3",
+        "type": "string",
+        "selectors": [
+          {
+            "css": "td:nth-of-type(3)"
+          }
+        ],
+        "transforms": [
+          "trim"
+        ]
+      }
+    ]
+  },
+  "pagination": {
+    "type": "none"
+  },
+  "validation": {
+    "minimum_record_coverage": 0.7,
+    "unique_by": []
+  },
+  "field_mappings": {
+    "canonical_entity": "custom",
+    "output": {}
+  },
+  "health": {
+    "fixture_tests": [
+      "fixtures/generic/html-table.html"
+    ],
+    "expected": {
+      "minimum_records": 2
+    }
+  },
+  "successor": "generic.html_table@1.1.0"
+}

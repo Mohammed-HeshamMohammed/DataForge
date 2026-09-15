@@ -1,0 +1,24 @@
+{
+  "hits": [
+    {
+      "objectID": "9001",
+      "title": "Fixture story one",
+      "url": "https://example.invalid/story-1",
+      "author": "fixture_user",
+      "points": 42,
+      "num_comments": 7,
+      "created_at": "2026-04-05T06:07:08Z"
+    },
+    {
+      "objectID": "9002",
+      "title": "Fixture story two",
+      "url": "https://example.invalid/story-2",
+      "author": "fixture_user2",
+      "points": 13,
+      "num_comments": 2,
+      "created_at": "2026-04-06T06:07:08Z"
+    }
+  ],
+  "page": 0,
+  "nbPages": 1
+}

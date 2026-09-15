@@ -1,0 +1,69 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: python -m pip install openpyxl httpx beautifulsoup4 rapidfuzz cryptography pytest
+      - name: Application, scraping, and matching tests (includes migration and contract tests)
+        run: npm run test:python
+
+  desktop-ui:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+      - run: npm ci --prefix apps/desktop
+      - run: npm run typecheck
+      - run: npm run test:desktop
+      - run: npm run build
+
+  desktop-host:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: python -m pip install openpyxl httpx beautifulsoup4 rapidfuzz cryptography
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm ci --prefix apps/desktop && npm run build
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri
+      - name: Host tests (IPC validation, sidecar round trip, Studio guards, credential store, update pinning)
+        working-directory: apps/desktop/src-tauri
+        run: cargo test
+
+  security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: python -m pip install pip-audit
+      - run: pip-audit openpyxl httpx beautifulsoup4 rapidfuzz cryptography
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm ci --prefix apps/desktop && npm audit --prefix apps/desktop --audit-level=high

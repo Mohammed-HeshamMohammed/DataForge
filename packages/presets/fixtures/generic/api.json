@@ -1,0 +1,15 @@
+{
+  "items": [
+    {
+      "id": "a1",
+      "name": "Fixture one",
+      "url": "https://example.invalid/a1"
+    },
+    {
+      "id": "a2",
+      "name": "Fixture two",
+      "url": "https://example.invalid/a2"
+    }
+  ],
+  "next_cursor": null
+}

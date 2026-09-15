@@ -1,0 +1,41 @@
+{
+  "batchcomplete": "",
+  "continue": {
+    "sroffset": 3,
+    "continue": "-||"
+  },
+  "query": {
+    "searchinfo": {
+      "totalhits": 3
+    },
+    "search": [
+      {
+        "ns": 0,
+        "title": "Fixture topic one",
+        "pageid": 1001,
+        "size": 1200,
+        "wordcount": 210,
+        "snippet": "A <span class=\"searchmatch\">fixture</span> snippet",
+        "timestamp": "2026-01-02T03:04:05Z"
+      },
+      {
+        "ns": 0,
+        "title": "Fixture topic two",
+        "pageid": 1002,
+        "size": 900,
+        "wordcount": 150,
+        "snippet": "Another snippet",
+        "timestamp": "2026-02-03T04:05:06Z"
+      },
+      {
+        "ns": 0,
+        "title": "Fixture topic three",
+        "pageid": 1003,
+        "size": 700,
+        "wordcount": 90,
+        "snippet": "Third snippet",
+        "timestamp": "2026-03-04T05:06:07Z"
+      }
+    ]
+  }
+}
