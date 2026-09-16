@@ -1,0 +1,87 @@
+{
+  "id": "generic.crawl_structured",
+  "version": "1.0.0",
+  "display_name": "Site crawl: structured data",
+  "page_type": "crawl",
+  "description": "Follows links within one site (depth 2 by default) and reads schema.org data from matching pages.",
+  "status": "active",
+  "owner": "dataforge-core",
+  "maintenance_review_date": "2027-03-01",
+  "provider": {
+    "name": "Generic"
+  },
+  "category": "generic",
+  "policy": {
+    "collection_basis": "public_html",
+    "requires_user_authorization_acknowledgement": true,
+    "robots_policy": "respect",
+    "authentication": "forbidden",
+    "captcha_or_access_challenge": "stop",
+    "paywall_or_rate_limit": "stop",
+    "personal_data_classification": "unknown",
+    "notes": "Use only for data you are authorized to collect and process."
+  },
+  "request_limits": {
+    "max_concurrency": 1,
+    "min_delay_ms": 2000,
+    "max_pages_default": 1000,
+    "max_records_default": 20000,
+    "max_duration_seconds": 14400
+  },
+  "url_scope": {
+    "allowed_hosts": [],
+    "user_supplied_host": true,
+    "allowed_path_patterns": []
+  },
+  "strategy": {
+    "preferred": "http",
+    "allowed": [
+      "http"
+    ],
+    "prohibited_escalations": [
+      "access_denied",
+      "captcha",
+      "login_required",
+      "robots_disallowed"
+    ]
+  },
+  "pagination": {
+    "type": "none"
+  },
+  "discovery": {
+    "mode": "crawl",
+    "crawl": {
+      "max_depth": 2,
+      "same_host_only": true,
+      "link_pattern": "",
+      "extract_pattern": ""
+    }
+  },
+  "extraction": {
+    "mode": "structured_data",
+    "schema_types": [
+      "Product",
+      "LocalBusiness",
+      "Organization",
+      "JobPosting",
+      "RealEstateListing",
+      "Event",
+      "Article",
+      "Book"
+    ],
+    "fields": []
+  },
+  "validation": {
+    "minimum_record_coverage": 0.5,
+    "unique_by": []
+  },
+  "engine": "auto",
+  "health": {
+    "fixture_tests": [
+      "fixtures/generic/structured.html"
+    ],
+    "expected": {
+      "minimum_records": 2
+    }
+  }
+}

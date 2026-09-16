@@ -64,8 +64,14 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--http", type=int, help="serve the command API on 127.0.0.1:<port>")
     parser.add_argument("--resources", type=Path, default=REPO_ROOT, help="directory containing migrations/ and packages/presets/")
+    parser.add_argument("--engine", choices=["scrapy"], help="run a collection engine child process instead of the service")
+    parser.add_argument("--job", type=Path, help="engine job file (with --engine)")
     args = parser.parse_args()
-    service = Service(args.resources / "migrations", args.resources / "packages" / "presets")
+    if args.engine == "scrapy":
+        from dataforge_scraping.engines.scrapy_engine import run as run_scrapy
+
+        raise SystemExit(run_scrapy(str(args.job)))
+    service = Service(args.resources / "migrations", args.resources / "packages" / "presets", start_watch_scheduler=True)
     service.open_recent()
     log("info", "service.started", mode="http" if args.http else "stdio")
     if args.http:

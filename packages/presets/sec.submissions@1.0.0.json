@@ -1,0 +1,103 @@
+{
+  "id": "sec.submissions",
+  "version": "1.0.0",
+  "display_name": "SEC EDGAR: company filings",
+  "page_type": "api_collection",
+  "description": "Recent filings for one company from SEC EDGAR (data.sec.gov). SEC requires a contact identity in the User-Agent and at most 10 requests per second.",
+  "status": "active",
+  "owner": "dataforge-core",
+  "maintenance_review_date": "2027-03-01",
+  "provider": {
+    "name": "U.S. SEC"
+  },
+  "category": "open_data",
+  "policy": {
+    "collection_basis": "public_api",
+    "requires_user_authorization_acknowledgement": true,
+    "robots_policy": "respect",
+    "authentication": "forbidden",
+    "captcha_or_access_challenge": "stop",
+    "paywall_or_rate_limit": "stop",
+    "personal_data_classification": "unknown",
+    "notes": "Use only for data you are authorized to collect and process."
+  },
+  "request_limits": {
+    "max_concurrency": 1,
+    "min_delay_ms": 200,
+    "max_pages_default": 1,
+    "max_records_default": 5000,
+    "max_duration_seconds": 1800,
+    "max_requests_per_second": 5
+  },
+  "url_scope": {
+    "allowed_hosts": [
+      "data.sec.gov"
+    ],
+    "allowed_path_patterns": []
+  },
+  "strategy": {
+    "preferred": "api",
+    "allowed": [
+      "api"
+    ]
+  },
+  "pagination": {
+    "type": "none"
+  },
+  "requires_contact_user_agent": true,
+  "validation": {
+    "unique_by": [
+      "accession_number"
+    ]
+  },
+  "health": {
+    "fixture_tests": [
+      "fixtures/open_data/sec_submissions.json"
+    ],
+    "expected": {
+      "minimum_records": 2
+    }
+  },
+  "request": {
+    "method": "GET",
+    "url_template": "https://data.sec.gov/submissions/CIK{{cik}}.json",
+    "variables": {
+      "cik": {
+        "type": "string",
+        "required": true,
+        "pattern": "\\d{10}"
+      }
+    }
+  },
+  "extraction": {
+    "item_path": "filings.recent",
+    "columnar": true,
+    "fields": [
+      {
+        "key": "accession_number",
+        "path": "accessionNumber",
+        "required": true
+      },
+      {
+        "key": "form",
+        "path": "form"
+      },
+      {
+        "key": "filing_date",
+        "path": "filingDate"
+      },
+      {
+        "key": "report_date",
+        "path": "reportDate"
+      },
+      {
+        "key": "primary_document",
+        "path": "primaryDocument"
+      },
+      {
+        "key": "description",
+        "path": "primaryDocDescription"
+      }
+    ]
+  }
+}

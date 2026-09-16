@@ -10,20 +10,15 @@ from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
 from typing import Callable
 from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlunparse
-from urllib.robotparser import RobotFileParser
 
-import httpx
 from bs4 import BeautifulSoup, Tag
 
-USER_AGENT = "DataForge/0.1 (local desktop; permitted collection)"
+from .errors import PolicyViolation
+from .fetch import APP_USER_AGENT as USER_AGENT  # noqa: F401 - public alias
+from .fetch import LOCAL_HOSTS as _LOCAL_HOSTS
+
 TEST_MODE_MAX_RECORDS = 10
-_LOCAL_HOSTS = {"127.0.0.1", "localhost"}
-_ACCESS_STOP_CODES = {401, 402, 403, 407, 408, 425, 429, 451}
-_CHALLENGE_MARKERS = ("g-recaptcha", "h-captcha", "cf-challenge", "/cdn-cgi/challenge-platform", "captcha-delivery")
-
-
-class PolicyViolation(ValueError):
-    """Raised when a request falls outside the declared collection policy. Never escalate; stop."""
+EXTRACTION_MODES = ("selectors", "structured_data", "article", "document_tables", "api")
 
 
 @dataclass(frozen=True)
@@ -38,155 +33,22 @@ class ScrapeResult:
     warnings: tuple[str, ...] = ()
     stop_reason: str = "completed"
     strategy_rationale: str = ""
+    engine: str = "httpx"
+    signals: tuple[dict, ...] = ()
+    cached_responses: int = 0
+    discovered_urls: int = 0
+    files: tuple[dict, ...] = ()
 
 
 def extract_html(url: str, preset: dict[str, object], max_records: int | None = None, **kwargs) -> ScrapeResult:
     return extract_html_pages(url, preset, max_records=max_records, **kwargs)
 
 
-def extract_html_pages(
-    url: str,
-    preset: dict[str, object],
-    max_records: int | None = None,
-    max_pages: int | None = None,
-    should_stop: Callable[[], bool] = lambda: False,
-    on_page: Callable[[dict], None] = lambda event: None,
-    client: httpx.Client | None = None,
-    credential: str | None = None,
-) -> ScrapeResult:
-    validate_url(url, preset)
-    auth_headers = api_auth_headers(preset, credential)
-    policy = preset.get("policy", {})
-    if not isinstance(policy, dict) or policy.get("requires_user_authorization_acknowledgement") is not True:
-        raise PolicyViolation("Preset requires an explicit authorization acknowledgement")
-    strategy = preset.get("strategy", {}).get("preferred", "http")
-    if strategy not in ("http", "api"):
-        raise PolicyViolation(f"Strategy {strategy!r} is not available in the HTTP runtime; use Scrape Studio for rendered pages")
+def extract_html_pages(url: str, preset: dict[str, object], max_records: int | None = None, max_pages: int | None = None, **kwargs) -> ScrapeResult:
+    """Collect records with the in-process httpx engine (all modes). See runtime.collect."""
+    from .runtime import collect
 
-    limits = preset.get("request_limits", {}) if isinstance(preset.get("request_limits"), dict) else {}
-    configured_records = int(limits.get("max_records_default", 500))
-    record_limit = min(max_records or configured_records, configured_records)
-    configured_pages = int(limits.get("max_pages_default", 10))
-    page_limit = min(max_pages or configured_pages, configured_pages)
-    delay_seconds = int(limits.get("min_delay_ms", 0)) / 1000
-    deadline = time.monotonic() + int(limits.get("max_duration_seconds", 900))
-
-    extraction = preset.get("extraction", {}) if isinstance(preset.get("extraction"), dict) else {}
-    fields = extraction.get("fields", [])
-    if not isinstance(fields, list):
-        raise ValueError("Preset extraction.fields must be a list")
-    pagination = preset.get("pagination", {}) if isinstance(preset.get("pagination"), dict) else {}
-
-    records: list[dict[str, object]] = []
-    rejected = duplicates = candidate_count = pages_fetched = 0
-    warnings: list[str] = []
-    unique_by = _unique_fields(preset)
-    seen_keys: set[tuple[object, ...]] = set()
-    visited_urls: set[str] = set()
-    seen_bodies: set[str] = set()
-    stop_reason = "completed"
-    current_url: str | None = url
-    owns_client = client is None
-    client = client or httpx.Client(timeout=20.0, headers={"User-Agent": USER_AGENT, **auth_headers})
-    robots: dict[str, RobotFileParser | None] = {}
-    try:
-        while current_url:
-            if len(records) >= record_limit:
-                stop_reason = "max_records"
-                break
-            if pages_fetched >= page_limit:
-                stop_reason = "max_pages"
-                break
-            if time.monotonic() > deadline:
-                stop_reason = "max_duration"
-                break
-            canonical = canonicalize_url(current_url, preset)
-            if canonical in visited_urls:
-                stop_reason = "repeated_canonical_url"
-                break
-            if should_stop():
-                stop_reason = "cancelled"
-                break
-            if pages_fetched and delay_seconds:
-                time.sleep(delay_seconds)
-            visited_urls.add(canonical)
-            _check_robots(client, current_url, robots, preset)
-            response = _get(client, current_url, preset)
-            signature = hashlib.sha256(response.content).hexdigest()
-            if signature in seen_bodies:
-                stop_reason = "repeated_response"
-                break
-            seen_bodies.add(signature)
-
-            if strategy == "api":
-                document = response.json()
-                candidates = _extract_json_records(document, current_url, extraction, fields, preset)
-            else:
-                soup = BeautifulSoup(response.text, "html.parser")
-                root_css = (extraction.get("record_root") or {}).get("css")
-                if not isinstance(root_css, str):
-                    raise ValueError("Preset must define extraction.record_root.css")
-                if pagination.get("type") == "detail_links":
-                    candidates = []
-                    for detail_url in _detail_urls(soup, current_url, pagination, preset, warnings):
-                        canonical_detail = canonicalize_url(detail_url, preset)
-                        if len(records) + len(candidates) >= record_limit or should_stop() or time.monotonic() > deadline:
-                            break
-                        if canonical_detail in visited_urls:
-                            continue
-                        visited_urls.add(canonical_detail)
-                        if delay_seconds:
-                            time.sleep(delay_seconds)
-                        _check_robots(client, detail_url, robots, preset)
-                        detail = BeautifulSoup(_get(client, detail_url, preset).text, "html.parser")
-                        candidates.extend(_extract_records(detail, detail_url, root_css, fields, preset)[:1])
-                else:
-                    candidates = _extract_records(soup, current_url, root_css, fields, preset)
-            candidate_count += len(candidates)
-            new_records = 0
-            for candidate in candidates:
-                if len(records) >= record_limit:
-                    break
-                errors = _validate_record(candidate, fields)
-                if errors:
-                    rejected += 1
-                    warnings.extend(f"record rejected: {error}" for error in errors)
-                    continue
-                key = tuple(candidate.get(field) for field in unique_by)
-                if unique_by and all(value not in (None, "") for value in key):
-                    if key in seen_keys:
-                        duplicates += 1
-                        continue
-                    seen_keys.add(key)
-                records.append(candidate)
-                new_records += 1
-            pages_fetched += 1
-            on_page({"page": pages_fetched, "url": canonical, "candidates": len(candidates), "new_records": new_records, "total_records": len(records)})
-            if new_records == 0 and pages_fetched > 1:
-                stop_reason = "no_new_records"
-                break
-            if strategy == "api":
-                current_url = _next_api_url(document, current_url, pagination, pages_fetched)
-            else:
-                current_url = _next_html_url(soup, current_url, pagination, pages_fetched)
-            if current_url:
-                validate_url(current_url, preset)
-            elif pagination.get("type", "none") not in ("none", None) and len(records) < record_limit:
-                stop_reason = "missing_continuation"
-    finally:
-        if owns_client:
-            client.close()
-
-    required = [f["key"] for f in fields if isinstance(f, dict) and f.get("required") is True]
-    if required and candidate_count:
-        coverage = sum(all(r.get(k) not in (None, "") for k in required) for r in records) / candidate_count
-        minimum = _minimum_coverage(preset)
-        if coverage < minimum:
-            warnings.append(f"required field coverage {coverage:.2f} below minimum {minimum:.2f}")
-    return ScrapeResult(
-        tuple(records[:record_limit]), url, datetime.now(timezone.utc).isoformat(), strategy, pages_fetched,
-        rejected, duplicates, tuple(dict.fromkeys(warnings)), stop_reason, strategy_rationale(preset),
-    )
+    return collect(url, preset, max_records=max_records, max_pages=max_pages, **kwargs)
 
 
 def api_auth_headers(preset: dict[str, object], credential: str | None) -> dict[str, str]:
@@ -195,27 +57,110 @@ def api_auth_headers(preset: dict[str, object], credential: str | None) -> dict[
     if not isinstance(integration, dict) or not integration.get("auth"):
         return {}
     if not credential:
+        if integration.get("optional"):
+            return {}
         raise PolicyViolation("This API preset requires a saved credential; add one in Settings")
     if integration["auth"] == "bearer":
         return {"Authorization": f"Bearer {credential}"}
+    if integration["auth"] == "query_param":
+        return {}  # added to each in-scope request URL by the runtime, never to stored URLs
     return {str(integration["header_name"]): credential}
 
 
-def extract_document(text: str, source_url: str, preset: dict[str, object]) -> tuple[list[dict[str, object]], list[dict[str, object]], list[str]]:
-    """Extract and validate records from an already-loaded document (fixtures, rendered WebView pages).
+def extract_document(text: str | bytes, source_url: str, preset: dict[str, object]) -> tuple[list[dict[str, object]], list[dict[str, object]], list[str]]:
+    """Extract and validate records from an already-loaded document (fixtures, rendered WebView pages,
+    archive replays). Binary fixtures may be passed as bytes or as a "base64:" string. No network access.
 
-    Returns (valid records, rejected candidates, warnings). No network access.
+    Returns (valid records, rejected candidates, warnings).
     """
+    if isinstance(text, str) and text.startswith("base64:"):
+        import base64
+
+        text = base64.b64decode(text[7:])
+    content = text if isinstance(text, bytes) else text.encode("utf-8")
+    body = text.decode("utf-8", "replace") if isinstance(text, bytes) else text
+    content_type = "application/pdf" if content[:5] == b"%PDF-" else "application/json" if extraction_mode(preset) == "api" else "text/html"
+    warnings: list[str] = []
+    if (preset.get("discovery") or {}).get("mode") == "feed" and ((preset.get("discovery") or {}).get("feed") or {}).get("records", True):
+        from .discovery import parse_feed
+        from .runtime import _feed_record
+
+        candidates = [_feed_record(entry, source_url, preset) for entry in parse_feed(content, source_url)]
+        valid, rejected, more = validate_candidates(candidates, preset)
+        return valid, rejected, more
+    candidates = extract_page(body, content, content_type, source_url, preset, warnings)
+    valid, rejected, more = validate_candidates(candidates, preset)
+    return valid, rejected, list(dict.fromkeys(warnings + more))
+
+
+def extraction_mode(preset: dict[str, object]) -> str:
+    extraction = preset.get("extraction") if isinstance(preset.get("extraction"), dict) else {}
+    if (preset.get("strategy") or {}).get("preferred") == "api":
+        return "api"
+    return str(extraction.get("mode") or "selectors")
+
+
+def extract_page(body: str, content: bytes, content_type: str, url: str, preset: dict[str, object], warnings: list[str]) -> list[dict[str, object]]:
+    """Candidate records from one fetched page in the preset's extraction mode. Shared by both engines,
+    health checks, and archive replays, so every path produces identical records."""
     extraction = preset.get("extraction", {}) if isinstance(preset.get("extraction"), dict) else {}
-    fields = extraction.get("fields", [])
-    if preset.get("strategy", {}).get("preferred") == "api":
-        candidates = _extract_json_records(json.loads(text), source_url, extraction, fields, preset)
-    else:
-        root_css = (extraction.get("record_root") or {}).get("css")
-        if not isinstance(root_css, str):
-            raise ValueError("Preset must define extraction.record_root.css")
-        candidates = _extract_records(BeautifulSoup(text, "html.parser"), source_url, root_css, fields, preset)
-    return validate_candidates(candidates, preset)
+    fields = extraction.get("fields", []) or []
+    mode = extraction_mode(preset)
+    if mode == "api":
+        return _extract_json_records(json.loads(body), url, extraction, fields, preset)
+    if mode == "structured_data":
+        from .structured import extract_structured_records
+
+        records = extract_structured_records(body, url, extraction)
+        return [_with_provenance(_project_fields(record, fields, url, preset), url, preset) for record in records]
+    if mode == "article":
+        from .structured import extract_article
+
+        record = extract_article(body, url, extraction)
+        if record is None:
+            warnings.append("no article text found on a page")
+            return []
+        return [_with_provenance(_project_fields(record, fields, url, preset), url, preset)]
+    if mode == "document_tables":
+        if content[:5] != b"%PDF-":
+            return []  # listing pages only contribute file links
+        from .documents import pdf_tables
+
+        rows, more = pdf_tables(content, url, extraction)
+        warnings.extend(more)
+        return [_with_provenance(_project_fields(row, fields, url, preset), url, preset) for row in rows]
+    root = extraction.get("record_root") or {}
+    root_css, root_xpath = root.get("css"), root.get("xpath")
+    if not isinstance(root_css, str) and not isinstance(root_xpath, str):
+        raise ValueError("Preset must define extraction.record_root.css")
+    parser = _parser_for(extraction, fields)
+    if parser == "parsel":
+        return _extract_records_parsel(body, url, root_css, root_xpath, fields, preset)
+    if parser == "selectolax" and isinstance(root_css, str):
+        return _extract_records_selectolax(body, url, root_css, fields, preset)
+    return _extract_records(BeautifulSoup(body, "html.parser"), url, root_css, fields, preset)
+
+
+def _project_fields(record: dict[str, object], fields: list, url: str, preset: dict) -> dict[str, object]:
+    """Selector-free modes: without declared fields keep every mapped value; with fields, pick and transform."""
+    if not fields:
+        return dict(record)
+    projected: dict[str, object] = {}
+    for field in fields:
+        value = record.get(field.get("path", field["key"]))
+        if value not in (None, ""):
+            projected[field["key"]] = apply_field(value if isinstance(value, (int, float)) else str(value), field, url, preset)
+    for key in ("structured_conflicts", "structured_syntax", "schema_type", "source_page", "source_table", "source_row"):
+        if key in record:
+            projected[key] = record[key]
+    return projected
+
+
+def _parser_for(extraction: dict, fields: list) -> str:
+    has_xpath = any(isinstance(sel, dict) and sel.get("xpath") for f in fields if isinstance(f, dict) for sel in f.get("selectors", []))
+    if has_xpath or (extraction.get("record_root") or {}).get("xpath"):
+        return "parsel"
+    return str(extraction.get("parser") or "bs4")
 
 
 def validate_candidates(candidates: list[dict[str, object]], preset: dict[str, object]) -> tuple[list[dict[str, object]], list[dict[str, object]], list[str]]:
@@ -274,46 +219,6 @@ def canonicalize_url(url: str, preset: dict[str, object]) -> str:
     return urlunparse((parsed.scheme, (parsed.hostname or "") + (f":{parsed.port}" if parsed.port else ""), parsed.path or "/", "", query, ""))
 
 
-def _get(client: httpx.Client, url: str, preset: dict[str, object]) -> httpx.Response:
-    for _ in range(5):
-        response = client.get(url, follow_redirects=False)
-        if response.status_code in _ACCESS_STOP_CODES:
-            raise PolicyViolation(f"Collection stopped on access or rate-limit response: {response.status_code}")
-        if response.is_redirect:
-            url = urljoin(url, response.headers.get("location", ""))
-            validate_url(url, preset)  # never follow a redirect out of scope
-            continue
-        response.raise_for_status()
-        lowered = response.text[:200_000].lower()
-        if any(marker in lowered for marker in _CHALLENGE_MARKERS):
-            raise PolicyViolation("Collection stopped: the page presented an access challenge (CAPTCHA/bot check)")
-        return response
-    raise PolicyViolation("Collection stopped: too many redirects")
-
-
-def _check_robots(client: httpx.Client, url: str, cache: dict[str, RobotFileParser | None], preset: dict[str, object]) -> None:
-    parsed = urlparse(url)
-    policy = preset.get("policy", {}) if isinstance(preset.get("policy"), dict) else {}
-    if parsed.hostname in _LOCAL_HOSTS or policy.get("robots_policy", "respect") != "respect":
-        return
-    origin = f"{parsed.scheme}://{parsed.netloc}"
-    if origin not in cache:
-        parser = RobotFileParser()
-        try:
-            response = client.get(origin + "/robots.txt", follow_redirects=True)
-        except httpx.HTTPError:
-            response = None
-        if response is not None and response.status_code in (401, 403):
-            parser.disallow_all = True
-        elif response is not None and response.status_code == 200:
-            parser.parse(response.text.splitlines())
-        else:
-            parser.allow_all = True
-        cache[origin] = parser
-    if not cache[origin].can_fetch(USER_AGENT, url):
-        raise PolicyViolation("Collection stopped: robots.txt disallows this URL")
-
-
 _PSEUDO = re.compile(r"::(text|attr\(([\w-]+)\))\s*$")
 
 
@@ -337,6 +242,8 @@ def _select_value(root: Tag, selector: dict[str, object], base_url: str) -> str 
 
 def _extract_records(soup: BeautifulSoup, source_url: str, root_css: str, fields: list[object], preset: dict[str, object]) -> list[dict[str, object]]:
     records = []
+    if not isinstance(root_css, str):
+        raise ValueError("XPath record roots need the parsel parser")
     for root in soup.select(root_css):
         record: dict[str, object] = {}
         for field in fields:
@@ -350,13 +257,88 @@ def _extract_records(soup: BeautifulSoup, source_url: str, root_css: str, fields
     return records
 
 
+def _extract_records_parsel(text: str, source_url: str, root_css: str | None, root_xpath: str | None, fields: list, preset: dict) -> list[dict[str, object]]:
+    from parsel import Selector
+
+    document = Selector(text=text)
+    roots = document.xpath(root_xpath) if root_xpath else document.css(root_css)
+    records = []
+    for root in roots:
+        record: dict[str, object] = {}
+        for field in fields:
+            for selector in field.get("selectors", []):
+                value = _parsel_value(root, selector)
+                if value is not None:
+                    record[field["key"]] = apply_field(value, field, source_url, preset)
+                    break
+        records.append(_with_provenance(record, source_url, preset))
+    return records
+
+
+def _parsel_value(root, selector: dict) -> str | None:
+    if selector.get("xpath"):
+        matches = root.xpath(str(selector["xpath"]))
+    else:
+        css = str(selector.get("css", ""))
+        attribute = selector.get("attribute")
+        match = _PSEUDO.search(css)
+        if match:
+            css, attribute = css[: match.start()], match.group(2)
+        matches = root.css(css) if css.strip() else [root]
+        if matches and isinstance(attribute, str):
+            value = matches[0].attrib.get(attribute)
+            return (str(value).strip() or None) if value is not None else None
+    if not matches:
+        return None
+    first = matches[0]
+    if isinstance(first.root, str):
+        raw = first.get()
+    else:
+        raw = first.xpath("string()").get("")
+    raw = " ".join(str(raw).split())
+    return raw or None
+
+
+def _extract_records_selectolax(text: str, source_url: str, root_css: str, fields: list, preset: dict) -> list[dict[str, object]]:
+    from selectolax.parser import HTMLParser
+
+    records = []
+    for root in HTMLParser(text).css(root_css):
+        record: dict[str, object] = {}
+        for field in fields:
+            for selector in field.get("selectors", []):
+                css, attribute = str(selector.get("css", "")), selector.get("attribute")
+                match = _PSEUDO.search(css)
+                if match:
+                    css, attribute = css[: match.start()], match.group(2)
+                node = root.css_first(css) if css.strip() else root
+                if node is None:
+                    continue
+                value = node.attributes.get(attribute) if isinstance(attribute, str) else node.text(separator=" ", strip=True)
+                value = " ".join(str(value).split()) if value is not None else None
+                if value:
+                    record[field["key"]] = apply_field(value, field, source_url, preset)
+                    break
+        records.append(_with_provenance(record, source_url, preset))
+    return records
+
+
 def _extract_json_records(document: object, source_url: str, extraction: dict, fields: list[object], preset: dict[str, object]) -> list[dict[str, object]]:
     items = _json_path(document, extraction.get("item_path", ""))
+    if extraction.get("columnar") and isinstance(items, dict):
+        # {"form": ["10-K", ...], "filingDate": [...]} -> one record per index
+        columns = {k: v for k, v in items.items() if isinstance(v, list)}
+        length = max((len(v) for v in columns.values()), default=0)
+        items = [{k: (v[i] if i < len(v) else None) for k, v in columns.items()} for i in range(length)]
     if not isinstance(items, list):
         raise ValueError("extraction.item_path must resolve to a JSON array")
     records = []
     for item in items:
         record: dict[str, object] = {}
+        if extraction.get("capture_all") and isinstance(item, dict):
+            for key, value in _flatten(item).items():
+                if value not in (None, "") and len(record) < 200:
+                    record[key] = value
         for field in fields:
             if not isinstance(field, dict) or not isinstance(field.get("key"), str):
                 raise ValueError("Each extraction field requires a key")
@@ -367,12 +349,36 @@ def _extract_json_records(document: object, source_url: str, extraction: dict, f
     return records
 
 
+def _flatten(item: dict, prefix: str = "", depth: int = 0) -> dict[str, object]:
+    """Scalar values of an object, nested keys joined with dots. SPARQL bindings {"type", "value"} collapse."""
+    flat: dict[str, object] = {}
+    for key, value in item.items():
+        name = f"{prefix}{key}"
+        if isinstance(value, dict):
+            if "value" in value and "type" in value:
+                flat[name] = value["value"]
+            elif depth < 2:
+                flat.update(_flatten(value, name + ".", depth + 1))
+        elif isinstance(value, list):
+            scalars = [v for v in value if isinstance(v, (str, int, float))]
+            if scalars:
+                flat[name] = ", ".join(str(v) for v in scalars[:20])
+        elif isinstance(value, bool):
+            flat[name] = str(value).lower()
+        elif isinstance(value, (str, int, float)):
+            flat[name] = value
+    return flat
+
+
 def _with_provenance(record: dict[str, object], source_url: str, preset: dict[str, object]) -> dict[str, object]:
     record["source_url"] = source_url
     record["source_retrieved_at"] = datetime.now(timezone.utc).isoformat()
     record["preset_id"] = preset.get("id")
     record["preset_version"] = preset.get("version")
     record["strategy_used"] = preset.get("strategy", {}).get("preferred", "http")
+    mode = (preset.get("extraction") or {}).get("mode")
+    if mode and mode != "selectors":
+        record["extraction_mode"] = mode
     return record
 
 
@@ -412,6 +418,15 @@ TRANSFORMS: dict[str, Callable[..., object]] = {
     "parse_rating": lambda v, **_: _parse_decimal(v),
     "parse_integer": lambda v, **_: (d := _parse_decimal(v)) and str(int(Decimal(d))),
 }
+
+
+def _register_normalizers() -> None:
+    from .normalize import transforms
+
+    TRANSFORMS.update(transforms())
+
+
+_register_normalizers()
 
 
 def apply_field(value: object, field: dict, base_url: str, preset: dict[str, object]) -> object:

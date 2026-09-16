@@ -195,7 +195,7 @@ def test_scrape_test_mode_custom_preset_gate_and_staging(service: Service) -> No
         ok(service, "preset.save_custom", preset=custom)
         assert "immutable" in call(service, "preset.save_custom", preset=custom)["error"]["message"]
 
-        args = dict(preset_id="custom.me.cards", preset_version="1.0.0", start_url=url, policy_acknowledgement=True)
+        args = dict(preset_id="custom.me.cards", preset_version="1.0.0", start_url=url, policy_acknowledgement=True, purpose="internal_analysis")
         assert "test" in call(service, "scrape.create_job", **args, run_mode="full")["error"]["message"]
         test = wait(service, ok(service, "scrape.create_job", **args, run_mode="test")["job_id"])
         assert test["state"] == "completed", test
@@ -321,7 +321,7 @@ def test_failing_health_checks_degrade_then_disable_a_preset(service: Service, t
     ok(service, "preset.health_check", preset_id="custom.me.broken")
     ok(service, "preset.health_check", preset_id="custom.me.broken")
     assert next(p for p in ok(service, "preset.list") if p["id"] == "custom.me.broken")["status"] == "disabled"
-    blocked = call(service, "scrape.create_job", preset_id="custom.me.broken", preset_version="1.0.0", start_url="http://127.0.0.1:9/x", policy_acknowledgement=True)
+    blocked = call(service, "scrape.create_job", preset_id="custom.me.broken", preset_version="1.0.0", start_url="http://127.0.0.1:9/x", policy_acknowledgement=True, purpose="internal_analysis")
     assert "disabled" in blocked["error"]["message"]
 
     exported = ok(service, "preset.export_custom", preset_id="custom.me.broken", preset_version="1.0.0")
@@ -355,7 +355,7 @@ def test_credential_secret_is_used_in_memory_but_never_persisted(service: Servic
         custom["strategy"] = {**custom["strategy"], "api_integration": {"auth": "header", "header_name": "X-Api-Key"}}
         ok(service, "preset.save_custom", preset=custom)
         url = f"http://127.0.0.1:{server.server_port}/items"
-        args = dict(preset_id="custom.me.keyed", preset_version="1.0.0", start_url=url, policy_acknowledgement=True, run_mode="test")
+        args = dict(preset_id="custom.me.keyed", preset_version="1.0.0", start_url=url, policy_acknowledgement=True, run_mode="test", purpose="internal_analysis")
         assert "credential" in call(service, "scrape.create_job", **args)["error"]["message"]
         job = wait(service, ok(service, "scrape.create_job", **args, credential_ref="vendor-api", credential_secret="s3cr3t-value")["job_id"])
         assert job["state"] == "completed", job

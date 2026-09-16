@@ -1,0 +1,185 @@
+{
+  "id": "osm.overpass_pois",
+  "version": "1.0.0",
+  "display_name": "OpenStreetMap: places in an area",
+  "page_type": "api_collection",
+  "description": "Points of interest (for example cafes) inside a small bounding box from the OpenStreetMap Overpass API. The public server is shared: keep areas small or point at your own instance.",
+  "status": "active",
+  "owner": "dataforge-core",
+  "maintenance_review_date": "2027-03-01",
+  "provider": {
+    "name": "OpenStreetMap"
+  },
+  "category": "open_data",
+  "policy": {
+    "collection_basis": "public_api",
+    "requires_user_authorization_acknowledgement": true,
+    "robots_policy": "respect",
+    "authentication": "forbidden",
+    "captcha_or_access_challenge": "stop",
+    "paywall_or_rate_limit": "stop",
+    "personal_data_classification": "business_contact",
+    "notes": "OpenStreetMap data is © OpenStreetMap contributors under the ODbL; keep attribution with exports."
+  },
+  "request_limits": {
+    "max_concurrency": 1,
+    "min_delay_ms": 10000,
+    "max_pages_default": 1,
+    "max_records_default": 5000,
+    "max_duration_seconds": 120,
+    "respect_retry_after": true
+  },
+  "url_scope": {
+    "allowed_hosts": [
+      "overpass-api.de"
+    ],
+    "allowed_path_patterns": []
+  },
+  "strategy": {
+    "preferred": "api",
+    "allowed": [
+      "api"
+    ]
+  },
+  "pagination": {
+    "type": "none"
+  },
+  "validation": {
+    "unique_by": [
+      "osm_type",
+      "identifier"
+    ]
+  },
+  "normalization": {
+    "default_region": "US"
+  },
+  "health": {
+    "fixture_tests": [
+      "fixtures/open_data/overpass.json"
+    ],
+    "expected": {
+      "minimum_records": 2
+    }
+  },
+  "request": {
+    "method": "POST",
+    "url_template": "https://overpass-api.de/api/interpreter",
+    "form_field": "data",
+    "body_template": "[out:json][timeout:25];nwr[\"amenity\"=\"{{amenity}}\"]({{south}},{{west}},{{north}},{{east}});out center {{limit}};",
+    "limit_variable": "limit",
+    "bbox": {
+      "south": "south",
+      "west": "west",
+      "north": "north",
+      "east": "east",
+      "max_area_degrees": 0.25
+    },
+    "variables": {
+      "amenity": {
+        "type": "string",
+        "required": true,
+        "pattern": "[a-z_]{2,30}"
+      },
+      "south": {
+        "type": "number",
+        "required": true,
+        "minimum": -90,
+        "maximum": 90
+      },
+      "west": {
+        "type": "number",
+        "required": true,
+        "minimum": -180,
+        "maximum": 180
+      },
+      "north": {
+        "type": "number",
+        "required": true,
+        "minimum": -90,
+        "maximum": 90
+      },
+      "east": {
+        "type": "number",
+        "required": true,
+        "minimum": -180,
+        "maximum": 180
+      },
+      "limit": {
+        "type": "integer",
+        "default": 500,
+        "minimum": 1,
+        "maximum": 5000
+      }
+    }
+  },
+  "extraction": {
+    "item_path": "elements",
+    "fields": [
+      {
+        "key": "identifier",
+        "path": "id",
+        "required": true
+      },
+      {
+        "key": "osm_type",
+        "path": "type"
+      },
+      {
+        "key": "name",
+        "path": "tags.name"
+      },
+      {
+        "key": "category",
+        "path": "tags.amenity"
+      },
+      {
+        "key": "phone",
+        "path": "tags.phone",
+        "transforms": [
+          "normalize_phone"
+        ]
+      },
+      {
+        "key": "website",
+        "path": "tags.website",
+        "type": "url"
+      },
+      {
+        "key": "house_number",
+        "path": "tags.addr:housenumber"
+      },
+      {
+        "key": "street",
+        "path": "tags.addr:street"
+      },
+      {
+        "key": "city",
+        "path": "tags.addr:city"
+      },
+      {
+        "key": "postal_code",
+        "path": "tags.addr:postcode"
+      },
+      {
+        "key": "latitude",
+        "path": "lat",
+        "type": "decimal"
+      },
+      {
+        "key": "longitude",
+        "path": "lon",
+        "type": "decimal"
+      },
+      {
+        "key": "center_latitude",
+        "path": "center.lat",
+        "type": "decimal"
+      },
+      {
+        "key": "center_longitude",
+        "path": "center.lon",
+        "type": "decimal"
+      }
+    ]
+  }
+}

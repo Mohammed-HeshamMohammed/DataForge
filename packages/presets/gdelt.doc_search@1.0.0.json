@@ -1,0 +1,114 @@
+{
+  "id": "gdelt.doc_search",
+  "version": "1.0.0",
+  "display_name": "GDELT: news article search",
+  "page_type": "api_collection",
+  "description": "Recent news articles matching a query from the GDELT DOC 2.0 API (at most one request every five seconds).",
+  "status": "active",
+  "owner": "dataforge-core",
+  "maintenance_review_date": "2027-03-01",
+  "provider": {
+    "name": "GDELT Project"
+  },
+  "category": "open_data",
+  "policy": {
+    "collection_basis": "public_api",
+    "requires_user_authorization_acknowledgement": true,
+    "robots_policy": "respect",
+    "authentication": "forbidden",
+    "captcha_or_access_challenge": "stop",
+    "paywall_or_rate_limit": "stop",
+    "personal_data_classification": "unknown",
+    "notes": "Use only for data you are authorized to collect and process."
+  },
+  "request_limits": {
+    "max_concurrency": 1,
+    "min_delay_ms": 5000,
+    "max_pages_default": 1,
+    "max_records_default": 250,
+    "max_duration_seconds": 1800
+  },
+  "url_scope": {
+    "allowed_hosts": [
+      "api.gdeltproject.org"
+    ],
+    "allowed_path_patterns": []
+  },
+  "strategy": {
+    "preferred": "api",
+    "allowed": [
+      "api"
+    ]
+  },
+  "pagination": {
+    "type": "none"
+  },
+  "validation": {
+    "unique_by": [
+      "url"
+    ]
+  },
+  "health": {
+    "fixture_tests": [
+      "fixtures/open_data/gdelt.json"
+    ],
+    "expected": {
+      "minimum_records": 2
+    }
+  },
+  "request": {
+    "method": "GET",
+    "url_template": "https://api.gdeltproject.org/api/v2/doc/doc?query={{query}}&mode=artlist&format=json&sort=datedesc&maxrecords={{limit}}",
+    "limit_variable": "limit",
+    "variables": {
+      "query": {
+        "type": "string",
+        "required": true,
+        "max_length": 300
+      },
+      "limit": {
+        "type": "integer",
+        "default": 75,
+        "minimum": 1,
+        "maximum": 250
+      }
+    }
+  },
+  "extraction": {
+    "item_path": "articles",
+    "fields": [
+      {
+        "key": "url",
+        "path": "url",
+        "type": "url",
+        "required": true
+      },
+      {
+        "key": "title",
+        "path": "title",
+        "transforms": [
+          "trim"
+        ]
+      },
+      {
+        "key": "seen",
+        "path": "seendate",
+        "transforms": [
+          "parse_date"
+        ]
+      },
+      {
+        "key": "domain",
+        "path": "domain"
+      },
+      {
+        "key": "language",
+        "path": "language"
+      },
+      {
+        "key": "country",
+        "path": "sourcecountry"
+      }
+    ]
+  }
+}

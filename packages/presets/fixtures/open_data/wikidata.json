@@ -1,0 +1,1 @@
+{"head": {"vars": ["item", "itemLabel"]}, "results": {"bindings": [{"item": {"type": "uri", "value": "http://www.wikidata.org/entity/Q16559"}, "itemLabel": {"xml:lang": "en", "type": "literal", "value": "Austin"}}, {"item": {"type": "uri", "value": "http://www.wikidata.org/entity/Q16557"}, "itemLabel": {"xml:lang": "en", "type": "literal", "value": "Dallas"}}]}}

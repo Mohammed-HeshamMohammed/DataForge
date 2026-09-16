@@ -1,0 +1,128 @@
+{
+  "id": "ckan.package_search",
+  "version": "1.0.0",
+  "display_name": "CKAN portal: dataset search",
+  "page_type": "api_collection",
+  "description": "Search datasets on any CKAN open data portal (for example catalog.data.gov or data.gov.uk).",
+  "status": "active",
+  "owner": "dataforge-core",
+  "maintenance_review_date": "2027-03-01",
+  "provider": {
+    "name": "CKAN"
+  },
+  "category": "open_data",
+  "policy": {
+    "collection_basis": "public_api",
+    "requires_user_authorization_acknowledgement": true,
+    "robots_policy": "respect",
+    "authentication": "forbidden",
+    "captcha_or_access_challenge": "stop",
+    "paywall_or_rate_limit": "stop",
+    "personal_data_classification": "unknown",
+    "notes": "Use only for data you are authorized to collect and process."
+  },
+  "request_limits": {
+    "max_concurrency": 1,
+    "min_delay_ms": 2000,
+    "max_pages_default": 50,
+    "max_records_default": 1000,
+    "max_duration_seconds": 1800
+  },
+  "url_scope": {
+    "allowed_hosts": [],
+    "user_supplied_host": true,
+    "allowed_path_patterns": [
+      "^/api/3/action/"
+    ]
+  },
+  "strategy": {
+    "preferred": "api",
+    "allowed": [
+      "api"
+    ]
+  },
+  "pagination": {
+    "type": "page_parameter",
+    "parameter": "start",
+    "start": 0,
+    "step": 50
+  },
+  "validation": {
+    "unique_by": [
+      "id"
+    ]
+  },
+  "health": {
+    "fixture_tests": [
+      "fixtures/open_data/ckan.json"
+    ],
+    "expected": {
+      "minimum_records": 2
+    }
+  },
+  "request": {
+    "method": "GET",
+    "url_template": "https://{{portal}}/api/3/action/package_search?q={{query}}&rows=50",
+    "variables": {
+      "portal": {
+        "type": "string",
+        "required": true,
+        "pattern": "[a-z0-9.-]{4,80}",
+        "default": "catalog.data.gov"
+      },
+      "query": {
+        "type": "string",
+        "required": true,
+        "max_length": 200
+      }
+    }
+  },
+  "extraction": {
+    "item_path": "result.results",
+    "fields": [
+      {
+        "key": "id",
+        "path": "id",
+        "required": true
+      },
+      {
+        "key": "name",
+        "path": "name"
+      },
+      {
+        "key": "title",
+        "path": "title",
+        "transforms": [
+          "trim"
+        ]
+      },
+      {
+        "key": "organization",
+        "path": "organization.title"
+      },
+      {
+        "key": "modified",
+        "path": "metadata_modified",
+        "transforms": [
+          "parse_date"
+        ]
+      },
+      {
+        "key": "resources",
+        "path": "num_resources",
+        "type": "integer"
+      },
+      {
+        "key": "license",
+        "path": "license_title"
+      },
+      {
+        "key": "description",
+        "path": "notes",
+        "transforms": [
+          "collapse_whitespace"
+        ]
+      }
+    ]
+  }
+}

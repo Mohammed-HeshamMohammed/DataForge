@@ -1,0 +1,114 @@
+{
+  "id": "openalex.works",
+  "version": "1.0.0",
+  "display_name": "OpenAlex: works search",
+  "page_type": "api_collection",
+  "description": "Scholarly works from OpenAlex. OpenAlex asks for an API key (free) since February 2026; add one in Settings → Credentials.",
+  "status": "active",
+  "owner": "dataforge-core",
+  "maintenance_review_date": "2027-03-01",
+  "provider": {
+    "name": "OpenAlex"
+  },
+  "category": "open_data",
+  "policy": {
+    "collection_basis": "public_api",
+    "requires_user_authorization_acknowledgement": true,
+    "robots_policy": "respect",
+    "authentication": "forbidden",
+    "captcha_or_access_challenge": "stop",
+    "paywall_or_rate_limit": "stop",
+    "personal_data_classification": "unknown",
+    "notes": "Use only for data you are authorized to collect and process."
+  },
+  "request_limits": {
+    "max_concurrency": 1,
+    "min_delay_ms": 200,
+    "max_pages_default": 100,
+    "max_records_default": 10000,
+    "max_duration_seconds": 1800,
+    "max_requests_per_second": 5,
+    "respect_retry_after": true
+  },
+  "url_scope": {
+    "allowed_hosts": [
+      "api.openalex.org"
+    ],
+    "allowed_path_patterns": []
+  },
+  "strategy": {
+    "preferred": "api",
+    "allowed": [
+      "api"
+    ],
+    "api_integration": {
+      "auth": "query_param",
+      "parameter": "api_key",
+      "optional": true
+    }
+  },
+  "pagination": {
+    "type": "api_cursor",
+    "cursor_path": "meta.next_cursor",
+    "cursor_parameter": "cursor"
+  },
+  "validation": {
+    "unique_by": [
+      "id"
+    ]
+  },
+  "health": {
+    "fixture_tests": [
+      "fixtures/open_data/openalex.json"
+    ],
+    "expected": {
+      "minimum_records": 2
+    }
+  },
+  "request": {
+    "method": "GET",
+    "url_template": "https://api.openalex.org/works?search={{query}}&per-page=100&cursor=*",
+    "variables": {
+      "query": {
+        "type": "string",
+        "required": true,
+        "max_length": 300
+      }
+    }
+  },
+  "extraction": {
+    "item_path": "results",
+    "fields": [
+      {
+        "key": "id",
+        "path": "id",
+        "required": true
+      },
+      {
+        "key": "title",
+        "path": "display_name",
+        "transforms": [
+          "trim"
+        ]
+      },
+      {
+        "key": "year",
+        "path": "publication_year",
+        "type": "integer"
+      },
+      {
+        "key": "doi",
+        "path": "doi"
+      },
+      {
+        "key": "cited_by",
+        "path": "cited_by_count",
+        "type": "integer"
+      },
+      {
+        "key": "venue",
+        "path": "primary_location.source.display_name"
+      }
+    ]
+  }
+}

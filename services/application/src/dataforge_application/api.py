@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Callable
 
 from . import SCHEMA_VERSION
-from . import datasets, matching, projects, scraping
+from . import datasets, matching, projects, scraping, sources
 from .contracts import health_check
 from .jobs import JobContext, JobKind, JobRunner, JobValidationError, fixture_job
 from .logs import log
@@ -38,13 +38,15 @@ def _job_dict(row) -> dict:
 
 
 class Service:
-    def __init__(self, migrations_dir: Path | None = None, presets_dir: Path | None = None) -> None:
+    def __init__(self, migrations_dir: Path | None = None, presets_dir: Path | None = None, start_watch_scheduler: bool = False) -> None:
+        self.start_watch_scheduler = start_watch_scheduler
         self.migrations_dir = migrations_dir or REPO_ROOT / "migrations"
         self.presets_dir = presets_dir or REPO_ROOT / "packages" / "presets"
         self.store: ProjectStore | None = None
         self.project: dict | None = None
         self.runner: JobRunner | None = None
         self._lock = threading.RLock()
+        self.watch_scheduler: sources.WatchScheduler | None = None
         self.commands: dict[str, Callable[[dict], object]] = {
             "health.check": lambda p: health_check().to_dict(),
             "project.create": lambda p: self._open(p.get("path", ""), p.get("name"), create=True),
@@ -79,6 +81,23 @@ class Service:
             "scrape.create_job": lambda p: {"job_id": self._submit("scrape", p, self._secrets(p))},
             "scrape.check_url": self._scrape_check_url,
             "scrape.stage_rendered": lambda p: {"job_id": self._submit("scrape_rendered", p)},
+            "scrape.check_signals": lambda p: sources.check_signals(self._store(), p["url"], p.get("purpose") or sources.get_settings(self._store())["default_purpose"]),
+            "scrape.run_signals": lambda p: sources.run_signals(self._store(), self._scrape_run_id(p["job_id"])),
+            "scrape.detect_structured": lambda p: sources.detect_structured(*sources.page_html(p, self._store(), scraping.validate_url)),
+            "scrape.suggest_selectors": lambda p: sources.suggest_selectors(*sources.page_html(p, self._store(), scraping.validate_url), p.get("examples") or {}),
+            "scrape.propose_presets": lambda p: sources.propose_presets(self._store(), *sources.page_html(p, self._store(), scraping.validate_url), p.get("provider")),
+            "preset.maintenance_report": self._maintenance_report,
+            "archive.create_job": lambda p: {"job_id": self._submit("archive_query", p)},
+            "bulk.create_job": lambda p: {"job_id": self._submit("bulk_import", p)},
+            "watch.create": lambda p: sources.create_watch(self._store(), self._project_id(), p, scraping.make_scrape_kind(self.presets_dir).validate),
+            "watch.list": lambda p: sources.list_watches(self._store(), self._project_id()),
+            "watch.get": lambda p: sources.get_watch(self._store(), p["watch_id"]),
+            "watch.set_status": lambda p: sources.set_watch_status(self._store(), p["watch_id"], p["status"]),
+            "watch.run_now": self._watch_run_now,
+            "dataset.diff": lambda p: sources.diff_datasets(self._store(), p["before_dataset_id"], p["after_dataset_id"], list(p["unique_by"])),
+            "settings.get": lambda p: sources.get_settings(self._store()),
+            "settings.update": lambda p: sources.set_settings(self._store(), p.get("changes") or {}),
+            "cache.purge": lambda p: sources.purge_cache(self._store()),
             "match.create_job": lambda p: {"job_id": self._submit("match", p)},
             "match.results": lambda p: matching.results(self._store(), p["job_id"]),
             "match.review_queue": lambda p: matching.review_queue(self._store(), p["job_id"], int(p.get("offset", 0)), min(int(p.get("limit", 20)), 100), p.get("order", "score")),
@@ -156,6 +175,25 @@ class Service:
             return {"allowed": False, "reason": str(error)}
         return {"allowed": True, "reason": None}
 
+    def _scrape_run_id(self, job_id: str) -> str:
+        row = self._store()._connection.execute("SELECT id FROM scrape_runs WHERE job_id = ? ORDER BY created_at DESC LIMIT 1", (job_id,)).fetchone()
+        if row is None:
+            raise CommandError("not_found", "That job has no scrape run")
+        return row["id"]
+
+    def _watch_run_now(self, payload: dict) -> dict:
+        store = self._store()
+        watch = store._connection.execute("SELECT * FROM watches WHERE id = ?", (payload["watch_id"],)).fetchone()
+        if watch is None:
+            raise CommandError("not_found", "Unknown watch")
+        return {"job_id": sources.start_watch_run(store, dict(watch), lambda params: self._submit("scrape", params))}
+
+    def _maintenance_report(self, payload: dict) -> dict:
+        store = self._store()
+        preset = scraping.resolve_preset(store, self.presets_dir, payload["preset_id"], payload["preset_version"])
+        html, url = sources.page_html({**payload, "preset": scraping.resolve_for_url(preset, payload.get("url") or "https://fixture.invalid/")} if not payload.get("html") else payload, store, scraping.validate_url)
+        return sources.maintenance_report(store, preset, html, url)
+
     def _open(self, path: str, name: str | None = None, create: bool = False) -> dict:
         if self.runner and any(self.runner._controls):
             raise CommandError("jobs_active", "Wait for active jobs to finish or cancel them before switching projects")
@@ -168,9 +206,15 @@ class Service:
             "fixture": JobKind(run=fixture_job),
             "dataset_import": JobKind(run=self._run_import, validate=self._validate_import),
             "scrape": scraping.make_scrape_kind(self.presets_dir),
+            "archive_query": sources.make_archive_kind(lambda store, pid, ver: scraping.resolve_preset(store, self.presets_dir, pid, ver)),
+            "bulk_import": sources.make_bulk_kind(),
             "scrape_rendered": scraping.make_rendered_kind(self.presets_dir),
             "match": matching.MATCH_JOB,
         })
+        sources.purge_expired_captures(store)
+        if self.watch_scheduler is None and self.start_watch_scheduler:
+            self.watch_scheduler = sources.WatchScheduler(self)
+            self.watch_scheduler.start()
         return {**project, "recovered_jobs": recovered}
 
     def open_recent(self) -> None:

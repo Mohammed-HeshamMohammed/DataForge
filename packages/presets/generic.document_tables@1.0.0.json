@@ -1,0 +1,72 @@
+{
+  "id": "generic.document_tables",
+  "version": "1.0.0",
+  "display_name": "Document tables (PDF)",
+  "page_type": "documents",
+  "description": "Tables from PDFs linked on a permitted page (or a PDF URL), with page and table provenance. CSV links become rows; XLSX and JSON links are imported as datasets.",
+  "status": "active",
+  "owner": "dataforge-core",
+  "maintenance_review_date": "2027-03-01",
+  "provider": {
+    "name": "Generic"
+  },
+  "category": "generic",
+  "policy": {
+    "collection_basis": "public_html",
+    "requires_user_authorization_acknowledgement": true,
+    "robots_policy": "respect",
+    "authentication": "forbidden",
+    "captcha_or_access_challenge": "stop",
+    "paywall_or_rate_limit": "stop",
+    "personal_data_classification": "unknown",
+    "notes": "Use only for data you are authorized to collect and process."
+  },
+  "request_limits": {
+    "max_concurrency": 1,
+    "min_delay_ms": 2000,
+    "max_pages_default": 50,
+    "max_records_default": 1000,
+    "max_duration_seconds": 1800
+  },
+  "url_scope": {
+    "allowed_hosts": [],
+    "user_supplied_host": true,
+    "allowed_path_patterns": []
+  },
+  "strategy": {
+    "preferred": "http",
+    "allowed": [
+      "http"
+    ],
+    "prohibited_escalations": [
+      "access_denied",
+      "captcha",
+      "login_required",
+      "robots_disallowed"
+    ]
+  },
+  "pagination": {
+    "type": "none"
+  },
+  "discovery": {
+    "mode": "none",
+    "file_links": true,
+    "max_files": 20
+  },
+  "extraction": {
+    "mode": "document_tables",
+    "fields": [],
+    "table_strategy": "auto"
+  },
+  "validation": {
+    "unique_by": []
+  },
+  "health": {
+    "fixture_tests": [
+      "fixtures/documents/table.pdf"
+    ],
+    "expected": {
+      "minimum_records": 3
+    }
+  }
+}

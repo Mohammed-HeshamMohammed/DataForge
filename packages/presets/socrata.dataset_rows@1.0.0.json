@@ -1,0 +1,87 @@
+{
+  "id": "socrata.dataset_rows",
+  "version": "1.0.0",
+  "display_name": "Socrata: dataset rows",
+  "page_type": "api_collection",
+  "description": "Rows from a Socrata (SODA) open data dataset, for example a city portal.",
+  "status": "active",
+  "owner": "dataforge-core",
+  "maintenance_review_date": "2027-03-01",
+  "provider": {
+    "name": "Socrata"
+  },
+  "category": "open_data",
+  "policy": {
+    "collection_basis": "public_api",
+    "requires_user_authorization_acknowledgement": true,
+    "robots_policy": "respect",
+    "authentication": "forbidden",
+    "captcha_or_access_challenge": "stop",
+    "paywall_or_rate_limit": "stop",
+    "personal_data_classification": "unknown",
+    "notes": "Use only for data you are authorized to collect and process."
+  },
+  "request_limits": {
+    "max_concurrency": 1,
+    "min_delay_ms": 1000,
+    "max_pages_default": 20,
+    "max_records_default": 10000,
+    "max_duration_seconds": 1800
+  },
+  "url_scope": {
+    "allowed_hosts": [],
+    "user_supplied_host": true,
+    "allowed_path_patterns": [
+      "^/resource/"
+    ]
+  },
+  "strategy": {
+    "preferred": "api",
+    "allowed": [
+      "api"
+    ],
+    "api_integration": {
+      "auth": "header",
+      "header_name": "X-App-Token",
+      "optional": true
+    }
+  },
+  "pagination": {
+    "type": "page_parameter",
+    "parameter": "$offset",
+    "start": 0,
+    "step": 500
+  },
+  "validation": {
+    "unique_by": []
+  },
+  "health": {
+    "fixture_tests": [
+      "fixtures/open_data/socrata.json"
+    ],
+    "expected": {
+      "minimum_records": 2
+    }
+  },
+  "request": {
+    "method": "GET",
+    "url_template": "https://{{domain}}/resource/{{dataset}}.json?$limit=500&$offset=0",
+    "variables": {
+      "domain": {
+        "type": "string",
+        "required": true,
+        "pattern": "[a-z0-9.-]{4,80}"
+      },
+      "dataset": {
+        "type": "string",
+        "required": true,
+        "pattern": "[a-z0-9]{4}-[a-z0-9]{4}"
+      }
+    }
+  },
+  "extraction": {
+    "item_path": "",
+    "capture_all": true,
+    "fields": []
+  }
+}

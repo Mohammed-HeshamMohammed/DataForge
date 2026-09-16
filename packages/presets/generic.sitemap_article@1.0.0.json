@@ -1,0 +1,76 @@
+{
+  "id": "generic.sitemap_article",
+  "version": "1.0.0",
+  "display_name": "Sitemap: articles",
+  "page_type": "sitemap",
+  "description": "Discovers pages from XML sitemaps and extracts article text and metadata from each.",
+  "status": "active",
+  "owner": "dataforge-core",
+  "maintenance_review_date": "2027-03-01",
+  "provider": {
+    "name": "Generic"
+  },
+  "category": "generic",
+  "policy": {
+    "collection_basis": "public_html",
+    "requires_user_authorization_acknowledgement": true,
+    "robots_policy": "respect",
+    "authentication": "forbidden",
+    "captcha_or_access_challenge": "stop",
+    "paywall_or_rate_limit": "stop",
+    "personal_data_classification": "unknown",
+    "notes": "Use only for data you are authorized to collect and process."
+  },
+  "request_limits": {
+    "max_concurrency": 1,
+    "min_delay_ms": 2000,
+    "max_pages_default": 2000,
+    "max_records_default": 2000,
+    "max_duration_seconds": 14400
+  },
+  "url_scope": {
+    "allowed_hosts": [],
+    "user_supplied_host": true,
+    "allowed_path_patterns": []
+  },
+  "strategy": {
+    "preferred": "http",
+    "allowed": [
+      "http"
+    ],
+    "prohibited_escalations": [
+      "access_denied",
+      "captcha",
+      "login_required",
+      "robots_disallowed"
+    ]
+  },
+  "pagination": {
+    "type": "none"
+  },
+  "discovery": {
+    "mode": "sitemap",
+    "sitemap": {
+      "url_pattern": "",
+      "max_urls": 2000
+    }
+  },
+  "extraction": {
+    "mode": "article",
+    "fields": []
+  },
+  "validation": {
+    "unique_by": [
+      "url"
+    ]
+  },
+  "engine": "auto",
+  "health": {
+    "fixture_tests": [
+      "fixtures/generic/article.html"
+    ],
+    "expected": {
+      "minimum_records": 1
+    }
+  }
+}

@@ -28,7 +28,7 @@ def run_health_check(preset: dict, fixtures: dict[str, str]) -> dict:
     expected = (preset.get("health") or {}).get("expected", {})
     minimum_records = int(expected.get("minimum_records", 1))
     minimum_coverage = float(expected.get("required_field_coverage", 0.0))
-    required = [f["key"] for f in preset["extraction"]["fields"] if f.get("required")]
+    required = [f["key"] for f in (preset.get("extraction") or {}).get("fields", []) if f.get("required")]
     results, failures = [], []
     for path in (preset.get("health") or {}).get("fixture_tests", []):
         if path not in fixtures:

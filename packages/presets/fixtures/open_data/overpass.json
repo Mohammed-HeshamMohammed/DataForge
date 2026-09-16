@@ -1,0 +1,1 @@
+{"elements": [{"type": "node", "id": 1, "lat": 30.27, "lon": -97.74, "tags": {"name": "Bean Cafe", "amenity": "cafe", "phone": "+1 512 555 0100", "addr:street": "Congress Avenue", "addr:housenumber": "100", "addr:city": "Austin"}}, {"type": "way", "id": 2, "center": {"lat": 30.26, "lon": -97.75}, "tags": {"name": "Leaf Tea", "amenity": "cafe"}}]}

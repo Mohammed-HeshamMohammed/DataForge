@@ -1,0 +1,53 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>
+endobj
+4 0 obj
+<< /Length 685 >>
+stream
+0.5 w
+50 700 m 450 700 l S
+50 680 m 450 680 l S
+50 660 m 450 660 l S
+50 640 m 450 640 l S
+50 620 m 450 620 l S
+50 700 m 50 620 l S
+200 700 m 200 620 l S
+350 700 m 350 620 l S
+450 700 m 450 620 l S
+BT /F1 10 Tf 54 686 Td (Name) Tj ET
+BT /F1 10 Tf 204 686 Td (City) Tj ET
+BT /F1 10 Tf 354 686 Td (Phone) Tj ET
+BT /F1 10 Tf 54 666 Td (Acme Supply) Tj ET
+BT /F1 10 Tf 204 666 Td (Austin) Tj ET
+BT /F1 10 Tf 354 666 Td (512-555-0100) Tj ET
+BT /F1 10 Tf 54 646 Td (Beta Tools) Tj ET
+BT /F1 10 Tf 204 646 Td (Dallas) Tj ET
+BT /F1 10 Tf 354 646 Td (214-555-0101) Tj ET
+BT /F1 10 Tf 54 626 Td (Gamma Parts) Tj ET
+BT /F1 10 Tf 204 626 Td (Waco) Tj ET
+BT /F1 10 Tf 354 626 Td (254-555-0102) Tj ET
+endstream
+endobj
+5 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+xref
+0 6
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000241 00000 n 
+0000000977 00000 n 
+trailer
+<< /Size 6 /Root 1 0 R >>
+startxref
+1047
+%%EOF
