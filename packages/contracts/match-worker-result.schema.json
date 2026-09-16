@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dataforge.local/contracts/match-worker-result.schema.json",
+  "title": "MatchWorkerResult",
+  "type": "object",
+  "required": [
+    "schema_version",
+    "policy_version",
+    "normalization_version",
+    "settings",
+    "decisions",
+    "clusters",
+    "canonical",
+    "metrics"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "policy_version": {
+      "type": "string"
+    },
+    "normalization_version": {
+      "type": "string"
+    },
+    "settings": {
+      "type": "object"
+    },
+    "decisions": {
+      "type": "array",
+      "items": {
+        "$ref": "match-decision.schema.json"
+      }
+    },
+    "clusters": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "member_row_ids",
+          "confidence",
+          "status"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^c_[0-9a-f]{16}$"
+          },
+          "member_row_ids": {
+            "type": "array",
+            "minItems": 1
+          },
+          "confidence": {
+            "type": "number"
+          },
+          "status": {
+            "enum": [
+              "active",
+              "locked"
+            ]
+          }
+        }
+      }
+    },
+    "canonical": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "cluster_id",
+          "survivor_row_id",
+          "values",
+          "field_provenance",
+          "conflicts"
+        ]
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "required": [
+        "input_rows",
+        "candidate_pairs",
+        "decisions",
+        "stage_seconds"
+      ]
+    }
+  }
+}

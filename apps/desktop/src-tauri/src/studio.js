@@ -114,6 +114,12 @@
     const pick = { mode, ...describe(el), selector: pathTo(el) };
     if (mode === "repeated") {
       pick.repeated = repeatedContainer(el);
+    } else if (mode === "detail") {
+      const link = el.closest("a[href]");
+      const container = link ? repeatedContainer(link) : null;
+      // Target the link inside each repeated item, not the item itself.
+      pick.repeated = container && link ? { selector: container.selector === generalized(link) || container.selector.endsWith(" > " + generalized(link)) ? container.selector : `${container.selector} ${generalized(link)}`, count: container.count } : null;
+      pick.tag = link ? "a" : pick.tag;
     } else if (recordRoot) {
       const root = el.closest(recordRoot);
       pick.relative_selector = root ? pathTo(el, root) || ":scope" : null;
@@ -147,7 +153,7 @@
 
   window.__dataforgeStudio = Object.freeze({
     setMode(next, root) {
-      mode = ["none", "element", "repeated", "next"].includes(next) ? next : "none";
+      mode = ["none", "element", "repeated", "next", "detail"].includes(next) ? next : "none";
       recordRoot = typeof root === "string" && root ? root : null;
       if (mode === "none") highlight(null);
       return { mode };
@@ -172,6 +178,24 @@
         challenge_detected: CHALLENGE.some((m) => html.includes(m)), password_fields: document.querySelectorAll("input[type=password]").length,
         inaccessible_frames: inaccessibleFrames,
       };
+    },
+    scrollStep() {
+      window.scrollTo(0, document.documentElement.scrollHeight);
+      return { height: document.documentElement.scrollHeight, y: window.scrollY };
+    },
+    links(css) {
+      try {
+        const selector = css.replace(/::attr\(href\)\s*$/, "");
+        const urls = [...document.querySelectorAll(selector)]
+          .map((node) => (node.matches("a[href]") ? node : node.querySelector("a[href]")))
+          .filter(Boolean)
+          .map((a) => a.getAttribute("href"))
+          .filter(Boolean)
+          .map((href) => new URL(href, location.href).href);
+        return { urls: [...new Set(urls)].slice(0, 1000), error: null };
+      } catch (error) {
+        return { urls: [], error: String(error) };
+      }
     },
     count(css) {
       try {

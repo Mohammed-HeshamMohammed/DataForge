@@ -1,0 +1,143 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dataforge.local/contracts/review-queue.schema.json",
+  "title": "ReviewQueue",
+  "type": "object",
+  "required": [
+    "total",
+    "offset",
+    "items",
+    "order",
+    "sensitive_columns",
+    "ranking_model"
+  ],
+  "properties": {
+    "total": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "offset": {
+      "type": "integer"
+    },
+    "order": {
+      "enum": [
+        "score",
+        "model"
+      ]
+    },
+    "sensitive_columns": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "ranking_model": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "not": {
+            "required": [
+              "weights"
+            ]
+          }
+        }
+      ]
+    },
+    "items": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "decision_id",
+          "score",
+          "reason",
+          "review_version",
+          "evidence",
+          "left",
+          "right",
+          "can_merge"
+        ],
+        "properties": {
+          "evidence": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "field",
+                "similarity",
+                "result",
+                "strength",
+                "explanation"
+              ],
+              "properties": {
+                "field": {
+                  "enum": [
+                    "identifier",
+                    "phone",
+                    "email",
+                    "address",
+                    "mailing_address",
+                    "name",
+                    "region",
+                    "url"
+                  ]
+                },
+                "similarity": {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
+                },
+                "result": {
+                  "enum": [
+                    "exact",
+                    "similar",
+                    "different",
+                    "conflict"
+                  ]
+                },
+                "strength": {
+                  "enum": [
+                    "strong",
+                    "supporting",
+                    "none",
+                    "guard"
+                  ]
+                },
+                "explanation": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "can_merge": {
+            "type": "boolean"
+          },
+          "review_version": {
+            "type": "integer"
+          },
+          "left": {
+            "type": "object",
+            "required": [
+              "id",
+              "row_number",
+              "raw",
+              "source"
+            ]
+          },
+          "right": {
+            "type": "object",
+            "required": [
+              "id",
+              "row_number",
+              "raw",
+              "source"
+            ]
+          }
+        }
+      }
+    }
+  }
+}

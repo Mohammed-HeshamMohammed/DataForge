@@ -30,6 +30,18 @@ class Handler(BaseHTTPRequestHandler):
             cursor = query.get("cursor", [""])[0]
             document = {"items": [{"id": "1", "name": " One "}], "next_cursor": "b"} if not cursor else {"items": [{"id": "2", "name": "Two"}], "next_cursor": None}
             content_type, body = "application/json", json.dumps(document).encode()
+        elif url.path == "/catalog":
+            body = (b"<ul><li><a class='item' href='/detail/1'>1</a></li><li><a class='item' href='/detail/2'>2</a></li>"
+                    b"<li><a class='item' href='https://evil.example/detail/3'>3</a></li></ul>"
+                    + (b"<a class='more' href='/catalog?page=2'>more</a>" if "page" not in query else b""))
+        elif url.path.startswith("/detail/"):
+            number = url.path.rsplit("/", 1)[1]
+            body = f"<main><h1>Item {number}</h1><span class='sku'>SKU-{number}</span></main>".encode()
+        elif url.path == "/feed":
+            cursor = query.get("cursor", [""])[0]
+            items = {"": ["A", "B"], "t2": ["C"]}.get(cursor, [])
+            token = "<div data-next='t2'></div>" if cursor == "" else ""
+            body = ("".join(f"<p class='row'>{i}</p>" for i in items) + token).encode()
         elif url.path == "/challenge":
             body = b"<html><div class='g-recaptcha'></div></html>"
         elif url.path == "/redirect":
@@ -110,6 +122,46 @@ def test_json_api_with_cursor_pagination(base: str) -> None:
     result = extract_html_pages(f"{base}/api", preset)
     assert [(r["id"], r["name"]) for r in result.records] == [("1", "One"), ("2", "Two")]
     assert result.strategy_used == "api"
+
+
+def test_detail_links_follow_in_scope_items_and_listing_pages(base: str) -> None:
+    preset = load("generic.html_list@1.1.0.json")
+    preset["request_limits"]["min_delay_ms"] = 0
+    preset["extraction"] = {
+        "record_root": {"css": "main"},
+        "fields": [
+            {"key": "title", "required": True, "selectors": [{"css": "h1"}]},
+            {"key": "sku", "selectors": [{"css": ".sku"}]},
+        ],
+    }
+    preset["pagination"] = {"type": "detail_links", "links": {"css": "a.item::attr(href)"}, "next": {"css": "a.more::attr(href)"}}
+    preset["validation"] = {"unique_by": ["sku"]}
+    assert validate_preset(preset) == []
+    result = extract_html_pages(f"{base}/catalog", preset)
+    assert [r["sku"] for r in result.records] == ["SKU-1", "SKU-2"]
+    assert result.records[0]["source_url"].endswith("/detail/1")
+    assert "skipped a detail link outside the preset scope" in result.warnings
+    assert result.pages_fetched == 2  # second listing page yields only already-visited details
+    assert result.stop_reason == "no_new_records"
+
+
+def test_html_cursor_pagination(base: str) -> None:
+    preset = load("generic.html_list@1.1.0.json")
+    preset["request_limits"]["min_delay_ms"] = 0
+    preset["extraction"] = {"record_root": {"css": "p.row"}, "fields": [{"key": "value", "required": True, "selectors": [{"css": ""}]}]}
+    preset["pagination"] = {"type": "cursor", "cursor": {"css": "[data-next]::attr(data-next)"}, "parameter": "cursor"}
+    preset["validation"] = {"unique_by": ["value"]}
+    result = extract_html_pages(f"{base}/feed", preset)
+    assert [r["value"] for r in result.records] == ["A", "B", "C"]
+    assert result.records[-1]["source_url"].endswith("cursor=t2")
+
+
+def test_pagination_config_is_validated() -> None:
+    preset = load("generic.html_list@1.1.0.json")
+    preset["pagination"] = {"type": "detail_links"}
+    assert any("pagination.links.css" in e for e in validate_preset(preset))
+    preset["pagination"] = {"type": "infinite_scroll", "max_scrolls": 500}
+    assert any("max_scrolls" in e for e in validate_preset(preset))
 
 
 def test_access_challenge_stops_collection(base: str) -> None:

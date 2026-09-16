@@ -43,7 +43,7 @@ export type ColumnProfile = {
   candidates: string[];
 };
 
-export type Row = { id: string; row_number: number; raw: Record<string, unknown> };
+export type Row = { id: string; row_number: number; raw: Record<string, unknown>; source?: string; source_name?: string };
 
 export type Evidence = { field: string; similarity: number; result: string; strength: "strong" | "supporting" | "none" | "guard"; explanation: string };
 
@@ -64,6 +64,9 @@ export type MatchResults = {
   run_mode: "preview" | "full";
   policy_version: string;
   mapping_version_id: string;
+  compare_dataset_id: string | null;
+  review_turnaround: { decisions: number; median_seconds: number | null };
+  mapping_flags: { id: string; column_name: string; note: string; created_at: string }[];
   metrics: Record<string, any>;
   decisions: Record<string, number>;
   pending_review: number;

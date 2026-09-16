@@ -1,0 +1,108 @@
+{
+  "canonical": [
+    {
+      "Address": "123 Main St",
+      "Name": "Ada King",
+      "Phone": "5125550182",
+      "Zip": "78701",
+      "match_confidence": "1.0",
+      "member_count": "1",
+      "source_row_ids": "5"
+    },
+    {
+      "Address": "123 Main St",
+      "Name": "Ada Lovelace",
+      "Phone": "5125550182",
+      "Zip": "78701",
+      "match_confidence": "1.0",
+      "member_count": "1",
+      "source_row_ids": "4"
+    },
+    {
+      "Address": "",
+      "Name": "G. Hopper",
+      "Phone": "(212) 555-0100",
+      "Zip": "",
+      "match_confidence": "1.0",
+      "member_count": "1",
+      "source_row_ids": "3"
+    },
+    {
+      "Address": "1 Navy Way",
+      "Name": "Grace Hopper",
+      "Phone": "(212) 555-0100",
+      "Zip": "10001",
+      "match_confidence": "1.0",
+      "member_count": "1",
+      "source_row_ids": "2"
+    }
+  ],
+  "clean": [
+    {
+      "Address": "123 Main St",
+      "Name": "Ada King",
+      "Phone": "5125550182",
+      "Zip": "78701",
+      "match_confidence": "1.0",
+      "member_count": "1",
+      "source_row_ids": "5"
+    },
+    {
+      "Address": "123 Main St",
+      "Name": "Ada Lovelace",
+      "Phone": "5125550182",
+      "Zip": "78701",
+      "match_confidence": "1.0",
+      "member_count": "1",
+      "source_row_ids": "4"
+    },
+    {
+      "Address": "",
+      "Name": "G. Hopper",
+      "Phone": "(212) 555-0100",
+      "Zip": "",
+      "match_confidence": "1.0",
+      "member_count": "1",
+      "source_row_ids": "3"
+    },
+    {
+      "Address": "1 Navy Way",
+      "Name": "Grace Hopper",
+      "Phone": "(212) 555-0100",
+      "Zip": "10001",
+      "match_confidence": "1.0",
+      "member_count": "1",
+      "source_row_ids": "2"
+    }
+  ],
+  "original": [
+    {
+      "Address": "1 Navy Way",
+      "Name": "Grace Hopper",
+      "Phone": "(212) 555-0100",
+      "Zip": "10001",
+      "source_row_number": "2"
+    },
+    {
+      "Address": "",
+      "Name": "G. Hopper",
+      "Phone": "(212) 555-0100",
+      "Zip": "",
+      "source_row_number": "3"
+    },
+    {
+      "Address": "123 Main St",
+      "Name": "Ada Lovelace",
+      "Phone": "5125550182",
+      "Zip": "78701",
+      "source_row_number": "4"
+    },
+    {
+      "Address": "123 Main St",
+      "Name": "Ada King",
+      "Phone": "5125550182",
+      "Zip": "78701",
+      "source_row_number": "5"
+    }
+  ]
+}

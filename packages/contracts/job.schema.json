@@ -1,0 +1,80 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dataforge.local/contracts/job.schema.json",
+  "title": "Job",
+  "type": "object",
+  "required": [
+    "id",
+    "project_id",
+    "kind",
+    "state",
+    "created_at",
+    "updated_at",
+    "params",
+    "result",
+    "error"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "project_id": {
+      "type": "string"
+    },
+    "kind": {
+      "enum": [
+        "fixture",
+        "dataset_import",
+        "scrape",
+        "scrape_rendered",
+        "match"
+      ]
+    },
+    "state": {
+      "enum": [
+        "draft",
+        "validating",
+        "queued",
+        "running",
+        "paused",
+        "completed",
+        "failed",
+        "cancelled"
+      ]
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "updated_at": {
+      "type": "string"
+    },
+    "params": {
+      "type": "object",
+      "not": {
+        "required": [
+          "credential_secret"
+        ]
+      }
+    },
+    "result": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "error": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "events": {
+      "type": "array",
+      "items": {
+        "$ref": "job-event.schema.json"
+      }
+    }
+  }
+}

@@ -103,8 +103,16 @@ def validate_preset(preset: dict) -> list[str]:
             errors.append(f"field {field.get('key')}: at least one selector is required")
 
     pagination = preset.get("pagination") if isinstance(preset.get("pagination"), dict) else {"type": "none"}
-    if pagination.get("type", "none") not in PAGINATION_TYPES:
+    kind = pagination.get("type", "none")
+    if kind not in PAGINATION_TYPES:
         errors.append(f"pagination.type must be one of {PAGINATION_TYPES}")
+    required_config = {"next_link": "next", "cursor": "cursor", "detail_links": "links"}
+    if kind in required_config and not isinstance((pagination.get(required_config[kind]) or {}).get("css"), str) and strategy.get("preferred") != "api":
+        errors.append(f"pagination.{required_config[kind]}.css is required for {kind} pagination")
+    if kind == "infinite_scroll" and "webview" not in allowed:
+        errors.append("infinite_scroll pagination requires the webview strategy")
+    if kind == "infinite_scroll" and int(pagination.get("max_scrolls", 20)) > 100:
+        errors.append("pagination.max_scrolls cannot exceed 100")
     return errors
 
 

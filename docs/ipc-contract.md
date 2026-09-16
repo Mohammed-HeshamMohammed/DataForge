@@ -45,6 +45,15 @@ Command names match `^[a-z_]+\.[a-z_]+$` (enforced by the host). Unknown additiv
 | `preset.export_custom` / `preset.import_custom` | `preset_id`, `preset_version` / `document` | export document / `{id, version}` |
 | `scrape.check_url` | `preset` or `preset_id`+`preset_version`, `url`, `scope_url` | `{allowed, reason}` |
 | `scrape.stage_rendered` | `preset`, `pages: [{url, records, retrieved_at}]`, `run_mode`, `policy_acknowledgement`, `dataset_name?` | `{job_id}` |
+| `match.create_job` | adds `compare_dataset_id?`; `settings.source_trust` (dataset ids, most trusted first) | `{job_id}` |
+| `match.submit_review` | adds `values?` `{column: row_id}` (merge only) | `{review_action_id, review_version}` |
+| `match.set_canonical_value` / `match.undo_canonical_value` | `job_id`, `cluster_id`, `column`, `row_id` / `job_id`, `override_id` | `{override_id}` / `{undone}` |
+| `match.flag_mapping` / `dataset.mapping_flags` | `job_id`, `column`, `note`, `decision_id?` / `dataset_id` | `{flag_id, dataset_id}` / open reports |
+| `dataset.confirm_mapping` | adds `export_exclude?` (columns) | new mapping version |
+
+`match.results` also returns `compare_dataset_id`, `review_turnaround`, and `mapping_flags`. Its metrics include `stage_seconds`, `rows_per_second`, `cluster_size_distribution`, `decisions_by_scope`, and `survivor_sources`. `match.clusters` items include `canonical_values`, `field_provenance`, and `conflicts`. Machine-checked JSON schemas for these responses live in `packages/contracts/`.
+
+Studio bridge actions also include `scrollStep` and `links(css)` for infinite scroll and detail links.
 
 `scrape.create_job` and `job.retry` accept `credential_ref`. Only the desktop host may add `credential_secret`; the host rejects UI payloads that contain it, and the service keeps it in memory only.
 
@@ -56,7 +65,7 @@ Command names match `^[a-z_]+\.[a-z_]+$` (enforced by the host). Unknown additiv
 | `credential_save` / `credential_delete` / `credential_list` | `name`, `secret` / `name` / — | OS credential store; values are never returned. |
 | `studio_open` | `url`, `allowedHosts`, `bounds` | Creates the incognito child WebView over `bounds` (CSS px). |
 | `studio_set_bounds` / `studio_navigate` / `studio_control` / `studio_close` | `bounds` / `url` / `reload\|stop\|back` / — | Navigation is re-checked against allowed hosts. |
-| `studio_call` | `action` (`setMode`, `takePicks`, `pageInfo`, `count`, `extract`), `args` array | Allow-listed bridge calls with JSON-encoded arguments. |
+| `studio_call` | `action` (`setMode`, `takePicks`, `pageInfo`, `count`, `extract`, `scrollStep`, `links`), `args` array | Allow-listed bridge calls with JSON-encoded arguments. |
 | `update_check` / `update_install` | `repository` (`owner/name`), `channel` / — | GitHub-pinned endpoint; install verifies the signature, needs approval, and is refused during active jobs. |
 
 Events: `studio-event` with `{type: "page_load", event: "started"|"finished", url}` or `{type: "navigation_blocked", url}`. URLs are origin and path only.

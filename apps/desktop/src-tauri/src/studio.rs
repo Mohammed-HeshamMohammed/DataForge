@@ -11,7 +11,7 @@ use tauri::{AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, Rect, Url
 
 const LABEL: &str = "scrape-studio";
 const BRIDGE_SCRIPT: &str = include_str!("studio.js");
-const BRIDGE_ACTIONS: &[&str] = &["setMode", "takePicks", "pageInfo", "count", "extract"];
+const BRIDGE_ACTIONS: &[&str] = &["setMode", "takePicks", "pageInfo", "count", "extract", "scrollStep", "links"];
 
 #[derive(Default)]
 pub struct StudioState(Mutex<Vec<String>>);

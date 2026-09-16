@@ -45,11 +45,14 @@ export function Studio({ navigate }: { navigate: Navigate }) {
   const [scopeUrl, setScopeUrl] = useState<string | null>(null);
   const [loaded, setLoaded] = useState<{ url: string; state: string } | null>(null);
   const [pageInfo, setPageInfo] = useState<PageInfo | null>(null);
-  const [mode, setMode] = useState<"none" | "element" | "repeated" | "next">("none");
+  const [mode, setMode] = useState<"none" | "element" | "repeated" | "next" | "detail">("none");
   const [recordRoot, setRecordRoot] = useState("");
   const [rootCount, setRootCount] = useState<number | null>(null);
   const [fields, setFields] = useState<Field[]>([]);
   const [nextCss, setNextCss] = useState("");
+  const [pageMode, setPageMode] = useState<"none" | "next_link" | "infinite_scroll" | "detail_links">("none");
+  const [detailCss, setDetailCss] = useState("");
+  const [maxScrolls, setMaxScrolls] = useState(10);
   const [name, setName] = useState("my_cards");
   const [version, setVersion] = useState("1.0.0");
   const [maxPages, setMaxPages] = useState(3);
@@ -113,10 +116,17 @@ export function Studio({ navigate }: { navigate: Navigate }) {
       parent_preset_version: base.version,
       strategy: { preferred: "webview", allowed: ["webview"] },
       extraction: { ...clean.extraction, record_root: { css: recordRoot }, fields },
-      pagination: nextCss ? { type: "next_link", next: { css: nextCss, attribute: "href" }, stop_conditions: ["max_pages", "max_records", "repeated_canonical_url", "no_new_records"] } : { type: "none" },
+      pagination:
+        pageMode === "next_link" && nextCss
+          ? { type: "next_link", next: { css: nextCss, attribute: "href" }, stop_conditions: ["max_pages", "max_records", "repeated_canonical_url", "no_new_records"] }
+          : pageMode === "infinite_scroll"
+            ? { type: "infinite_scroll", max_scrolls: maxScrolls, stop_conditions: ["max_records", "no_new_records", "max_duration"] }
+            : pageMode === "detail_links" && detailCss
+              ? { type: "detail_links", links: { css: detailCss, attribute: "href" }, stop_conditions: ["max_records", "repeated_canonical_url"] }
+              : { type: "none" },
       validation: { ...clean.validation, unique_by: fields.some((f) => f.type === "url") ? [fields.find((f) => f.type === "url")!.key] : [] },
     };
-  }, [base, name, version, recordRoot, fields, nextCss]);
+  }, [base, name, version, recordRoot, fields, nextCss, pageMode, detailCss, maxScrolls]);
 
   const fail = (err: unknown) => setError(err instanceof Error ? err.message : String(err));
 
@@ -172,12 +182,12 @@ export function Studio({ navigate }: { navigate: Navigate }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode]);
 
-  const startPick = async (next: "element" | "repeated" | "next") => {
+  const startPick = async (next: "element" | "repeated" | "next" | "detail") => {
     try {
       setError(null);
       await studioHost.call("setMode", [next, next === "element" ? recordRoot : null]);
       setMode(next);
-      setNotice(next === "repeated" ? "Click one repeated card or row in the page." : next === "next" ? "Click the next-page link." : "Click the value to extract inside a record.");
+      setNotice(next === "repeated" ? "Click one repeated card or row in the page." : next === "next" ? "Click the next-page link." : next === "detail" ? "Click one item link that opens a detail page." : "Click the value to extract inside a record.");
     } catch (err) {
       fail(err);
     }
@@ -215,6 +225,14 @@ export function Studio({ navigate }: { navigate: Navigate }) {
         return;
       }
       setNextCss(pick.selector);
+      setPageMode("next_link");
+    } else if (pick.mode === "detail") {
+      if (!pick.repeated) {
+        setError("No repeated item links found around that element. Pick a link that appears on every item.");
+        return;
+      }
+      setDetailCss(pick.repeated.selector);
+      setPageMode("detail_links");
     } else {
       if (recordRoot && !pick.inside_record_root) {
         setError("That element is outside the selected repeated item. Pick a value inside a card.");
@@ -241,7 +259,7 @@ export function Studio({ navigate }: { navigate: Navigate }) {
     setPageInfo(info);
     if (info.challenge_detected) throw new Error("The page shows an access challenge (CAPTCHA or bot check). Collection stopped; DataForge never bypasses these.");
     if (info.password_fields > 0) throw new Error("The page asks for a login. Collection stopped; DataForge does not collect behind logins.");
-    const page = await studioHost.call<Extracted>("extract", [{ record_root: recordRoot, fields, next_css: nextCss || null, limit }]);
+    const page = await studioHost.call<Extracted>("extract", [{ record_root: recordRoot, fields, next_css: pageMode === "next_link" ? nextCss || null : null, limit }]);
     if (page.error) throw new Error(page.error);
     return { page, info };
   };
@@ -249,19 +267,6 @@ export function Studio({ navigate }: { navigate: Navigate }) {
   const stage = async (runMode: "test" | "full", pages: { url: string; records: Record<string, string>[]; retrieved_at: string }[]) => {
     const result = await call<{ job_id: string }>("scrape.stage_rendered", { preset: draftPreset(), pages, run_mode: runMode, policy_acknowledgement: acknowledged, dataset_name: `${name} (Scrape Studio)` });
     setJobId(result.job_id);
-  };
-
-  const test = async () => {
-    try {
-      setError(null);
-      setRunning("test");
-      const { page } = await extractCurrent(10);
-      await stage("test", [{ url: page.url, records: page.records, retrieved_at: new Date().toISOString() }]);
-    } catch (err) {
-      fail(err);
-    } finally {
-      setRunning(null);
-    }
   };
 
   const save = async () => {
@@ -278,34 +283,77 @@ export function Studio({ navigate }: { navigate: Navigate }) {
     }
   };
 
-  const fullRun = async () => {
+  const waitForPage = async (previousUrl: string) => {
+    for (let waited = 0; waited < 30000; waited += 250) {
+      await sleep(250);
+      const info = await studioHost.call<PageInfo>("pageInfo").catch(() => null);
+      if (info && info.url !== previousUrl && info.ready_state === "complete") return;
+    }
+    throw new Error("The page did not finish loading in time");
+  };
+
+  /** Test runs collect at most 10 records with the same pagination logic a full run uses. */
+  const collect = async (runMode: "test" | "full") => {
     if (!base || !scopeUrl) return;
     stopRequested.current = false;
-    setRunning("full");
+    setRunning(runMode);
     setError(null);
     const pages: { url: string; records: Record<string, string>[]; retrieved_at: string }[] = [];
-    const seen = new Set<string>();
     const delay = Math.max(Number(base.request_limits.min_delay_ms) || 0, 1000);
-    const pageLimit = Math.min(maxPages, base.request_limits.max_pages_default);
+    const recordLimit = runMode === "test" ? 10 : base.request_limits.max_records_default;
+    const scrollLimit = runMode === "test" ? 0 : maxScrolls;
     try {
-      for (let index = 0; index < pageLimit && !stopRequested.current; index++) {
-        const { page } = await extractCurrent(base.request_limits.max_records_default);
-        if (seen.has(page.url)) break;
-        seen.add(page.url);
+      if (pageMode === "infinite_scroll") {
+        // Scroll until the item count stops growing (twice in a row), the scroll cap, or the record cap.
+        let last = -1;
+        let idle = 0;
+        for (let round = 0; round < scrollLimit && !stopRequested.current; round++) {
+          const { page } = await extractCurrent(recordLimit);
+          setNotice(`Scroll ${round}: ${page.records.length} items`);
+          if (page.records.length >= recordLimit) break;
+          idle = page.records.length === last ? idle + 1 : 0;
+          if (idle >= 2) break;
+          last = page.records.length;
+          await studioHost.call("scrollStep");
+          await sleep(delay);
+        }
+        const { page } = await extractCurrent(recordLimit);
         pages.push({ url: page.url, records: page.records, retrieved_at: new Date().toISOString() });
-        setNotice(`Page ${pages.length}: ${page.records.length} records`);
-        if (page.records.length === 0 || !page.next_url || index + 1 >= pageLimit) break;
-        await checkUrl(page.next_url, scopeUrl);
-        setLoaded(null);
-        await sleep(delay);
-        await studioHost.navigate(page.next_url);
-        for (let waited = 0; waited < 30000; waited += 250) {
-          await sleep(250);
-          const info = await studioHost.call<PageInfo>("pageInfo").catch(() => null);
-          if (info && info.url !== page.url && info.ready_state === "complete") break;
+      } else if (pageMode === "detail_links") {
+        const found = await studioHost.call<{ urls: string[]; error: string | null }>("links", [detailCss]);
+        if (found.error) throw new Error(found.error);
+        let current = (await studioHost.call<PageInfo>("pageInfo")).url;
+        for (const url of found.urls.slice(0, recordLimit)) {
+          if (stopRequested.current) break;
+          const allowed = await call<{ allowed: boolean }>("scrape.check_url", { preset: draftPreset(), url, scope_url: scopeUrl });
+          if (!allowed.allowed) continue;
+          await sleep(delay);
+          await studioHost.navigate(url);
+          await waitForPage(current);
+          current = url;
+          const { page } = await extractCurrent(1);
+          pages.push({ url: page.url, records: page.records.slice(0, 1), retrieved_at: new Date().toISOString() });
+          setNotice(`Detail page ${pages.length} of ${Math.min(found.urls.length, recordLimit)}`);
+        }
+      } else {
+        const seen = new Set<string>();
+        const pageLimit = runMode === "test" ? 1 : Math.min(maxPages, base.request_limits.max_pages_default);
+        for (let index = 0; index < pageLimit && !stopRequested.current; index++) {
+          const { page } = await extractCurrent(recordLimit);
+          if (seen.has(page.url)) break;
+          seen.add(page.url);
+          pages.push({ url: page.url, records: page.records, retrieved_at: new Date().toISOString() });
+          setNotice(`Page ${pages.length}: ${page.records.length} records`);
+          if (pageMode !== "next_link" || page.records.length === 0 || !page.next_url || index + 1 >= pageLimit) break;
+          await checkUrl(page.next_url, scopeUrl);
+          setLoaded(null);
+          await sleep(delay);
+          await studioHost.navigate(page.next_url);
+          await waitForPage(page.url);
         }
       }
-      if (pages.length) await stage("full", pages);
+      if (runMode === "test") pages.forEach((page, index) => (page.records = page.records.slice(0, Math.max(0, recordLimit - pages.slice(0, index).reduce((n, p) => n + p.records.length, 0)))));
+      if (pages.length) await stage(runMode, pages);
       setNotice(stopRequested.current ? "Stopped. Pages collected so far were staged." : `Collected ${pages.length} page(s).`);
     } catch (err) {
       fail(err);
@@ -435,16 +483,44 @@ export function Studio({ navigate }: { navigate: Navigate }) {
         ))}
 
         <h3 className="section-label">3. Pagination</h3>
-        <div className="row-actions">
-          <button type="button" className="btn btn-small" disabled={!scopeUrl || mode !== "none"} onClick={() => void startPick("next")}>
-            Pick next page
-          </button>
+        <label className="field">
+          <span>Mode</span>
+          <select value={pageMode} onChange={(e) => setPageMode(e.target.value as typeof pageMode)}>
+            <option value="none">Single page</option>
+            <option value="next_link">Next-page link</option>
+            <option value="infinite_scroll">Infinite scroll</option>
+            <option value="detail_links">Detail links (one record per item page)</option>
+          </select>
+        </label>
+        {pageMode === "next_link" && (
+          <>
+            <div className="row-actions">
+              <button type="button" className="btn btn-small" disabled={!scopeUrl || mode !== "none"} onClick={() => void startPick("next")}>
+                Pick next page
+              </button>
+              <label className="field inline small">
+                <span>Max pages</span>
+                <input type="number" min={1} max={base?.request_limits.max_pages_default} value={maxPages} onChange={(e) => setMaxPages(Number(e.target.value))} />
+              </label>
+            </div>
+            <input className="code" aria-label="Next page selector" value={nextCss} onChange={(e) => setNextCss(e.target.value)} placeholder="Next-page link selector" spellCheck={false} />
+          </>
+        )}
+        {pageMode === "infinite_scroll" && (
           <label className="field inline small">
-            <span>Max pages</span>
-            <input type="number" min={1} max={base?.request_limits.max_pages_default} value={maxPages} onChange={(e) => setMaxPages(Number(e.target.value))} />
+            <span>Max scrolls</span>
+            <input type="number" min={1} max={100} value={maxScrolls} onChange={(e) => setMaxScrolls(Math.min(100, Number(e.target.value)))} />
           </label>
-        </div>
-        <input className="code" aria-label="Next page selector" value={nextCss} onChange={(e) => setNextCss(e.target.value)} placeholder="No pagination" spellCheck={false} />
+        )}
+        {pageMode === "detail_links" && (
+          <>
+            <button type="button" className="btn btn-small" disabled={!scopeUrl || mode !== "none"} onClick={() => void startPick("detail")}>
+              Pick detail link
+            </button>
+            <input className="code" aria-label="Detail link selector" value={detailCss} onChange={(e) => setDetailCss(e.target.value)} placeholder="Item link selector" spellCheck={false} />
+            <p className="muted small">Record root and fields apply to each detail page. Only links inside this preset's scope are opened.</p>
+          </>
+        )}
 
         <h3 className="section-label">4. Test, save, run</h3>
         <div className="split tight">
@@ -461,7 +537,7 @@ export function Studio({ navigate }: { navigate: Navigate }) {
           <input type="checkbox" checked={acknowledged} onChange={(e) => setAcknowledged(e.target.checked)} /> I am authorized to collect and use this data and accept the site's terms.
         </label>
         <div className="row-actions">
-          <button type="button" className="btn btn-primary" disabled={!canExtract} onClick={() => void test()}>
+          <button type="button" className="btn btn-primary" disabled={!canExtract} onClick={() => void collect("test")}>
             Test 10 records
           </button>
           <button type="button" className="btn" disabled={!recordRoot || fields.length === 0 || saved} onClick={() => void save()} title={saved ? "This version is saved; bump the version to save changes" : undefined}>
@@ -472,7 +548,7 @@ export function Studio({ navigate }: { navigate: Navigate }) {
               Stop run
             </button>
           ) : (
-            <button type="button" className="btn" disabled={!canExtract || !saved} onClick={() => void fullRun()} title={saved ? undefined : "Save the preset and pass a test first"}>
+            <button type="button" className="btn" disabled={!canExtract || !saved} onClick={() => void collect("full")} title={saved ? undefined : "Save the preset and pass a test first"}>
               Start full run
             </button>
           )}

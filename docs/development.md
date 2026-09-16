@@ -17,7 +17,7 @@
 Requirements: Python 3.11+, Node 20+, Rust/Cargo, and WebView2 on Windows.
 
 ```powershell
-python -m pip install openpyxl httpx beautifulsoup4 rapidfuzz cryptography pytest
+python -m pip install openpyxl httpx beautifulsoup4 rapidfuzz cryptography pytest hypothesis jsonschema
 npm run setup:desktop
 ```
 
@@ -41,9 +41,9 @@ npm run dev                # Vite on http://127.0.0.1:1420, proxies /rpc
 ## Checks
 
 ```powershell
-npm run test:python        # application, scraping, matching (64+ tests)
+npm run test:python        # application, scraping, matching: property, contract, golden-file, migration tests
 npm run typecheck
-npm run test:desktop
+npm run test:desktop       # node:test units + Vitest component and axe-core accessibility specs
 npm run build
 cd apps/desktop/src-tauri; cargo test   # sidecar round trip, OS credential store, Studio guards, update pinning
 ```
@@ -75,6 +75,16 @@ python scripts/preset-package.py build --name vendor-pack --version 1.0.0 --pres
 
 To trust the printed key, add it to `%LOCALAPPDATA%\DataForge\trusted-preset-keys.json` for one machine, or to `packages/presets/trusted_keys.json` after review. Then install from Settings → Presets.
 
+## Command line
+
+```powershell
+$env:PYTHONPATH = "services/application/src;workers/matching/src;workers/scraping/src"
+python -m dataforge_application.cli --create --project C:\data\demo --name Demo health.check
+python -m dataforge_application.cli --project C:\data\demo --wait dataset.import '{"path": "C:\\data\\leads.csv"}'
+```
+
+The CLI uses the same command API as the desktop app. With `--wait`, it follows a started job to its end. Service logs are JSON on stderr and are also written to a rotating `%LOCALAPPDATA%\DataForge\logs\service.log` (5 MB × 3, redacted); set `DATAFORGE_LOG_FILE=0` to disable the file.
+
 ## Behavior notes
 
 ### Imports and mapping
@@ -101,6 +111,8 @@ To trust the printed key, add it to `%LOCALAPPDATA%\DataForge\trusted-preset-key
 - **Review:** decisions become dataset-scoped constraints with optimistic versions and undo.
 - **Groups:** splitting adds `must_not_link` constraints, and locking keeps a group exactly as it is; both apply to future runs and can be undone.
 - **Ranking:** the model only reorders the queue.
+- **Comparison scope:** a job can compare against a second dataset. The trusted source supplies the survivor; other sources only fill empty fields. Canonical exports add `canonical.<role>` fields, and `original.csv` and `clean.csv` add `source_dataset`.
+- **Reviewer tools:** "Choose values" picks which record supplies each differing field during a merge, and groups allow per-field canonical choices; both can be undone. "Mark bad mapping" flags a field for the mapping screen. "Exclude from export" removes a column from files but keeps it as evidence.
 - **Exports:** full jobs write canonical, clean, original, and audit files. Unresolved review blocks export unless the files are explicitly marked not final.
 
 ### Scraping
@@ -114,7 +126,7 @@ To trust the printed key, add it to `%LOCALAPPDATA%\DataForge\trusted-preset-key
 ### Scrape Studio
 
 1. Load a permitted URL.
-2. Pick the repeated item, the fields, and the next-page link.
+2. Pick the repeated item and the fields, then choose pagination: next-page link, infinite scroll, or detail links (one record per item page).
 3. Adjust the selectors and test 10 records.
 4. Save the custom preset and run a full multi-page collection in the visible embedded WebView.
 

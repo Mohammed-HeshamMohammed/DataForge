@@ -1,0 +1,104 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dataforge.local/contracts/match-decision.schema.json",
+  "title": "MatchDecision",
+  "type": "object",
+  "required": [
+    "id",
+    "left_row_id",
+    "right_row_id",
+    "candidate_block_ids",
+    "evidence",
+    "score",
+    "decision",
+    "reason"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^d_[0-9a-f]{16}$"
+    },
+    "left_row_id": {
+      "type": "string"
+    },
+    "right_row_id": {
+      "type": "string"
+    },
+    "candidate_block_ids": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "pattern": "^[a-z_]+:[0-9a-f]{10}$"
+      }
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "field",
+          "similarity",
+          "result",
+          "strength",
+          "explanation"
+        ],
+        "properties": {
+          "field": {
+            "enum": [
+              "identifier",
+              "phone",
+              "email",
+              "address",
+              "mailing_address",
+              "name",
+              "region",
+              "url"
+            ]
+          },
+          "similarity": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1
+          },
+          "result": {
+            "enum": [
+              "exact",
+              "similar",
+              "different",
+              "conflict"
+            ]
+          },
+          "strength": {
+            "enum": [
+              "strong",
+              "supporting",
+              "none",
+              "guard"
+            ]
+          },
+          "explanation": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "score": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 1
+    },
+    "decision": {
+      "enum": [
+        "match",
+        "possible_match",
+        "non_match",
+        "rejected"
+      ]
+    },
+    "reason": {
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}

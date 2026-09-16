@@ -1,0 +1,110 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dataforge.local/contracts/job-event.schema.json",
+  "title": "JobEvent",
+  "type": "object",
+  "required": [
+    "id",
+    "job_id",
+    "schema_version",
+    "event_type",
+    "occurred_at",
+    "payload"
+  ],
+  "properties": {
+    "id": {
+      "type": "integer"
+    },
+    "job_id": {
+      "type": "string"
+    },
+    "schema_version": {
+      "const": 1
+    },
+    "occurred_at": {
+      "type": "string"
+    },
+    "event_type": {
+      "enum": [
+        "job.created",
+        "job.state_changed",
+        "job.stage_changed",
+        "review.decision_recorded",
+        "review.decision_reversed",
+        "cluster.split",
+        "cluster.locked",
+        "cluster.action_reversed",
+        "canonical.value_chosen",
+        "export.created"
+      ]
+    },
+    "payload": {
+      "type": "object"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "event_type": {
+            "const": "job.state_changed"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "required": [
+              "from_state",
+              "to_state"
+            ],
+            "properties": {
+              "from_state": {
+                "enum": [
+                  "draft",
+                  "validating",
+                  "queued",
+                  "running",
+                  "paused",
+                  "completed",
+                  "failed",
+                  "cancelled"
+                ]
+              },
+              "to_state": {
+                "enum": [
+                  "draft",
+                  "validating",
+                  "queued",
+                  "running",
+                  "paused",
+                  "completed",
+                  "failed",
+                  "cancelled"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "event_type": {
+            "const": "job.stage_changed"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "required": [
+              "stage"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

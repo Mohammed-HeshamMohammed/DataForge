@@ -22,7 +22,7 @@ jobs:
         with:
           node-version: "22"
       - uses: dtolnay/rust-toolchain@stable
-      - run: python -m pip install openpyxl httpx beautifulsoup4 rapidfuzz cryptography pytest
+      - run: python -m pip install openpyxl httpx beautifulsoup4 rapidfuzz cryptography pytest hypothesis jsonschema
       - run: npm ci --prefix apps/desktop
 
       - name: Verify tag matches app version

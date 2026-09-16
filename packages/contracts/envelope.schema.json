@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dataforge.local/contracts/envelope.schema.json",
+  "title": "CommandResponse",
+  "oneOf": [
+    {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "ok",
+        "result"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "ok": {
+          "const": true
+        },
+        "result": {},
+        "id": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      }
+    },
+    {
+      "type": "object",
+      "required": [
+        "schema_version",
+        "ok",
+        "error"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "ok": {
+          "const": false
+        },
+        "id": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "error": {
+          "type": "object",
+          "required": [
+            "code",
+            "message"
+          ],
+          "properties": {
+            "code": {
+              "enum": [
+                "invalid_request",
+                "unknown_command",
+                "unsupported_schema",
+                "no_project",
+                "jobs_active",
+                "not_found",
+                "review_conflict",
+                "internal_error",
+                "invalid_json"
+              ]
+            },
+            "message": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
+    }
+  ]
+}

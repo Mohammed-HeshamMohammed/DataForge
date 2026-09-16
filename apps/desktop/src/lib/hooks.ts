@@ -75,7 +75,7 @@ export function useKeyboardShortcuts(handlers: Record<string, () => void>, enabl
   useEffect(() => {
     if (!enabled) return;
     const listener = (event: KeyboardEvent) => {
-      const target = event.target as HTMLElement | null;
+      const target = event.target instanceof Element ? event.target : null;
       if (event.ctrlKey || event.metaKey || event.altKey || target?.closest("input, textarea, select, [contenteditable]")) return;
       const handler = ref.current[event.key.toLowerCase()];
       if (handler) {

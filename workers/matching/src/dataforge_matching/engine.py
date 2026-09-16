@@ -10,6 +10,7 @@ Evidence explanations never contain row values, so decisions are safe to log.
 from __future__ import annotations
 
 import hashlib
+import time
 from collections import defaultdict
 from itertools import combinations
 from typing import Callable, Iterable
@@ -24,7 +25,7 @@ WEIGHTS = {
     "name": 0.15, "region": 0.05, "url": 0.20,
 }
 STRICTNESS = {"conservative": (0.95, 0.75), "balanced": (0.90, 0.70)}
-DEFAULT_SETTINGS = {"strictness": "conservative", "max_block_size": 200, "default_region": "US"}
+DEFAULT_SETTINGS = {"strictness": "conservative", "max_block_size": 200, "default_region": "US", "source_trust": []}
 
 
 class MatchRequestError(ValueError):
@@ -34,16 +35,21 @@ class MatchRequestError(ValueError):
 def validate_request(request: dict) -> dict:
     if request.get("schema_version") != SCHEMA_VERSION:
         raise MatchRequestError(f"Unsupported match request schema_version {request.get('schema_version')!r}")
-    mapping = request.get("mapping") or {}
-    unknown = sorted({role for role in mapping.values() if role not in ALL_ROLES})
-    if unknown:
-        raise MatchRequestError(f"Unknown roles in mapping: {unknown}")
-    for role in POSITIONAL_ROLES:
-        if list(mapping.values()).count(role) > 1:
-            raise MatchRequestError(f"Role {role!r} is positional and may be mapped to only one column")
+    mappings = request.get("mappings") or {"default": request.get("mapping") or {}}
     evidence_roles = {"identifier", "phone", "email", "address", "mailing_address", "url"}
-    if not evidence_roles & set(mapping.values()):
-        raise MatchRequestError("At least one identifier, contact, address, or URL field is required")
+    for name, mapping in mappings.items():
+        unknown = sorted({role for role in mapping.values() if role not in ALL_ROLES})
+        if unknown:
+            raise MatchRequestError(f"Unknown roles in mapping {name}: {unknown}")
+        for role in POSITIONAL_ROLES:
+            if list(mapping.values()).count(role) > 1:
+                raise MatchRequestError(f"Role {role!r} is positional and may be mapped to only one column")
+        if not evidence_roles & set(mapping.values()):
+            raise MatchRequestError("At least one identifier, contact, address, or URL field is required")
+    if len(mappings) > 1:
+        shared = set.intersection(*({r for r in m.values() if r in evidence_roles} for m in mappings.values()))
+        if not shared:
+            raise MatchRequestError("Datasets being compared share no identifier, contact, address, or URL role")
     settings = {**DEFAULT_SETTINGS, **(request.get("settings") or {})}
     if settings["strictness"] not in STRICTNESS:
         raise MatchRequestError(f"Unknown strictness {settings['strictness']!r}")
@@ -302,14 +308,30 @@ def cluster(
     return clusters, rejected_bridges, metrics
 
 
-def canonicalize(clusters: list[dict], rows: dict[str, dict], normalized: dict[str, dict], locked_row_ids: set[str] = frozenset()) -> list[dict]:
+def canonicalize(
+    clusters: list[dict],
+    rows: dict[str, dict],
+    normalized: dict[str, dict],
+    locked_row_ids: set[str] = frozenset(),
+    source_trust: list[str] = (),
+    overrides: dict[str, set[str]] | None = None,
+    role_mappings: dict[str, dict[str, str]] | None = None,
+) -> list[dict]:
+    """Survivor order: user-locked, trusted source, verified identifiers/contacts, completeness, earliest row.
+
+    overrides: row_id -> columns a reviewer chose from that row. role_mappings: source -> {column: role};
+    when given (cross-dataset scope) canonical role fields such as ``canonical.phone`` are added.
+    """
+    trust = {source: index for index, source in enumerate(source_trust)}
+    overrides = overrides or {}
     records = []
     for c in clusters:
         def rank(row_id: str) -> tuple:
             n, row = normalized[row_id], rows[row_id]
             verified = len(n["identifier"]) + len(n["phone"]) + len(n["email"])
             completeness = sum(1 for v in row["raw"].values() if v not in (None, ""))
-            return (row_id not in locked_row_ids, -verified, -completeness, row["row_number"], row_id)
+            source_rank = trust.get(row.get("source"), len(trust))
+            return (row_id not in locked_row_ids, source_rank, -verified, -completeness, row.get("source") or "", row["row_number"], row_id)
 
         ordered = sorted(c["member_row_ids"], key=rank)
         survivor = ordered[0]
@@ -318,7 +340,13 @@ def canonicalize(clusters: list[dict], rows: dict[str, dict], normalized: dict[s
         for column in columns:
             candidates = [(row_id, rows[row_id]["raw"].get(column)) for row_id in ordered]
             non_empty = [(row_id, v) for row_id, v in candidates if v not in (None, "")]
-            if non_empty:
+            reviewer_choice = next(((row_id, v) for row_id, v in candidates if column in overrides.get(row_id, ())), None)
+            if reviewer_choice is not None:
+                values[column] = reviewer_choice[1] if reviewer_choice[1] is not None else ""
+                provenance[column] = {"row_id": reviewer_choice[0], "rule": "reviewer_choice"}
+                if len({str(v) for _, v in non_empty}) > 1:
+                    conflicts[column] = [row_id for row_id, _ in non_empty]
+            elif non_empty:
                 chosen_row, chosen = non_empty[0]
                 values[column] = chosen
                 provenance[column] = {"row_id": chosen_row, "rule": "survivor" if chosen_row == survivor else "fill_from_member"}
@@ -327,6 +355,16 @@ def canonicalize(clusters: list[dict], rows: dict[str, dict], normalized: dict[s
                     conflicts[column] = [row_id for row_id, _ in non_empty]
             else:
                 values[column] = ""
+        if role_mappings:
+            for row_id in ordered:
+                mapping = role_mappings.get(rows[row_id].get("source") or "default", {})
+                for column, role in mapping.items():
+                    key = f"canonical.{role}"
+                    value = rows[row_id]["raw"].get(column)
+                    if role in ("other", "ignore") or key in values or value in (None, ""):
+                        continue
+                    values[key] = value
+                    provenance[key] = {"row_id": row_id, "rule": "role_from_" + ("survivor" if row_id == survivor else "member"), "column": column}
         records.append({
             "cluster_id": c["id"], "survivor_row_id": survivor, "values": values,
             "field_provenance": provenance, "conflicts": conflicts,
@@ -336,12 +374,24 @@ def canonicalize(clusters: list[dict], rows: dict[str, dict], normalized: dict[s
 
 def run(request: dict, progress: Callable[[str, dict], None] = lambda s, d: None, should_stop: Callable[[], bool] = lambda: False) -> dict:
     settings = validate_request(request)
-    mapping = {col: role for col, role in request["mapping"].items() if role not in ("other", "ignore")}
+    started = time.perf_counter()
+    stage_seconds: dict[str, float] = {}
+    stage_started = started
+
+    def mark(stage: str) -> None:
+        nonlocal stage_started
+        now = time.perf_counter()
+        stage_seconds[stage] = round(now - stage_started, 4)
+        stage_started = now
+
+    mappings = request.get("mappings") or {"default": request["mapping"]}
+    active = {name: {col: role for col, role in m.items() if role not in ("other", "ignore")} for name, m in mappings.items()}
     rows = {row["id"]: row for row in request["rows"]}
     row_order = [row["id"] for row in request["rows"]]
 
     progress("normalizing", {"rows": len(rows)})
-    normalized = {row_id: normalize_row(row["raw"], mapping, settings["default_region"]) for row_id, row in rows.items()}
+    normalized = {row_id: normalize_row(row["raw"], active[row.get("source") if row.get("source") in active else next(iter(active))], settings["default_region"]) for row_id, row in rows.items()}
+    mark("normalizing")
     unmatchable = sum(1 for n in normalized.values() if not (n["identifier"] or n["phone"] or n["email"] or n.get("address") or n.get("mailing_address") or n.get("url") or n.get("name")))
     if should_stop():
         return {"stopped_at": "normalizing"}
@@ -352,6 +402,7 @@ def run(request: dict, progress: Callable[[str, dict], None] = lambda s, d: None
     if should_stop():
         return {"stopped_at": "finding_candidates"}
 
+    mark("finding_candidates")
     progress("evaluating_evidence", {"candidate_pairs": len(pairs)})
     decisions = []
     for index, ((left, right), block_ids) in enumerate(sorted(pairs.items())):
@@ -365,18 +416,27 @@ def run(request: dict, progress: Callable[[str, dict], None] = lambda s, d: None
             "evidence": evidence, "score": round(score, 4), "decision": decision, "reason": reason,
         })
 
+    mark("evaluating_evidence")
     progress("building_groups", {})
     clusters, bridges, cluster_metrics = cluster(row_order, normalized, decisions, request.get("constraints") or [], request.get("locked_groups") or [])
     bridge_set = set(bridges)
     for d in decisions:
         if d["id"] in bridge_set:
             d["decision"], d["reason"] = "possible_match", "Needs review: would bridge two existing groups with a single link"
-    canonical = canonicalize(clusters, rows, normalized)
+    canonical = canonicalize(
+        clusters, rows, normalized, source_trust=settings.get("source_trust") or [],
+        overrides=request.get("overrides"), role_mappings=mappings if len(mappings) > 1 else None,
+    )
+    mark("building_groups")
 
     counts = defaultdict(int)
     reasons = defaultdict(int)
+    by_scope: dict[str, dict[str, int]] = defaultdict(lambda: defaultdict(int))
     for d in decisions:
         counts[d["decision"]] += 1
+        left_source, right_source = rows[d["left_row_id"]].get("source") or "default", rows[d["right_row_id"]].get("source") or "default"
+        scope = f"within:{left_source}" if left_source == right_source else "across"
+        by_scope[scope][d["decision"]] += 1
         for item in d["evidence"]:
             if item["strength"] == "guard":
                 reasons[item["explanation"]] += 1
@@ -392,5 +452,26 @@ def run(request: dict, progress: Callable[[str, dict], None] = lambda s, d: None
         "metrics": {
             "input_rows": len(rows), "unmatchable_rows": unmatchable, **block_metrics, **cluster_metrics,
             "decisions": dict(counts), "guard_reasons": dict(reasons),
+            "decisions_by_scope": {scope: dict(values) for scope, values in by_scope.items()},
+            "cluster_size_distribution": _size_distribution(clusters),
+            "survivor_sources": _survivor_sources(canonical, rows),
+            "stage_seconds": stage_seconds,
+            "total_seconds": round(time.perf_counter() - started, 4),
+            "rows_per_second": round(len(rows) / max(time.perf_counter() - started, 1e-6), 1),
         },
     }
+
+
+def _size_distribution(clusters: list[dict]) -> dict[str, int]:
+    buckets: dict[str, int] = defaultdict(int)
+    for c in clusters:
+        size = len(c["member_row_ids"])
+        buckets["1" if size == 1 else "2" if size == 2 else "3-5" if size <= 5 else "6-20" if size <= 20 else "21+"] += 1
+    return dict(buckets)
+
+
+def _survivor_sources(canonical: list[dict], rows: dict[str, dict]) -> dict[str, int]:
+    counts: dict[str, int] = defaultdict(int)
+    for record in canonical:
+        counts[rows[record["survivor_row_id"]].get("source") or "default"] += 1
+    return dict(counts)

@@ -28,22 +28,31 @@ export function MatchTab({ initialDatasetId, initialJobId }: { initialDatasetId?
   const [previewJobId, setPreviewJobId] = useState<string | null>(null);
   const [fullJobId, setFullJobId] = useState<string | null>(initialJobId ?? null);
   const [mappingVersion, setMappingVersion] = useState<number | null>(null);
+  const [compareId, setCompareId] = useState<string | null>(null);
+  const [trustCompareFirst, setTrustCompareFirst] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const dataset = datasets.data?.find((d) => d.id === datasetId) ?? null;
+  const compareDataset = datasets.data?.find((d) => d.id === compareId) ?? null;
+  const sourceTrust = compareId && datasetId ? (trustCompareFirst ? [compareId, datasetId] : [datasetId, compareId]) : [];
+  const effectiveSettings = { ...settings, source_trust: sourceTrust };
   const preview = useJob(previewJobId);
   const full = useJob(fullJobId);
   const previewResults = useService<MatchResults>(preview?.state === "completed" ? "match.results" : null, { job_id: previewJobId });
   const fullResults = useService<MatchResults>(full?.state === "completed" ? "match.results" : null, { job_id: fullJobId });
 
   // A mapping or settings change makes an earlier preview stale.
-  const previewStale = !!preview && (preview.params.mapping_version !== (mappingVersion ?? dataset?.mapping_version) || JSON.stringify(preview.params.settings && pickSettings(preview.params.settings as Settings)) !== JSON.stringify(pickSettings(settings)));
+  const previewStale =
+    !!preview &&
+    (preview.params.mapping_version !== (mappingVersion ?? dataset?.mapping_version) ||
+      (preview.params.compare_dataset_id ?? null) !== compareId ||
+      JSON.stringify(preview.params.settings && pickSettings(preview.params.settings as Settings & { source_trust?: string[] })) !== JSON.stringify(pickSettings(effectiveSettings)));
   const history = (jobs.data ?? []).filter((j) => j.kind === "match" && j.params.dataset_id === datasetId);
   const completed = new Set<Step>([...(dataset ? [1 as Step] : []), ...(dataset?.mapping_version ? [2 as Step] : []), ...(preview?.state === "completed" && !previewStale ? [3 as Step] : []), ...(fullResults.data && fullResults.data.pending_review === 0 ? [4 as Step] : [])]);
 
   const startJob = async (runMode: "preview" | "full") => {
     try {
-      const { job_id } = await call<{ job_id: string }>("match.create_job", { dataset_id: datasetId, run_mode: runMode, settings });
+      const { job_id } = await call<{ job_id: string }>("match.create_job", { dataset_id: datasetId, compare_dataset_id: compareId, run_mode: runMode, settings: effectiveSettings });
       setError(null);
       if (runMode === "preview") setPreviewJobId(job_id);
       else {
@@ -103,17 +112,37 @@ export function MatchTab({ initialDatasetId, initialJobId }: { initialDatasetId?
                 setDatasetId(id);
                 setStep(2);
               }}
+              compareId={compareId}
+              onCompare={(id) => {
+                setCompareId(id);
+                setPreviewJobId(null);
+              }}
+              trustCompareFirst={trustCompareFirst}
+              onTrustCompareFirst={setTrustCompareFirst}
             />
           )}
           {step === 2 && dataset && (
-            <MappingEditor
-              datasetId={dataset.id}
-              onSaved={(version) => {
-                setMappingVersion(version);
-                void datasets.reload();
-                setStep(3);
-              }}
-            />
+            <>
+              {compareDataset && <h2>{dataset.name}</h2>}
+              <MappingEditor
+                datasetId={dataset.id}
+                onSaved={(version) => {
+                  setMappingVersion(version);
+                  void datasets.reload();
+                  if (!compareDataset) setStep(3);
+                }}
+              />
+              {compareDataset && (
+                <>
+                  <h2 className="section-head">Compare with: {compareDataset.name}</h2>
+                  <p className="muted small">Both mappings must use the same entity type and share at least one identifier, contact, address, or URL role. Column names may differ.</p>
+                  <MappingEditor datasetId={compareDataset.id} onSaved={() => void datasets.reload()} />
+                  <button type="button" className="btn btn-primary" disabled={!dataset.mapping_version || !compareDataset.mapping_version} onClick={() => setStep(3)}>
+                    Continue to preview
+                  </button>
+                </>
+              )}
+            </>
           )}
           {step === 3 && dataset && (
             <PreviewStep
@@ -150,7 +179,7 @@ export function MatchTab({ initialDatasetId, initialJobId }: { initialDatasetId?
                   )}
                 </section>
               ) : (
-                <ReviewQueue jobId={fullJobId} onChanged={() => void fullResults.reload()} onDone={() => setStep(5)} />
+                <ReviewQueue jobId={fullJobId} onChanged={() => void fullResults.reload()} onDone={() => setStep(5)} onBadMapping={() => setStep(2)} />
               )}
             </>
           )}
@@ -193,8 +222,8 @@ export function MatchTab({ initialDatasetId, initialJobId }: { initialDatasetId?
   );
 }
 
-function pickSettings(settings: Settings) {
-  return { strictness: settings.strictness, max_block_size: Number(settings.max_block_size) };
+function pickSettings(settings: Settings & { source_trust?: string[] }) {
+  return { strictness: settings.strictness, max_block_size: Number(settings.max_block_size), source_trust: settings.source_trust ?? [] };
 }
 
 function SummaryCounts({ dataset, results }: { dataset: Dataset | null; results: MatchResults | null | undefined }) {
@@ -211,7 +240,25 @@ function SummaryCounts({ dataset, results }: { dataset: Dataset | null; results:
   );
 }
 
-function SourceStep({ datasets, selected, onSelect, onImported }: { datasets: Dataset[]; selected: string | null; onSelect: (id: string) => void; onImported: (id: string) => void }) {
+function SourceStep({
+  datasets,
+  selected,
+  onSelect,
+  onImported,
+  compareId,
+  onCompare,
+  trustCompareFirst,
+  onTrustCompareFirst,
+}: {
+  datasets: Dataset[];
+  selected: string | null;
+  onSelect: (id: string) => void;
+  onImported: (id: string) => void;
+  compareId: string | null;
+  onCompare: (id: string | null) => void;
+  trustCompareFirst: boolean;
+  onTrustCompareFirst: (value: boolean) => void;
+}) {
   const [tab, setTab] = useState<"scrape" | "datasets" | "import">(datasets.some((d) => d.kind === "scrape") ? "scrape" : "datasets");
   const shown = tab === "scrape" ? datasets.filter((d) => d.kind === "scrape") : datasets;
   return (
@@ -247,7 +294,39 @@ function SourceStep({ datasets, selected, onSelect, onImported }: { datasets: Da
           ))}
         </div>
       )}
-      <p className="muted small">Scope: within this dataset.</p>
+      {selected && (
+        <fieldset className="scope">
+          <legend>Comparison scope</legend>
+          <label className="toggle block">
+            <input type="radio" name="scope" checked={!compareId} onChange={() => onCompare(null)} /> Within this dataset
+          </label>
+          <label className="toggle block">
+            <input type="radio" name="scope" checked={!!compareId} disabled={datasets.length < 2} onChange={() => onCompare(datasets.find((d) => d.id !== selected)?.id ?? null)} /> Compare with another dataset
+          </label>
+          {compareId && (
+            <div className="split tight-2">
+              <label className="field">
+                <span>Other dataset</span>
+                <select value={compareId} onChange={(e) => onCompare(e.target.value)}>
+                  {datasets.filter((d) => d.id !== selected).map((d) => (
+                    <option key={d.id} value={d.id}>
+                      {d.name} ({formatCount(d.row_count)} rows)
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="field">
+                <span>Most trusted source</span>
+                <select value={trustCompareFirst ? "compare" : "primary"} onChange={(e) => onTrustCompareFirst(e.target.value === "compare")}>
+                  <option value="primary">{datasets.find((d) => d.id === selected)?.name}</option>
+                  <option value="compare">{datasets.find((d) => d.id === compareId)?.name}</option>
+                </select>
+              </label>
+            </div>
+          )}
+          <p className="muted small">The trusted source supplies the surviving record and wins field conflicts; other sources only fill empty fields.</p>
+        </fieldset>
+      )}
     </section>
   );
 }
@@ -364,7 +443,11 @@ function PreviewStep({
   );
 }
 
-function ReviewQueue({ jobId, onChanged, onDone }: { jobId: string; onChanged: () => void; onDone: () => void }) {
+function ReviewQueue({ jobId, onChanged, onDone, onBadMapping }: { jobId: string; onChanged: () => void; onDone: () => void; onBadMapping: () => void }) {
+  const [choosing, setChoosing] = useState(false);
+  const [chosen, setChosen] = useState<Record<string, string>>({});
+  const [flagColumn, setFlagColumn] = useState("");
+  const [flagNote, setFlagNote] = useState("");
   const [index, setIndex] = useState(0);
   const [revealed, setRevealed] = useState(false);
   const [shortcuts, setShortcuts] = useState(true);
@@ -378,12 +461,17 @@ function ReviewQueue({ jobId, onChanged, onDone }: { jobId: string; onChanged: (
   const item = items[Math.min(index, Math.max(items.length - 1, 0))];
   const sensitive = useMemo(() => new Set(queue.data?.sensitive_columns ?? []), [queue.data]);
 
-  useEffect(() => keepRef.current?.focus(), [item?.decision_id]);
+  useEffect(() => {
+    keepRef.current?.focus();
+    setChosen({});
+    setChoosing(false);
+  }, [item?.decision_id]);
 
   const decide = async (action: "merge" | "keep_separate") => {
     if (!item || (action === "merge" && !item.can_merge)) return;
     try {
-      const result = await call<{ review_action_id: string }>("match.submit_review", { job_id: jobId, decision_id: item.decision_id, action, expected_version: item.review_version });
+      const values = action === "merge" && choosing && Object.keys(chosen).length ? chosen : undefined;
+      const result = await call<{ review_action_id: string }>("match.submit_review", { job_id: jobId, decision_id: item.decision_id, action, expected_version: item.review_version, values });
       setError(null);
       setLastAction(result.review_action_id);
       toast.show({ message: action === "merge" ? "Merged. Canonical records updated." : "Kept separate. This pair will not be linked.", action: { label: "Undo", run: () => void undo(result.review_action_id) } });
@@ -469,8 +557,12 @@ function ReviewQueue({ jobId, onChanged, onDone }: { jobId: string; onChanged: (
               <thead>
                 <tr>
                   <th scope="col">Field</th>
-                  <th scope="col">Record A · row {item.left.row_number}</th>
-                  <th scope="col">Record B · row {item.right.row_number}</th>
+                  <th scope="col">
+                    Record A · {item.left.source_name ? `${item.left.source_name}, ` : ""}row {item.left.row_number}
+                  </th>
+                  <th scope="col">
+                    Record B · {item.right.source_name ? `${item.right.source_name}, ` : ""}row {item.right.row_number}
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -485,8 +577,24 @@ function ReviewQueue({ jobId, onChanged, onDone }: { jobId: string; onChanged: (
                         {column}
                         <span className="sr-only"> ({state})</span>
                       </th>
-                      <td>{displayValue(a, isSensitive, revealed) || <span className="muted">missing</span>}</td>
-                      <td>{displayValue(b, isSensitive, revealed) || <span className="muted">missing</span>}</td>
+                      {[{ row: item.left, value: a }, { row: item.right, value: b }].map(({ row, value }) => (
+                        <td key={row.id}>
+                          {choosing && state === "different" ? (
+                            <label className="toggle">
+                              <input
+                                type="radio"
+                                name={`choose-${column}`}
+                                checked={chosen[column] === row.id}
+                                onChange={() => setChosen({ ...chosen, [column]: row.id })}
+                                aria-label={`Use record ${row === item.left ? "A" : "B"} for ${column}`}
+                              />
+                              {displayValue(value, isSensitive, revealed)}
+                            </label>
+                          ) : (
+                            displayValue(value, isSensitive, revealed) || <span className="muted">missing</span>
+                          )}
+                        </td>
+                      ))}
                     </tr>
                   );
                 })}
@@ -510,6 +618,11 @@ function ReviewQueue({ jobId, onChanged, onDone }: { jobId: string; onChanged: (
             <button type="button" className={item.can_merge ? "btn btn-primary" : "btn"} disabled={!item.can_merge} onClick={() => void decide("merge")}>
               Merge <kbd>M</kbd>
             </button>
+            {item.can_merge && (
+              <button type="button" className="btn" aria-pressed={choosing} onClick={() => setChoosing(!choosing)} title="Pick which record supplies each differing field, then merge">
+                {choosing ? `Choosing values (${Object.keys(chosen).length})` : "Choose values"}
+              </button>
+            )}
             <button type="button" className="btn" disabled={index <= 0} onClick={() => setIndex(index - 1)}>
               Previous <kbd>K</kbd>
             </button>
@@ -517,6 +630,42 @@ function ReviewQueue({ jobId, onChanged, onDone }: { jobId: string; onChanged: (
               Next <kbd>J</kbd>
             </button>
           </div>
+          <details className="panel">
+            <summary>More actions</summary>
+            <p className="muted small">If a field role is creating poor candidates (for example two different address columns mapped as one), report it and fix the mapping. The pair stays in the queue.</p>
+            <div className="split tight-3">
+              <label className="field">
+                <span>Field</span>
+                <select value={flagColumn} onChange={(e) => setFlagColumn(e.target.value)}>
+                  <option value="">Choose a field…</option>
+                  {columns.map((c) => (
+                    <option key={c}>{c}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="field">
+                <span>What is wrong</span>
+                <input value={flagNote} onChange={(e) => setFlagNote(e.target.value)} placeholder="e.g. mailing and property addresses pooled" />
+              </label>
+              <button
+                type="button"
+                className="btn"
+                disabled={!flagColumn}
+                onClick={async () => {
+                  try {
+                    await call("match.flag_mapping", { job_id: jobId, column: flagColumn, note: flagNote, decision_id: item.decision_id });
+                    setFlagColumn("");
+                    setFlagNote("");
+                    toast.show({ message: "Mapping issue recorded.", action: { label: "Fix mapping", run: onBadMapping } });
+                  } catch (err) {
+                    setError(err instanceof Error ? err.message : String(err));
+                  }
+                }}
+              >
+                Mark bad mapping
+              </button>
+            </div>
+          </details>
         </>
       )}
       {toast.node}
@@ -573,7 +722,18 @@ function RankingControls({ jobId, model, order, onOrder, onTrained }: { jobId: s
   );
 }
 
-type ClusterItem = { cluster_id: string; member_count: number; confidence: number; status: string; survivor_row_id: string; lock_action_id: string | null; members: { id: string; row_number: number; raw: Record<string, unknown> }[] };
+type ClusterItem = {
+  cluster_id: string;
+  member_count: number;
+  confidence: number;
+  status: string;
+  survivor_row_id: string;
+  lock_action_id: string | null;
+  members: { id: string; row_number: number; raw: Record<string, unknown>; source?: string }[];
+  canonical_values: Record<string, unknown>;
+  field_provenance: Record<string, { row_id: string; rule: string }>;
+  conflicts: Record<string, string[]>;
+};
 
 function GroupsPanel({ jobId, onChanged }: { jobId: string; onChanged: () => void }) {
   const groups = useService<{ total: number; items: ClusterItem[]; sensitive_columns: string[] }>("match.clusters", { job_id: jobId, limit: 25 });
@@ -584,12 +744,16 @@ function GroupsPanel({ jobId, onChanged }: { jobId: string; onChanged: () => voi
 
   const run = async (command: string, payload: Record<string, unknown>, message: string) => {
     try {
-      const result = await call<{ cluster_action_id?: string }>(command, { job_id: jobId, ...payload });
+      const result = await call<{ cluster_action_id?: string; override_id?: string }>(command, { job_id: jobId, ...payload });
       setError(null);
       setSelected({});
       toast.show({
         message,
-        action: result.cluster_action_id ? { label: "Undo", run: () => void run("match.undo_cluster_action", { cluster_action_id: result.cluster_action_id }, "Group action undone.") } : undefined,
+        action: result.cluster_action_id
+          ? { label: "Undo", run: () => void run("match.undo_cluster_action", { cluster_action_id: result.cluster_action_id }, "Group action undone.") }
+          : result.override_id
+            ? { label: "Undo", run: () => void run("match.undo_canonical_value", { override_id: result.override_id }, "Value choice undone.") }
+            : undefined,
       });
       await groups.reload();
       onChanged();
@@ -645,6 +809,30 @@ function GroupsPanel({ jobId, onChanged }: { jobId: string; onChanged: () => voi
                 )}
               </div>
             </div>
+            {Object.keys(group.conflicts).length > 0 && (
+              <div className="conflicts">
+                <span className="small muted">Conflicting values — choose the canonical value:</span>
+                {Object.entries(group.conflicts).map(([column, rowIds]) => (
+                  <label key={column} className="field inline small">
+                    <span>{column}</span>
+                    <select
+                      value={group.field_provenance[column]?.row_id ?? ""}
+                      onChange={(e) => void run("match.set_canonical_value", { cluster_id: group.cluster_id, column, row_id: e.target.value }, `Canonical ${column} updated.`)}
+                    >
+                      {rowIds.map((rowId) => {
+                        const member = group.members.find((m) => m.id === rowId);
+                        return (
+                          <option key={rowId} value={rowId}>
+                            {displayValue(member?.raw[column], sensitive.has(column), revealed)} (row {member?.row_number})
+                          </option>
+                        );
+                      })}
+                    </select>
+                    {group.field_provenance[column]?.rule === "reviewer_choice" && <span className="tag">chosen</span>}
+                  </label>
+                ))}
+              </div>
+            )}
             <div className="table-wrap">
               <table className="data-table compact">
                 <thead>
@@ -716,7 +904,43 @@ function ExportStep({ results, onExported }: { results: MatchResults; onExported
       </div>
       <p className="muted small">
         Policy {results.policy_version} · mapping {results.mapping_version_id.slice(0, 8)} · job {results.job_id.slice(0, 8)}
+        {results.compare_dataset_id ? " · compared with a second dataset" : ""}
       </p>
+      {results.mapping_flags.length > 0 && (
+        <p className="note note-warning">
+          <span aria-hidden="true">! </span>
+          {results.mapping_flags.length} mapping issue(s) reported during review: {results.mapping_flags.map((f) => `${f.column_name} (${f.note})`).join("; ")}. Save a new mapping version and re-run to address them.
+        </p>
+      )}
+      <details>
+        <summary>Run metrics</summary>
+        <dl className="facts small">
+          <dt>Throughput</dt>
+          <dd>
+            {formatCount(results.metrics.rows_per_second)} rows/s · {results.metrics.total_seconds}s total
+          </dd>
+          <dt>Stages</dt>
+          <dd>
+            {Object.entries((results.metrics.stage_seconds ?? {}) as Record<string, number>)
+              .map(([stage, seconds]) => `${stage.replace(/_/g, " ")} ${seconds}s`)
+              .join(" · ")}
+          </dd>
+          <dt>Group sizes</dt>
+          <dd>
+            {Object.entries((results.metrics.cluster_size_distribution ?? {}) as Record<string, number>)
+              .map(([size, count]) => `${size}: ${formatCount(count)}`)
+              .join(" · ")}
+          </dd>
+          <dt>Decisions by scope</dt>
+          <dd>
+            {Object.entries((results.metrics.decisions_by_scope ?? {}) as Record<string, Record<string, number>>)
+              .map(([scope, counts]) => `${scope.startsWith("within") ? "within dataset" : "across datasets"}: ${Object.entries(counts).map(([k, v]) => `${v} ${k.replace("_", " ")}`).join(", ")}`)
+              .join(" · ")}
+          </dd>
+          <dt>Review turnaround</dt>
+          <dd>{results.review_turnaround.median_seconds === null ? "no decisions yet" : `median ${results.review_turnaround.median_seconds}s over ${results.review_turnaround.decisions} decisions`}</dd>
+        </dl>
+      </details>
       <label className="toggle block">
         <input type="checkbox" checked={includeProvenance} onChange={(e) => setIncludeProvenance(e.target.checked)} /> Include provenance
       </label>

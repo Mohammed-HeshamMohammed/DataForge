@@ -1,0 +1,82 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dataforge.local/contracts/preset.schema.json",
+  "title": "WebsitePreset",
+  "description": "Structural contract; semantic rules are enforced by dataforge_scraping.presets.validate_preset.",
+  "type": "object",
+  "required": [
+    "id",
+    "version",
+    "display_name",
+    "category",
+    "page_type",
+    "url_scope",
+    "policy",
+    "strategy",
+    "request_limits",
+    "extraction"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9_]+(\\.[a-z0-9_]+)+$"
+    },
+    "version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+    "status": {
+      "enum": [
+        "active",
+        "degraded",
+        "deprecated",
+        "disabled"
+      ]
+    },
+    "policy": {
+      "type": "object",
+      "required": [
+        "requires_user_authorization_acknowledgement"
+      ],
+      "properties": {
+        "requires_user_authorization_acknowledgement": {
+          "const": true
+        },
+        "authentication": {
+          "const": "forbidden"
+        }
+      }
+    },
+    "strategy": {
+      "type": "object",
+      "required": [
+        "preferred"
+      ],
+      "properties": {
+        "preferred": {
+          "enum": [
+            "api",
+            "http",
+            "webview"
+          ]
+        }
+      }
+    },
+    "pagination": {
+      "type": "object",
+      "properties": {
+        "type": {
+          "enum": [
+            "none",
+            "next_link",
+            "page_parameter",
+            "cursor",
+            "infinite_scroll",
+            "api_cursor",
+            "detail_links"
+          ]
+        }
+      }
+    }
+  }
+}

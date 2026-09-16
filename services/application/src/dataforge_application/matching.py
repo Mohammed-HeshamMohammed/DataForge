@@ -31,20 +31,38 @@ def _config_hash(mapping_version_id: str, settings: dict) -> str:
 
 def validate_match_job(store: ProjectStore, params: dict) -> dict:
     dataset_id = params.get("dataset_id")
-    mapping = latest_mapping(store, dataset_id) if dataset_id else None
-    if mapping is None:
-        raise JobValidationError("Confirm a field mapping for this dataset before matching")
+    compare_id = params.get("compare_dataset_id") or None
+    if compare_id and compare_id == dataset_id:
+        raise JobValidationError("Choose a different dataset to compare with")
+    dataset_ids = [dataset_id] + ([compare_id] if compare_id else [])
+    mapping_rows = {}
+    for ds in dataset_ids:
+        mapping = latest_mapping(store, ds) if ds else None
+        if mapping is None:
+            name = _dataset_name(store, ds) if ds else "this dataset"
+            raise JobValidationError(f"Confirm a field mapping for {name} before matching")
+        mapping_rows[ds] = mapping
+    if compare_id:
+        types = {m["entity_type"] for m in mapping_rows.values()}
+        if len(types) != 1 or None in types:
+            raise JobValidationError("Datasets can only be compared when their mappings use the same entity type")
     run_mode = params.get("run_mode", "preview")
     if run_mode not in ("preview", "full"):
         raise JobValidationError("run_mode must be preview or full")
     settings = {**engine.DEFAULT_SETTINGS, **(params.get("settings") or {})}
     settings["preview_size"] = int(settings.get("preview_size", DEFAULT_PREVIEW_SIZE))
-    request = {"schema_version": MATCH_SCHEMA_VERSION, "mapping": json.loads(mapping["mapping_json"]), "settings": {k: v for k, v in settings.items() if k != "preview_size"}}
+    settings["source_trust"] = [ds for ds in settings.get("source_trust") or [] if ds in dataset_ids]
+    request = {
+        "schema_version": MATCH_SCHEMA_VERSION,
+        "mappings": {ds: json.loads(m["mapping_json"]) for ds, m in mapping_rows.items()},
+        "settings": {k: v for k, v in settings.items() if k != "preview_size"},
+    }
     try:
         engine.validate_request(request)
     except engine.MatchRequestError as error:
         raise JobValidationError(str(error)) from error
-    config_hash = _config_hash(mapping["id"], settings)
+    mapping_version_ids = {ds: m["id"] for ds, m in mapping_rows.items()}
+    config_hash = _config_hash(json.dumps(mapping_version_ids, sort_keys=True), settings)
     if run_mode == "full":
         preview = store._connection.execute(
             """SELECT 1 FROM match_runs r JOIN jobs j ON j.id = r.job_id
@@ -53,47 +71,96 @@ def validate_match_job(store: ProjectStore, params: dict) -> dict:
         ).fetchone()
         if preview is None:
             raise JobValidationError("The preview is missing or stale: run a preview with the current mapping and settings first")
-    return {**params, "run_mode": run_mode, "settings": settings, "mapping_version_id": mapping["id"], "mapping_version": mapping["version"], "config_hash": config_hash}
+    return {
+        **params, "run_mode": run_mode, "settings": settings, "compare_dataset_id": compare_id,
+        "mapping_version_id": mapping_rows[dataset_id]["id"], "mapping_version": mapping_rows[dataset_id]["version"],
+        "mapping_version_ids": mapping_version_ids, "config_hash": config_hash,
+    }
 
 
-def _load_rows(store: ProjectStore, dataset_id: str, limit: int | None, row_ids: list[str] | None = None) -> list[dict]:
-    if row_ids is not None:
-        wanted = set(row_ids)
-    query = "SELECT id, source_row_number, raw_values_json FROM source_rows WHERE dataset_id = ? ORDER BY source_row_number"
-    args: tuple = (dataset_id,)
-    if limit is not None:
-        query += " LIMIT ?"
-        args += (limit,)
-    rows = [{"id": r[0], "row_number": r[1], "raw": json.loads(r[2])} for r in store._connection.execute(query, args)]
-    return [r for r in rows if row_ids is None or r["id"] in wanted]
+def _dataset_name(store: ProjectStore, dataset_id: str) -> str:
+    row = store._connection.execute("SELECT name FROM datasets WHERE id = ?", (dataset_id,)).fetchone()
+    return f"“{row['name']}”" if row else "the selected dataset"
 
 
-def _locked_groups(store: ProjectStore, dataset_id: str) -> list[list[str]]:
+def _ids(dataset_ids: str | list[str]) -> list[str]:
+    return [dataset_ids] if isinstance(dataset_ids, str) else list(dataset_ids)
+
+
+def _load_rows(store: ProjectStore, dataset_ids: str | list[str], limit: int | None, row_ids: list[str] | None = None) -> list[dict]:
+    """Rows in dataset order then source row order. Each row carries its dataset as ``source``."""
+    wanted = set(row_ids) if row_ids is not None else None
+    rows = []
+    for dataset_id in _ids(dataset_ids):
+        query = "SELECT id, source_row_number, raw_values_json FROM source_rows WHERE dataset_id = ? ORDER BY source_row_number"
+        args: tuple = (dataset_id,)
+        if limit is not None:
+            query += " LIMIT ?"
+            args += (limit,)
+        rows.extend({"id": r[0], "row_number": r[1], "raw": json.loads(r[2]), "source": dataset_id} for r in store._connection.execute(query, args))
+    return [r for r in rows if wanted is None or r["id"] in wanted]
+
+
+def _in(dataset_ids: str | list[str]) -> tuple[str, tuple]:
+    ids = _ids(dataset_ids)
+    return ",".join("?" * len(ids)), tuple(ids)
+
+
+def _locked_groups(store: ProjectStore, dataset_ids: str | list[str]) -> list[list[str]]:
+    marks, args = _in(dataset_ids)
     return [json.loads(r[0]) for r in store._connection.execute(
-        "SELECT member_row_ids_json FROM cluster_actions WHERE dataset_id = ? AND action = 'lock' AND reversed_at IS NULL ORDER BY created_at", (dataset_id,)
+        f"SELECT member_row_ids_json FROM cluster_actions WHERE dataset_id IN ({marks}) AND action = 'lock' AND reversed_at IS NULL ORDER BY created_at", args
     )]
 
 
-def _constraints(store: ProjectStore, dataset_id: str) -> list[dict]:
+def _constraints(store: ProjectStore, dataset_ids: str | list[str]) -> list[dict]:
+    marks, args = _in(dataset_ids)
     return [dict(r) for r in store._connection.execute(
-        "SELECT id, left_row_id, right_row_id, kind FROM match_constraints WHERE dataset_id = ? AND revoked_at IS NULL", (dataset_id,)
+        f"SELECT id, left_row_id, right_row_id, kind FROM match_constraints WHERE dataset_id IN ({marks}) AND revoked_at IS NULL", args
     )]
+
+
+def _overrides(store: ProjectStore, dataset_ids: str | list[str]) -> dict[str, set[str]]:
+    marks, args = _in(dataset_ids)
+    chosen: dict[str, set[str]] = {}
+    for row in store._connection.execute(f"SELECT column_name, row_id FROM canonical_overrides WHERE dataset_id IN ({marks}) AND revoked_at IS NULL ORDER BY created_at", args):
+        chosen.setdefault(row["row_id"], set()).add(row["column_name"])
+    return chosen
+
+
+def _scope(store: ProjectStore, run) -> tuple[list[str], dict[str, dict], dict]:
+    """Datasets, per-dataset mappings, and settings pinned by a match job."""
+    params = json.loads(store.job(run["job_id"])["params_json"])
+    versions = params.get("mapping_version_ids") or {run["dataset_id"]: run["mapping_version_id"]}
+    mappings = {
+        ds: {**json.loads(row["mapping_json"]), "__export_exclude__": json.loads(row["export_exclude_json"] or "[]")}
+        for ds, version_id in versions.items()
+        for row in [store._connection.execute("SELECT mapping_json, export_exclude_json FROM mapping_versions WHERE id = ?", (version_id,)).fetchone()]
+    }
+    return list(versions), mappings, params.get("settings") or {}
+
+
+def _role_mappings(mappings: dict[str, dict]) -> dict[str, dict]:
+    return {ds: {c: r for c, r in m.items() if c != "__export_exclude__"} for ds, m in mappings.items()}
 
 
 def run_match_job(context: JobContext) -> dict:
     store, params = context.store, context.params
-    mapping_row = store._connection.execute("SELECT * FROM mapping_versions WHERE id = ?", (params["mapping_version_id"],)).fetchone()
+    versions = params.get("mapping_version_ids") or {params["dataset_id"]: params["mapping_version_id"]}
+    dataset_ids = list(versions)
+    mapping_rows = {ds: store._connection.execute("SELECT * FROM mapping_versions WHERE id = ?", (vid,)).fetchone() for ds, vid in versions.items()}
     limit = params["settings"]["preview_size"] if params["run_mode"] == "preview" else None
-    rows = _load_rows(store, params["dataset_id"], limit)
-    context.stage("loading", {"rows": len(rows)})
+    rows = _load_rows(store, dataset_ids, limit)
+    context.stage("loading", {"rows": len(rows), "datasets": len(dataset_ids)})
     request = {
         "schema_version": MATCH_SCHEMA_VERSION,
-        "entity_type": mapping_row["entity_type"] or "custom",
-        "mapping": json.loads(mapping_row["mapping_json"]),
+        "entity_type": mapping_rows[params["dataset_id"]]["entity_type"] or "custom",
+        "mappings": {ds: json.loads(row["mapping_json"]) for ds, row in mapping_rows.items()},
         "rows": rows,
         "settings": {k: v for k, v in params["settings"].items() if k != "preview_size"},
-        "constraints": _constraints(store, params["dataset_id"]),
-        "locked_groups": _locked_groups(store, params["dataset_id"]),
+        "constraints": _constraints(store, dataset_ids),
+        "locked_groups": _locked_groups(store, dataset_ids),
+        "overrides": _overrides(store, dataset_ids),
     }
     result = engine.run(request, progress=context.stage, should_stop=context.should_stop)
     if "stopped_at" in result:
@@ -103,8 +170,8 @@ def run_match_job(context: JobContext) -> dict:
     # Publish everything in one transaction: readers see all of the job output or none of it.
     with store._connection:
         store._connection.execute(
-            "INSERT INTO match_runs(job_id, dataset_id, mapping_version_id, run_mode, config_hash, policy_version, row_ids_json, metrics_json, created_at) VALUES (?,?,?,?,?,?,?,?,?)",
-            (job_id, params["dataset_id"], params["mapping_version_id"], params["run_mode"], params["config_hash"], result["policy_version"],
+            "INSERT INTO match_runs(job_id, dataset_id, compare_dataset_id, mapping_version_id, run_mode, config_hash, policy_version, row_ids_json, metrics_json, created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (job_id, params["dataset_id"], params.get("compare_dataset_id"), params["mapping_version_id"], params["run_mode"], params["config_hash"], result["policy_version"],
              json.dumps([r["id"] for r in rows]), json.dumps(result["metrics"]), utc_now()),
         )
         store._connection.executemany(
@@ -166,7 +233,8 @@ def results(store: ProjectStore, job_id: str) -> dict:
             samples.append(dict(d))
     exports = [dict(e) for e in store._connection.execute("SELECT id, kind, path, sha256, row_count, is_final, include_provenance, created_at FROM exports WHERE job_id = ? ORDER BY created_at DESC", (job_id,))]
     return {
-        "job_id": job_id, "dataset_id": run["dataset_id"], "run_mode": run["run_mode"], "policy_version": run["policy_version"],
+        "job_id": job_id, "dataset_id": run["dataset_id"], "compare_dataset_id": run["compare_dataset_id"], "run_mode": run["run_mode"], "policy_version": run["policy_version"],
+        "review_turnaround": _review_turnaround(store, job_id), "mapping_flags": mapping_flags(store, run["dataset_id"]),
         "mapping_version_id": run["mapping_version_id"], "metrics": json.loads(run["metrics_json"]),
         "decisions": counts, "pending_review": pending, "reviewed": dict(reviewed),
         "canonical_records": cluster_stats[0], "merged_groups": cluster_stats[1] or 0, "rows_suppressed": cluster_stats[2],
@@ -174,9 +242,21 @@ def results(store: ProjectStore, job_id: str) -> dict:
     }
 
 
-def _sensitive_columns(store: ProjectStore, mapping_version_id: str) -> list[str]:
-    row = store._connection.execute("SELECT mapping_json FROM mapping_versions WHERE id = ?", (mapping_version_id,)).fetchone()
-    return sorted(col for col, role in json.loads(row["mapping_json"]).items() if role in SENSITIVE_ROLES) if row else []
+def _review_turnaround(store: ProjectStore, job_id: str) -> dict:
+    completed = store._connection.execute(
+        "SELECT occurred_at FROM job_events WHERE job_id = ? AND event_type = 'job.state_changed' AND payload_json LIKE '%\"to_state\": \"completed\"%' ORDER BY id LIMIT 1", (job_id,)
+    ).fetchone()
+    if completed is None:
+        return {"decisions": 0, "median_seconds": None}
+    start = datetime.fromisoformat(completed[0])
+    waits = sorted((datetime.fromisoformat(r[0]) - start).total_seconds() for r in store._connection.execute("SELECT created_at FROM review_actions WHERE job_id = ? AND reversed_at IS NULL", (job_id,)))
+    median = None if not waits else waits[len(waits) // 2] if len(waits) % 2 else (waits[len(waits) // 2 - 1] + waits[len(waits) // 2]) / 2
+    return {"decisions": len(waits), "median_seconds": None if median is None else round(median, 1)}
+
+
+def _sensitive_columns(store: ProjectStore, run) -> list[str]:
+    _, mappings, _ = _scope(store, run)
+    return sorted({col for m in _role_mappings(mappings).values() for col, role in m.items() if role in SENSITIVE_ROLES})
 
 
 def latest_ranking_model(store: ProjectStore, dataset_id: str) -> dict | None:
@@ -233,8 +313,10 @@ def review_queue(store: ProjectStore, job_id: str, offset: int = 0, limit: int =
     rows = {}
     if row_ids:
         placeholders = ",".join("?" * len(row_ids))
-        for r in store._connection.execute(f"SELECT id, source_row_number, raw_values_json FROM source_rows WHERE id IN ({placeholders})", tuple(row_ids)):
-            rows[r["id"]] = {"id": r["id"], "row_number": r["source_row_number"], "raw": json.loads(r["raw_values_json"])}
+        for r in store._connection.execute(
+            f"SELECT s.id, s.source_row_number, s.raw_values_json, s.dataset_id, d.name FROM source_rows s JOIN datasets d ON d.id = s.dataset_id WHERE s.id IN ({placeholders})", tuple(row_ids)
+        ):
+            rows[r["id"]] = {"id": r["id"], "row_number": r["source_row_number"], "raw": json.loads(r["raw_values_json"]), "source": r["dataset_id"], "source_name": r["name"]}
     items = [{
         "decision_id": d["id"], "score": d["score"], "reason": d["reason"], "review_version": d["review_version"],
         "evidence": json.loads(d["evidence_json"]), "left": rows.get(d["left_row_id"]), "right": rows.get(d["right_row_id"]),
@@ -243,20 +325,24 @@ def review_queue(store: ProjectStore, job_id: str, offset: int = 0, limit: int =
     } for d in decisions]
     model_info = latest_ranking_model(store, run["dataset_id"])
     return {
-        "total": total, "offset": offset, "items": items, "order": order, "sensitive_columns": _sensitive_columns(store, run["mapping_version_id"]),
+        "total": total, "offset": offset, "items": items, "order": order, "sensitive_columns": _sensitive_columns(store, run),
         "ranking_model": None if model_info is None else {k: v for k, v in model_info.items() if k != "weights"},
     }
 
 
 def _recluster(store: ProjectStore, job_id: str) -> None:
     run = _run(store, job_id)
-    mapping = json.loads(store._connection.execute("SELECT mapping_json FROM mapping_versions WHERE id = ?", (run["mapping_version_id"],)).fetchone()[0])
-    rows = _load_rows(store, run["dataset_id"], None, json.loads(run["row_ids_json"]))
-    active = {col: role for col, role in mapping.items() if role not in ("other", "ignore")}
-    normalized = {r["id"]: normalize_row(r["raw"], active) for r in rows}
+    dataset_ids, mappings, settings = _scope(store, run)
+    roles = _role_mappings(mappings)
+    rows = _load_rows(store, dataset_ids, None, json.loads(run["row_ids_json"]))
+    active = {ds: {col: role for col, role in m.items() if role not in ("other", "ignore")} for ds, m in roles.items()}
+    normalized = {r["id"]: normalize_row(r["raw"], active[r["source"]], settings.get("default_region", "US")) for r in rows}
     decisions = [dict(d) for d in store._connection.execute("SELECT id, left_row_id, right_row_id, decision, score FROM match_decisions WHERE job_id = ?", (job_id,))]
-    clusters, bridges, _ = engine.cluster([r["id"] for r in rows], normalized, decisions, _constraints(store, run["dataset_id"]), _locked_groups(store, run["dataset_id"]))
-    canonical = engine.canonicalize(clusters, {r["id"]: r for r in rows}, normalized)
+    clusters, bridges, _ = engine.cluster([r["id"] for r in rows], normalized, decisions, _constraints(store, dataset_ids), _locked_groups(store, dataset_ids))
+    canonical = engine.canonicalize(
+        clusters, {r["id"]: r for r in rows}, normalized, source_trust=settings.get("source_trust") or [],
+        overrides=_overrides(store, dataset_ids), role_mappings=roles if len(roles) > 1 else None,
+    )
     store._connection.executemany(
         "UPDATE match_decisions SET decision = 'possible_match', reason = 'Needs review: would bridge two existing groups with a single link' WHERE job_id = ? AND id = ?",
         [(job_id, b) for b in bridges],
@@ -264,7 +350,8 @@ def _recluster(store: ProjectStore, job_id: str) -> None:
     _write_clusters(store, job_id, clusters, canonical)
 
 
-def submit_review(store: ProjectStore, job_id: str, decision_id: str, action: str, expected_version: int) -> dict:
+def submit_review(store: ProjectStore, job_id: str, decision_id: str, action: str, expected_version: int, values: dict[str, str] | None = None) -> dict:
+    """values (merge only): {column: row_id} choosing which record supplies each canonical field."""
     if action not in ("merge", "keep_separate"):
         raise ValueError("action must be merge or keep_separate")
     run = _run(store, job_id)
@@ -291,6 +378,18 @@ def submit_review(store: ProjectStore, job_id: str, decision_id: str, action: st
             "INSERT INTO match_constraints(id, dataset_id, left_row_id, right_row_id, kind, review_action_id, created_at) VALUES (?,?,?,?,?,?,?)",
             (str(uuid4()), run["dataset_id"], decision["left_row_id"], decision["right_row_id"], "must_link" if action == "merge" else "must_not_link", review_id, utc_now()),
         )
+        if values:
+            if action != "merge":
+                raise ValueError("Chosen values only apply to a merge")
+            pair = {decision["left_row_id"], decision["right_row_id"]}
+            for column, row_id in values.items():
+                if row_id not in pair:
+                    raise ValueError("Chosen values must come from one of the two records being merged")
+                _revoke_overrides(store, run["dataset_id"], column, pair)
+                store._connection.execute(
+                    "INSERT INTO canonical_overrides(id, dataset_id, column_name, row_id, job_id, review_action_id, created_at) VALUES (?,?,?,?,?,?,?)",
+                    (str(uuid4()), run["dataset_id"], column, row_id, job_id, review_id, utc_now()),
+                )
         _recluster(store, job_id)
     store.append_event(job_id, "review.decision_recorded", {"decision_id": decision_id, "action": action, "review_action_id": review_id})
     return {"review_action_id": review_id, "review_version": expected_version + 1}
@@ -303,6 +402,7 @@ def undo_review(store: ProjectStore, job_id: str, review_action_id: str) -> dict
     with store._connection:
         store._connection.execute("UPDATE review_actions SET reversed_at = ? WHERE id = ?", (utc_now(), review_action_id))
         store._connection.execute("UPDATE match_constraints SET revoked_at = ? WHERE review_action_id = ?", (utc_now(), review_action_id))
+        store._connection.execute("UPDATE canonical_overrides SET revoked_at = ? WHERE review_action_id = ? AND revoked_at IS NULL", (utc_now(), review_action_id))
         store._connection.execute("UPDATE match_decisions SET review_version = review_version + 1 WHERE job_id = ? AND id = ?", (job_id, action["decision_id"]))
         _recluster(store, job_id)
     store.append_event(job_id, "review.decision_reversed", {"review_action_id": review_action_id})
@@ -311,6 +411,67 @@ def undo_review(store: ProjectStore, job_id: str, review_action_id: str) -> dict
 
 def review_history(store: ProjectStore, job_id: str) -> list[dict]:
     return [dict(r) for r in store._connection.execute("SELECT * FROM review_actions WHERE job_id = ? ORDER BY created_at DESC", (job_id,))]
+
+
+def _revoke_overrides(store: ProjectStore, dataset_id: str, column: str, row_ids: set[str]) -> None:
+    marks = ",".join("?" * len(row_ids))
+    store._connection.execute(
+        f"UPDATE canonical_overrides SET revoked_at = ? WHERE dataset_id = ? AND column_name = ? AND row_id IN ({marks}) AND revoked_at IS NULL",
+        (utc_now(), dataset_id, column, *row_ids),
+    )
+
+
+def set_canonical_value(store: ProjectStore, job_id: str, cluster_id: str, column: str, row_id: str) -> dict:
+    """Reviewer picks which group member supplies one canonical field (applies to future runs too)."""
+    run = _completed_full_run(store, job_id)
+    members = _cluster_members(store, job_id, cluster_id)
+    if row_id not in members:
+        raise ReviewConflict("That record is no longer in this group. Refresh and try again.")
+    override_id = str(uuid4())
+    with store._connection:
+        _revoke_overrides(store, run["dataset_id"], column, set(members))
+        store._connection.execute(
+            "INSERT INTO canonical_overrides(id, dataset_id, column_name, row_id, job_id, created_at) VALUES (?,?,?,?,?,?)",
+            (override_id, run["dataset_id"], column, row_id, job_id, utc_now()),
+        )
+        _recluster(store, job_id)
+    store.append_event(job_id, "canonical.value_chosen", {"override_id": override_id, "column": column})
+    return {"override_id": override_id}
+
+
+def undo_canonical_value(store: ProjectStore, job_id: str, override_id: str) -> dict:
+    run = _completed_full_run(store, job_id)
+    with store._connection:
+        updated = store._connection.execute(
+            "UPDATE canonical_overrides SET revoked_at = ? WHERE id = ? AND dataset_id = ? AND revoked_at IS NULL", (utc_now(), override_id, run["dataset_id"])
+        ).rowcount
+        if not updated:
+            raise ValueError("Chosen value not found or already undone")
+        _recluster(store, job_id)
+    return {"undone": override_id}
+
+
+def flag_mapping(store: ProjectStore, job_id: str, column: str, note: str, decision_id: str | None = None) -> dict:
+    """Reviewer reports that a field role is producing poor candidates; resolved by saving a new mapping version."""
+    run = _run(store, job_id)
+    dataset_ids, mappings, _ = _scope(store, run)
+    owner = next((ds for ds in dataset_ids if column in mappings[ds]), None)
+    if owner is None:
+        raise ValueError(f"Column {column!r} is not part of the mapping used by this job")
+    flag_id = str(uuid4())
+    version_id = (json.loads(store.job(job_id)["params_json"]).get("mapping_version_ids") or {}).get(owner, run["mapping_version_id"])
+    store._connection.execute(
+        "INSERT INTO mapping_flags(id, dataset_id, mapping_version_id, job_id, decision_id, column_name, note, created_at) VALUES (?,?,?,?,?,?,?,?)",
+        (flag_id, owner, version_id, job_id, decision_id, column, note.strip()[:500] or "Marked as a bad mapping during review", utc_now()),
+    )
+    store._connection.commit()
+    return {"flag_id": flag_id, "dataset_id": owner}
+
+
+def mapping_flags(store: ProjectStore, dataset_id: str) -> list[dict]:
+    return [dict(r) for r in store._connection.execute(
+        "SELECT id, column_name, note, decision_id, created_at FROM mapping_flags WHERE dataset_id = ? AND resolved_at IS NULL ORDER BY created_at", (dataset_id,)
+    )]
 
 
 # --- cluster actions -------------------------------------------------------------------------------
@@ -323,19 +484,23 @@ def list_clusters(store: ProjectStore, job_id: str, offset: int = 0, limit: int 
            WHERE c.job_id = ? AND c.member_count > 1 ORDER BY c.member_count DESC, c.id LIMIT ? OFFSET ?""",
         (job_id, limit, offset),
     ).fetchall()
+    dataset_ids, _, _ = _scope(store, run)
+    marks, args = _in(dataset_ids)
     locks = {
         tuple(sorted(json.loads(r["member_row_ids_json"]))): r["id"]
-        for r in store._connection.execute("SELECT id, member_row_ids_json FROM cluster_actions WHERE dataset_id = ? AND action = 'lock' AND reversed_at IS NULL", (run["dataset_id"],))
+        for r in store._connection.execute(f"SELECT id, member_row_ids_json FROM cluster_actions WHERE dataset_id IN ({marks}) AND action = 'lock' AND reversed_at IS NULL", args)
     }
     items = []
     for c in clusters:
         member_ids = json.loads(c["member_row_ids_json"])
-        rows = _load_rows(store, run["dataset_id"], None, member_ids)
+        rows = _load_rows(store, dataset_ids, None, member_ids)
+        record = store._connection.execute("SELECT values_json, provenance_json, conflicts_json FROM canonical_records WHERE job_id = ? AND cluster_id = ?", (job_id, c["id"])).fetchone()
         items.append({
+            "canonical_values": json.loads(record["values_json"]), "field_provenance": json.loads(record["provenance_json"]), "conflicts": json.loads(record["conflicts_json"]),
             "cluster_id": c["id"], "member_count": c["member_count"], "confidence": c["confidence"], "status": c["status"],
             "survivor_row_id": c["survivor_row_id"], "lock_action_id": locks.get(tuple(sorted(member_ids))), "members": rows,
         })
-    return {"total": total, "offset": offset, "items": items, "sensitive_columns": _sensitive_columns(store, run["mapping_version_id"])}
+    return {"total": total, "offset": offset, "items": items, "sensitive_columns": _sensitive_columns(store, run)}
 
 
 def _completed_full_run(store: ProjectStore, job_id: str):
@@ -359,7 +524,7 @@ def split_cluster(store: ProjectStore, job_id: str, cluster_id: str, row_ids: li
     remaining = [r for r in members if r not in set(row_ids)]
     if not selected or not remaining:
         raise ValueError("Select at least one member to separate, and leave at least one member in the group")
-    if any(tuple(sorted(g)) == tuple(sorted(members)) for g in _locked_groups(store, run["dataset_id"])):
+    if any(tuple(sorted(g)) == tuple(sorted(members)) for g in _locked_groups(store, _scope(store, run)[0])):
         raise ValueError("Unlock this group before splitting it")
     action_id = str(uuid4())
     with store._connection:
@@ -432,10 +597,17 @@ def create_export(store: ProjectStore, job_id: str, include_provenance: bool = T
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     directory = store.project_root / "exports" / job_id / (stamp + ("-unresolved" if unresolved else ""))
     directory.mkdir(parents=True, exist_ok=True)
-    rows = {r["id"]: r for r in _load_rows(store, run["dataset_id"], None, json.loads(run["row_ids_json"]))}
-    columns = list(dict.fromkeys(col for r in rows.values() for col in r["raw"]))
+    dataset_ids, mappings, _ = _scope(store, run)
+    excluded = {col for m in mappings.values() for col in m["__export_exclude__"]}
+    excluded_roles = {m[col] for m in mappings.values() for col in m["__export_exclude__"] if col in m}
+    multi = len(dataset_ids) > 1
+    rows = {r["id"]: r for r in _load_rows(store, dataset_ids, None, json.loads(run["row_ids_json"]))}
+    columns = [c for c in dict.fromkeys(col for r in rows.values() for col in r["raw"]) if c not in excluded]
     clusters = {c["id"]: c for c in store._connection.execute("SELECT * FROM clusters WHERE job_id = ?", (job_id,))}
     canonical = store._connection.execute("SELECT * FROM canonical_records WHERE job_id = ? ORDER BY cluster_id", (job_id,)).fetchall()
+    role_columns = sorted({k for rec in canonical for k in json.loads(rec["values_json"]) if k.startswith("canonical.") and k.split(".", 1)[1] not in excluded_roles})
+    names = {ds: _dataset_name(store, ds).strip("“”") for ds in dataset_ids}
+    source_col = ["source_dataset"] if multi else []
     status_col = ["export_status"] if unresolved else []
     status_val = ["unresolved_review_pending"] if unresolved else []
     meta = ["cluster_id", "member_count", "match_confidence", "source_row_ids"]
@@ -446,24 +618,29 @@ def create_export(store: ProjectStore, job_id: str, include_provenance: bool = T
         members = json.loads(cluster["member_row_ids_json"])
         values = json.loads(record["values_json"])
         base = [record["cluster_id"], cluster["member_count"], cluster["confidence"], ";".join(members)]
-        provenance = [record["provenance_json"]] if include_provenance else []
-        canonical_rows.append([values.get(c, "") for c in columns] + base + provenance + status_val)
+        field_provenance = {k: v for k, v in json.loads(record["provenance_json"]).items() if k not in excluded and not (k.startswith("canonical.") and k.split(".", 1)[1] in excluded_roles)}
+        provenance = [json.dumps(field_provenance)] if include_provenance else []
+        canonical_rows.append([values.get(c, "") for c in columns + role_columns] + base + provenance + status_val)
         survivor = rows[record["survivor_row_id"]]
-        clean_rows.append([survivor["raw"].get(c, "") for c in columns] + base + ([survivor["id"], survivor["row_number"]] if include_provenance else []) + status_val)
+        survivor_source = [names[survivor["source"]]] if multi else []
+        clean_rows.append([survivor["raw"].get(c, "") for c in columns] + survivor_source + base + ([survivor["id"], survivor["row_number"]] if include_provenance else []) + status_val)
     prov_header = ["field_provenance"] if include_provenance else []
+    ordered_rows = sorted(rows.values(), key=lambda r: (dataset_ids.index(r["source"]), r["row_number"]))
     outputs = {
-        "canonical": ("canonical.csv", columns + meta + prov_header + status_col, canonical_rows),
-        "clean": ("clean.csv", columns + meta + (["survivor_row_id", "source_row_number"] if include_provenance else []) + status_col, clean_rows),
-        "original": ("original.csv", ["source_row_id", "source_row_number"] + columns,
-                     [[r["id"], r["row_number"]] + [r["raw"].get(c, "") for c in columns] for r in sorted(rows.values(), key=lambda r: r["row_number"])]),
+        "canonical": ("canonical.csv", columns + role_columns + meta + prov_header + status_col, canonical_rows),
+        "clean": ("clean.csv", columns + source_col + meta + (["survivor_row_id", "source_row_number"] if include_provenance else []) + status_col, clean_rows),
+        "original": ("original.csv", ["source_row_id"] + source_col + ["source_row_number"] + columns,
+                     [[r["id"]] + ([names[r["source"]]] if multi else []) + [r["row_number"]] + [r["raw"].get(c, "") for c in columns] for r in ordered_rows]),
     }
     decisions = store._connection.execute("SELECT id, left_row_id, right_row_id, decision, score, reason, block_ids_json, evidence_json FROM match_decisions WHERE job_id = ? AND (decision != 'non_match' OR reason LIKE 'Cannot auto-merge%')", (job_id,)).fetchall()
     audit = {
         "schema_version": 1, "job_id": job_id, "dataset_id": run["dataset_id"], "mapping_version_id": run["mapping_version_id"],
         "policy_version": run["policy_version"], "is_final": not unresolved, "unresolved_review_items": unresolved, "metrics": summary["metrics"],
         "decisions": [{**{k: d[k] for k in ("id", "left_row_id", "right_row_id", "decision", "score", "reason")}, "candidate_block_ids": json.loads(d["block_ids_json"]), "evidence": json.loads(d["evidence_json"])} for d in decisions],
+        "compare_dataset_id": run["compare_dataset_id"], "excluded_columns": sorted(excluded),
         "review_actions": review_history(store, job_id),
         "cluster_actions": cluster_history(store, job_id),
+        "canonical_overrides": [dict(r) for r in store._connection.execute("SELECT id, column_name, row_id, review_action_id, created_at, revoked_at FROM canonical_overrides WHERE job_id = ? ORDER BY created_at", (job_id,))],
     }
 
     created = []

@@ -22,6 +22,11 @@ export default defineConfig({
     },
   },
   envPrefix: ["VITE_", "TAURI_"],
+  // Lazily imported desktop modules are pre-bundled so the dev server never reloads the page
+  // mid-session when Scrape Studio or Settings first loads them.
+  optimizeDeps: {
+    include: ["@tauri-apps/api/core", "@tauri-apps/api/event", "@tauri-apps/api/window", "@tauri-apps/plugin-dialog", "@tauri-apps/plugin-opener"],
+  },
   build: {
     target: "es2022",
     outDir: "dist",

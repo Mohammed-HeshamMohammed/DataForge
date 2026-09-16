@@ -75,3 +75,31 @@ A logistic model trained only on human merge/keep-separate decisions (at least 2
 Wikipedia (MediaWiki search API) and Hacker News (Algolia search API) are the first curated presets.
 
 Amazon and Zillow presets are **not** shipped. Their terms prohibit automated collection, and the spec requires policy review and a named maintenance owner before a site-specific preset is published. The generic presets and Scrape Studio still work for any site a user is authorized to collect from.
+
+## D14. Cross-dataset matching reuses one engine with per-source mappings
+
+A match job may add `compare_dataset_id`. Both datasets need confirmed mappings with the same entity type, and they must share at least one identifier, contact, address, or URL role. Their column names may differ.
+
+- **Normalization:** each row is normalized with its own dataset's mapping.
+- **Comparison:** pairs are compared within and across datasets.
+- **Survivors:** `settings.source_trust` orders the survivor choice.
+- **Canonical output:** role fields such as `canonical.phone` are added so values from differently named columns line up.
+- **Storage:** constraints, locks, and reviewer choices are stored under the primary dataset and read across both.
+- **Staleness:** the preview config hash includes both mapping versions and the trust order.
+
+## D15. Reviewer choices and mapping reports are durable, scoped, and reversible
+
+- **Chosen values:** "Choose values" on a merge, or per-field choices on a group, write `canonical_overrides` rows keyed by dataset, column, and row. They apply to whichever group contains that row, so they survive re-clustering and future runs. Undoing the merge revokes the choices made with it.
+- **Bad mappings:** "Mark bad mapping" records a report without resolving the pair. Saving a new mapping version resolves all open reports for that dataset.
+- **Export exclusions:** these are stored on the mapping version. They remove columns and derived role fields from every export while keeping those columns as matching evidence.
+
+## D16. Test runs use the same collection path as full runs
+
+In Scrape Studio, "Test 10 records" runs the full-run collection logic, capped at 10 records. Detail-link tests visit up to 10 item pages, next-link tests read one page, and infinite-scroll tests skip scrolling. A test therefore proves the exact pagination the full run will use. In the HTTP runtime, `detail_links` skips out-of-scope links with a warning rather than following them, and HTML `cursor` pagination reads a token from a selector into a query parameter.
+
+## D17. Test strategy by layer
+
+- **Matching:** Hypothesis property tests guard the invariants: bounded and deduplicated candidates, no conflicting house numbers within a group, and formatting-independent normalization.
+- **Contracts:** `packages/contracts/*.schema.json` is the shared contract. Python tests validate live service responses and worker results against it, including a rule that job params never contain a credential secret.
+- **UI:** Vitest with jsdom and Testing Library covers behaviour; axe-core covers accessibility rules that do not depend on layout. Colour contrast needs a real browser and stays manual.
+- **Real app:** Studio flows were verified in the actual desktop app, driving WebView2's local debugging port. `apps/desktop/vite.config.ts` pre-bundles the lazily imported Tauri modules so the dev server cannot reload the page mid-session.

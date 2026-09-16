@@ -57,7 +57,8 @@ class Service:
             "dataset.rows": lambda p: datasets.dataset_rows(self._store(), p["dataset_id"], int(p.get("offset", 0)), min(int(p.get("limit", 50)), 500)),
             "dataset.profile": self._dataset_profile,
             "dataset.mapping": self._dataset_mapping,
-            "dataset.confirm_mapping": lambda p: asdict(datasets.confirm_mapping(self._store(), p["dataset_id"], p["mapping"], p.get("entity_type"))),
+            "dataset.confirm_mapping": lambda p: asdict(datasets.confirm_mapping(self._store(), p["dataset_id"], p["mapping"], p.get("entity_type"), p.get("export_exclude"))),
+            "dataset.mapping_flags": lambda p: matching.mapping_flags(self._store(), p["dataset_id"]),
             "dataset.delete": lambda p: datasets.delete_dataset(self._store(), p["dataset_id"]) or {"deleted": p["dataset_id"]},
             "job.list": lambda p: [_job_dict(r) for r in self._store().list_jobs(self._project_id(), int(p.get("limit", 50)))],
             "job.get": self._job_get,
@@ -86,7 +87,10 @@ class Service:
             "match.split_cluster": lambda p: matching.split_cluster(self._store(), p["job_id"], p["cluster_id"], list(p["row_ids"])),
             "match.lock_cluster": lambda p: matching.lock_cluster(self._store(), p["job_id"], p["cluster_id"]),
             "match.undo_cluster_action": lambda p: matching.undo_cluster_action(self._store(), p["job_id"], p["cluster_action_id"]),
-            "match.submit_review": lambda p: matching.submit_review(self._store(), p["job_id"], p["decision_id"], p["action"], int(p["expected_version"])),
+            "match.submit_review": lambda p: matching.submit_review(self._store(), p["job_id"], p["decision_id"], p["action"], int(p["expected_version"]), p.get("values")),
+            "match.set_canonical_value": lambda p: matching.set_canonical_value(self._store(), p["job_id"], p["cluster_id"], p["column"], p["row_id"]),
+            "match.undo_canonical_value": lambda p: matching.undo_canonical_value(self._store(), p["job_id"], p["override_id"]),
+            "match.flag_mapping": lambda p: matching.flag_mapping(self._store(), p["job_id"], p["column"], str(p.get("note", "")), p.get("decision_id")),
             "match.undo_review": lambda p: matching.undo_review(self._store(), p["job_id"], p["review_action_id"]),
             "match.review_history": lambda p: matching.review_history(self._store(), p["job_id"]),
             "export.create": lambda p: matching.create_export(self._store(), p["job_id"], bool(p.get("include_provenance", True)), bool(p.get("allow_unresolved", False))),
@@ -211,7 +215,7 @@ class Service:
 
     def _dataset_mapping(self, payload: dict) -> dict | None:
         row = datasets.latest_mapping(self._store(), payload["dataset_id"])
-        return None if row is None else {"id": row["id"], "version": row["version"], "mapping": json.loads(row["mapping_json"]), "entity_type": row["entity_type"], "created_at": row["created_at"]}
+        return None if row is None else {"id": row["id"], "version": row["version"], "mapping": json.loads(row["mapping_json"]), "entity_type": row["entity_type"], "export_exclude": json.loads(row["export_exclude_json"] or "[]"), "created_at": row["created_at"]}
 
     def _project_summary(self, payload: dict) -> dict:
         """Sidebar numbers: per-dataset match/review progress (latest full job) and active jobs."""

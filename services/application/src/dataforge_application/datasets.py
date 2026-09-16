@@ -276,7 +276,7 @@ def propose_field_mappings(headers: list[str]) -> tuple[FieldMappingProposal, ..
     return tuple(proposals)
 
 
-def confirm_mapping(store: ProjectStore, dataset_id: str, mapping: dict[str, str], entity_type: str | None = None) -> MappingVersion:
+def confirm_mapping(store: ProjectStore, dataset_id: str, mapping: dict[str, str], entity_type: str | None = None, export_exclude: list[str] | None = None) -> MappingVersion:
     rows = store._connection.execute(
         "SELECT raw_values_json FROM source_rows WHERE dataset_id = ? LIMIT 1", (dataset_id,)
     ).fetchone()
@@ -295,10 +295,15 @@ def confirm_mapping(store: ProjectStore, dataset_id: str, mapping: dict[str, str
     version = current + 1
     mapping_id = str(uuid4())
     timestamp = datetime.now(timezone.utc).isoformat()
+    excluded = sorted(set(export_exclude or []))
+    if set(excluded) - source_fields:
+        raise ValueError(f"Export exclusions contain unknown source fields: {sorted(set(excluded) - source_fields)}")
     store._connection.execute(
-        "INSERT INTO mapping_versions(id, dataset_id, version, mapping_json, created_at, entity_type) VALUES (?, ?, ?, ?, ?, ?)",
-        (mapping_id, dataset_id, version, json.dumps(mapping, sort_keys=True, separators=(",", ":")), timestamp, entity_type),
+        "INSERT INTO mapping_versions(id, dataset_id, version, mapping_json, created_at, entity_type, export_exclude_json) VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (mapping_id, dataset_id, version, json.dumps(mapping, sort_keys=True, separators=(",", ":")), timestamp, entity_type, json.dumps(excluded)),
     )
+    # A new mapping version answers any open "bad mapping" reports for this dataset.
+    store._connection.execute("UPDATE mapping_flags SET resolved_at = ? WHERE dataset_id = ? AND resolved_at IS NULL", (timestamp, dataset_id))
     store._connection.commit()
     return MappingVersion(mapping_id, dataset_id, version, dict(mapping))
 

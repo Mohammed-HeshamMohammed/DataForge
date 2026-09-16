@@ -16,8 +16,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
-      - run: python -m pip install openpyxl httpx beautifulsoup4 rapidfuzz cryptography pytest
-      - name: Application, scraping, and matching tests (includes migration and contract tests)
+      - run: python -m pip install openpyxl httpx beautifulsoup4 rapidfuzz cryptography pytest hypothesis jsonschema
+      - name: Application, scraping, and matching tests (migration, contract, golden-file, and property tests)
         run: npm run test:python
 
   desktop-ui:
@@ -31,7 +31,8 @@ jobs:
           cache-dependency-path: apps/desktop/package-lock.json
       - run: npm ci --prefix apps/desktop
       - run: npm run typecheck
-      - run: npm run test:desktop
+      - name: Unit, component, and accessibility tests (node:test + Vitest/axe-core)
+        run: npm run test:desktop
       - run: npm run build
 
   desktop-host:

@@ -126,7 +126,22 @@ def extract_html_pages(
                 root_css = (extraction.get("record_root") or {}).get("css")
                 if not isinstance(root_css, str):
                     raise ValueError("Preset must define extraction.record_root.css")
-                candidates = _extract_records(soup, current_url, root_css, fields, preset)
+                if pagination.get("type") == "detail_links":
+                    candidates = []
+                    for detail_url in _detail_urls(soup, current_url, pagination, preset, warnings):
+                        canonical_detail = canonicalize_url(detail_url, preset)
+                        if len(records) + len(candidates) >= record_limit or should_stop() or time.monotonic() > deadline:
+                            break
+                        if canonical_detail in visited_urls:
+                            continue
+                        visited_urls.add(canonical_detail)
+                        if delay_seconds:
+                            time.sleep(delay_seconds)
+                        _check_robots(client, detail_url, robots, preset)
+                        detail = BeautifulSoup(_get(client, detail_url, preset).text, "html.parser")
+                        candidates.extend(_extract_records(detail, detail_url, root_css, fields, preset)[:1])
+                else:
+                    candidates = _extract_records(soup, current_url, root_css, fields, preset)
             candidate_count += len(candidates)
             new_records = 0
             for candidate in candidates:
@@ -448,8 +463,43 @@ def _validate_record(record: dict[str, object], fields: list[object]) -> tuple[s
 
 # --- pagination ----------------------------------------------------------------------------------
 
+def _detail_urls(soup: BeautifulSoup, current_url: str, pagination: dict, preset: dict, warnings: list[str]) -> list[str]:
+    """Detail links from a listing page, restricted to the preset's scope (out-of-scope links are skipped, not followed)."""
+    config = pagination.get("links") if isinstance(pagination.get("links"), dict) else {}
+    css = config.get("css")
+    if not isinstance(css, str):
+        raise ValueError("detail_links pagination requires pagination.links.css")
+    selector, attribute = css, config.get("attribute", "href")
+    match = _PSEUDO.search(css)
+    if match:
+        selector, attribute = css[: match.start()], match.group(2) or attribute
+    urls: list[str] = []
+    for node in soup.select(selector):
+        value = node.get(attribute)
+        if not value:
+            continue
+        url = urljoin(current_url, str(value))
+        try:
+            validate_url(url, preset)
+        except PolicyViolation:
+            warnings.append("skipped a detail link outside the preset scope")
+            continue
+        if url not in urls:
+            urls.append(url)
+    return urls
+
+
 def _next_html_url(soup: BeautifulSoup, current_url: str, pagination: dict, pages_fetched: int) -> str | None:
     kind = pagination.get("type", "none")
+    if kind == "detail_links":
+        # The listing itself may paginate with a next link after its detail pages are collected.
+        return _next_html_url(soup, current_url, {**pagination, "type": "next_link"}, pages_fetched) if isinstance(pagination.get("next"), dict) else None
+    if kind == "cursor":
+        config = pagination.get("cursor")
+        if not isinstance(config, dict):
+            return None
+        token = _select_value(soup, {"css": config.get("css"), "attribute": config.get("attribute")}, current_url)
+        return _with_query(current_url, pagination.get("parameter", "cursor"), token) if token else None
     if kind == "next_link":
         config = pagination.get("next")
         if not isinstance(config, dict):
@@ -460,7 +510,7 @@ def _next_html_url(soup: BeautifulSoup, current_url: str, pagination: dict, page
         return _with_query(current_url, pagination.get("parameter", "page"), int(pagination.get("start", 1)) + pages_fetched * int(pagination.get("step", 1)))
     if kind in ("none", None):
         return None
-    raise PolicyViolation(f"Pagination type {kind!r} requires the embedded WebView runtime")
+    raise PolicyViolation(f"Pagination type {kind!r} requires Scrape Studio's embedded WebView runtime")
 
 
 def _next_api_url(document: object, current_url: str, pagination: dict, pages_fetched: int = 1) -> str | None:

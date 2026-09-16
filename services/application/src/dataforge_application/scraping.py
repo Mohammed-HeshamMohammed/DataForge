@@ -305,8 +305,11 @@ def make_rendered_kind(presets_dir: Path) -> JobKind:
             raise JobValidationError("No extracted pages were provided")
         run_mode = params.get("run_mode", "test")
         limits = preset["request_limits"]
-        if len(pages) > limits["max_pages_default"]:
-            raise JobValidationError("More pages than the preset allows")
+        kind = (preset.get("pagination") or {}).get("type", "none")
+        # Detail pages are bounded by the record cap (one record each); listing pages by the page cap.
+        page_cap = limits["max_records_default"] if kind == "detail_links" else 1 if kind in ("none", "infinite_scroll") else limits["max_pages_default"]
+        if len(pages) > page_cap:
+            raise JobValidationError(f"{len(pages)} pages exceed this preset's limit of {page_cap} for {kind} pagination")
         resolved = resolve_for_url(preset, pages[0]["url"])
         for page in pages:
             try:
