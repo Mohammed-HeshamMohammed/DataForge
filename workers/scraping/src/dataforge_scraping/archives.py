@@ -121,7 +121,7 @@ def _literal(term: str) -> str:
         return term[1:-1]
     if term.startswith('"'):
         body = term[1: term.rindex('"')]
-        return body.encode("latin-1", "backslashescape").decode("unicode_escape", "replace") if "\\" in body else body
+        return body.encode("latin-1", "backslashreplace").decode("unicode_escape", "replace") if "\\" in body else body
     return term
 
 

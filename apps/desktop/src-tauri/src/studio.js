@@ -44,6 +44,49 @@
     return parts.join(" > ");
   }
 
+  /** Relative structural XPath from root, e.g. ./div[2]/span[1]. Survives class renames. */
+  function structuralXPath(el, root) {
+    const steps = [];
+    let current = el;
+    while (current && current !== root && current.nodeType === 1 && steps.length < 8) {
+      const parent = current.parentElement;
+      if (!parent) return null;
+      const sameTag = [...parent.children].filter((c) => c.tagName === current.tagName);
+      steps.unshift(`${current.tagName.toLowerCase()}[${sameTag.indexOf(current) + 1}]`);
+      current = parent;
+    }
+    return current === root ? "./" + steps.join("/") : null;
+  }
+
+  /** Label-anchored XPath: the value that follows a short visible label ("Price:", <dt>SKU</dt>). Survives reordering. */
+  function labelXPath(el, root) {
+    const candidates = [el.previousElementSibling, el.parentElement && el.parentElement !== root ? el.parentElement.previousElementSibling : null];
+    for (const label of candidates) {
+      if (!label || isSensitive(label)) continue;
+      const text = (label.textContent || "").trim().replace(/\s+/g, " ");
+      if (!text || text.length > 40 || /['"]/.test(text) || !root.contains(label)) continue;
+      // A label is a caption, not a value: label-like markup or a trailing colon, with no links or headings.
+      const labelLike = ["dt", "th", "label"].includes(label.tagName.toLowerCase()) || /:\s*$/.test(text);
+      if (!labelLike || label.querySelector("a, h1, h2, h3, h4, h5, h6") || /^h[1-6]$/i.test(label.tagName)) continue;
+      const target = label === el.previousElementSibling ? el : el.parentElement;
+      const step = `${target.tagName.toLowerCase()}[1]`;
+      const inner = target === el ? "" : "/" + (structuralXPath(el, target) || "").replace(/^\.\//, "");
+      if (target !== el && inner === "/") continue;
+      const xpath = `.//${label.tagName.toLowerCase()}[normalize-space(.)='${text}']/following-sibling::${step}${inner}`;
+      // The same label must appear in other repeated items, or it identifies one item rather than a field.
+      const siblings = recordRoot ? [...document.querySelectorAll(recordRoot)].slice(0, 10) : [];
+      const hits = siblings.filter((item) => nodeForXPath(item, xpath)).length;
+      if (siblings.length > 1 && hits < 2) continue;
+      return xpath;
+    }
+    return null;
+  }
+
+  function nodeForXPath(node, xpath) {
+    const result = document.evaluate(xpath, node, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+    return result.singleNodeValue instanceof Element ? result.singleNodeValue : null;
+  }
+
   function describe(el) {
     const attributes = {};
     for (const name of SAFE_ATTRIBUTES) {
@@ -124,6 +167,8 @@
       const root = el.closest(recordRoot);
       pick.relative_selector = root ? pathTo(el, root) || ":scope" : null;
       pick.inside_record_root = !!root;
+      // Ordered fallbacks tried after the CSS selector: label-anchored, then structural.
+      pick.fallback_xpaths = root ? [labelXPath(el, root), structuralXPath(el, root)].filter((x) => x && x !== "./") : [];
     }
     picks.push(pick);
     mode = "none";
@@ -179,6 +224,10 @@
         inaccessible_frames: inaccessibleFrames,
       };
     },
+    html() {
+      // Read-only snapshot for structured-data detection; capped so large pages cannot flood the bridge.
+      return { url: location.href, html: document.documentElement.outerHTML.slice(0, 5000000) };
+    },
     scrollStep() {
       window.scrollTo(0, document.documentElement.scrollHeight);
       return { height: document.documentElement.scrollHeight, y: window.scrollY };
@@ -218,7 +267,19 @@
           for (const selector of field.selectors || []) {
             let value = null;
             try {
-              value = valueFor(root, selector.attribute ? `${selector.css}::attr(${selector.attribute})` : selector.css);
+              if (selector.xpath) {
+                const target = nodeForXPath(root, selector.xpath);
+                if (target && !isSensitive(target)) {
+                  if (selector.attribute) {
+                    const raw = SAFE_ATTRIBUTES.includes(selector.attribute) ? target.getAttribute(selector.attribute) : null;
+                    value = raw ? (selector.attribute === "href" || selector.attribute === "src" ? new URL(raw, location.href).href : raw) : null;
+                  } else {
+                    value = (target.innerText || target.textContent || "").trim() || null;
+                  }
+                }
+              } else {
+                value = valueFor(root, selector.attribute ? `${selector.css}::attr(${selector.attribute})` : selector.css);
+              }
             } catch {
               value = null;
             }

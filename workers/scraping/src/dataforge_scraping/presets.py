@@ -15,7 +15,7 @@ FIELD_TYPES = ("string", "url", "decimal", "integer")
 PAGINATION_TYPES = ("none", "next_link", "page_parameter", "cursor", "infinite_scroll", "api_cursor", "detail_links")
 DISCOVERY_MODES = ("none", "sitemap", "feed", "crawl", "llms_txt")
 ENGINES = ("auto", "httpx", "scrapy")
-VARIABLE_TYPES = ("string", "integer", "number", "enum", "sparql")
+VARIABLE_TYPES = ("string", "integer", "number", "enum", "sparql", "path")
 _ID = re.compile(r"^[a-z0-9_]+(\.[a-z0-9_]+)+$")
 _SEMVER = re.compile(r"^\d+\.\d+\.\d+$")
 
@@ -190,8 +190,14 @@ def validate_preset(preset: dict) -> list[str]:
                     except re.error:
                         errors.append(f"request.variables.{name}.pattern is not a valid regular expression")
             if template and strategy.get("preferred") == "api" and not (scope or {}).get("user_supplied_host"):
-                host = urlparse(_example_url(template)).hostname
-                if isinstance(scope, dict) and host not in scope.get("allowed_hosts", []):
+                host_part = template.split("//", 1)[-1].split("/", 1)[0]
+                host_variable = re.fullmatch(r"\{\{\s*([a-zA-Z_]\w*)\s*\}\}", host_part)
+                allowed_hosts = scope.get("allowed_hosts", []) if isinstance(scope, dict) else []
+                if host_variable:
+                    spec = declared.get(host_variable.group(1)) or {}
+                    if spec.get("type") != "enum" or not set(spec.get("choices", [])) <= set(allowed_hosts):
+                        errors.append("a host variable in request.url_template must be an enum of url_scope.allowed_hosts")
+                elif urlparse(_example_url(template)).hostname not in allowed_hosts:
                     errors.append("request.url_template host must be in url_scope.allowed_hosts")
     region = (preset.get("normalization") or {}).get("default_region")
     if region is not None and not re.fullmatch(r"[A-Z]{2}", str(region)):

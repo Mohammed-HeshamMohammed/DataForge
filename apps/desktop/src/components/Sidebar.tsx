@@ -1,10 +1,7 @@
 import { useState } from "react";
 import type { Navigate } from "../app/App.tsx";
-import { isTauri } from "../lib/ipc.ts";
-import { revealInFolder } from "../lib/desktop.ts";
 import { formatCount } from "../lib/format.ts";
 import type { Job, Project } from "../lib/types.ts";
-import { ExternalIcon, GearIcon } from "./icons.tsx";
 
 export type DatasetSummary = {
   id: string;
@@ -49,13 +46,12 @@ function datasetStatus(d: DatasetSummary): { badge?: string; percent?: number; s
   return { percent, sub: `${formatCount(d.canonical_records)} canonical · ${formatCount(d.pending_review)} to review` };
 }
 
-export function Sidebar({ project, summary, navigate, onSwitchProject }: { project: Project; summary: ProjectSummary | null; navigate: Navigate; onSwitchProject: () => void }) {
+export function Sidebar({ summary, navigate }: { project?: Project; summary: ProjectSummary | null; navigate: Navigate }) {
   const [filter, setFilter] = useState("");
   const totals = summary?.totals;
   const reviewTotal = (totals?.pending_review ?? 0) + (totals?.reviewed ?? 0);
   const percent = reviewTotal ? Math.round(((totals?.reviewed ?? 0) / reviewTotal) * 100) : 100;
   const datasets = (summary?.datasets ?? []).filter((d) => d.name.toLowerCase().includes(filter.toLowerCase()));
-  const initials = project.name.split(/\s+/).map((w) => w[0]).join("").slice(0, 2).toUpperCase();
 
   return (
     <aside className="sidebar" aria-label="Project">
@@ -85,7 +81,7 @@ export function Sidebar({ project, summary, navigate, onSwitchProject }: { proje
           <h2 className="section-label">Your datasets</h2>
           <span className="count-badge">{summary?.datasets.length ?? 0}</span>
         </div>
-        <input className="filter-input" value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Filter datasets..." aria-label="Filter datasets" />
+        <input id="dataset-filter" className="filter-input" value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Filter datasets..." aria-label="Filter datasets" />
         <ul className="plain-list scroll-list">
           {datasets.length === 0 && <li className="muted small list-empty">{summary?.datasets.length ? "No matches." : "No datasets yet."}</li>}
           {datasets.map((d) => {
@@ -110,33 +106,6 @@ export function Sidebar({ project, summary, navigate, onSwitchProject }: { proje
         </ul>
       </section>
 
-      <div className="sidebar-actions">
-        <button type="button" className="btn-hero" onClick={() => navigate("match")}>
-          Start matching
-        </button>
-        <button type="button" className="btn-outline" disabled={!isTauri()} onClick={() => void revealInFolder(project.root_path)} title={isTauri() ? project.root_path : "Available in the desktop app"}>
-          Open project folder <ExternalIcon size={14} />
-        </button>
-        <button type="button" className="link-quiet" onClick={onSwitchProject}>
-          Switch project
-        </button>
-      </div>
-
-      <div className="profile-card">
-        <span className="avatar" aria-hidden="true">
-          {initials}
-        </span>
-        <div className="profile-text">
-          <strong>{project.name}</strong>
-          <span className="list-item-sub" title={project.root_path}>
-            {project.root_path}
-          </span>
-          <span className="role-badge">Local</span>
-        </div>
-        <button type="button" className="icon-btn-plain" aria-label="Settings" onClick={() => navigate("settings")}>
-          <GearIcon size={18} />
-        </button>
-      </div>
     </aside>
   );
 }

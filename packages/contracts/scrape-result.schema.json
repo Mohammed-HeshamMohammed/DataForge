@@ -1,0 +1,162 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dataforge.local/contracts/scrape-result.schema.json",
+  "title": "ScrapeJobResult",
+  "description": "Result of a completed scrape job on either engine.",
+  "type": "object",
+  "required": [
+    "run_mode",
+    "preset",
+    "strategy_used",
+    "engine",
+    "source_kind",
+    "purpose",
+    "pages_fetched",
+    "records_extracted",
+    "records_rejected",
+    "records_duplicate",
+    "stop_reason",
+    "warnings",
+    "field_coverage",
+    "sample_records",
+    "dataset_id",
+    "signals",
+    "cached_responses",
+    "discovered_urls"
+  ],
+  "properties": {
+    "run_mode": {
+      "enum": [
+        "test",
+        "full"
+      ]
+    },
+    "preset": {
+      "type": "string",
+      "pattern": "^[a-z0-9_.]+@\\d+\\.\\d+\\.\\d+$"
+    },
+    "strategy_used": {
+      "enum": [
+        "api",
+        "http",
+        "webview"
+      ]
+    },
+    "engine": {
+      "enum": [
+        "httpx",
+        "scrapy",
+        "webview"
+      ]
+    },
+    "source_kind": {
+      "enum": [
+        "website",
+        "sitemap",
+        "feed",
+        "crawl",
+        "llms_txt",
+        "api",
+        "studio"
+      ]
+    },
+    "purpose": {
+      "enum": [
+        "internal_analysis",
+        "lead_research",
+        "dataset_building",
+        "price_monitoring",
+        "research",
+        "archival",
+        "search_indexing",
+        "ai_training"
+      ]
+    },
+    "pages_fetched": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "records_extracted": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "records_rejected": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "records_duplicate": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "stop_reason": {
+      "type": "string",
+      "minLength": 1
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "field_coverage": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 1
+      }
+    },
+    "sample_records": {
+      "type": "array",
+      "maxItems": 10,
+      "items": {
+        "type": "object",
+        "required": [
+          "source_url",
+          "source_retrieved_at",
+          "preset_id",
+          "preset_version"
+        ]
+      }
+    },
+    "dataset_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "signals": {
+      "type": "array",
+      "items": {
+        "$ref": "host-signals.schema.json"
+      }
+    },
+    "cached_responses": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "discovered_urls": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "file_datasets": {
+      "type": "array"
+    },
+    "watch_diff": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "$ref": "record-diff.schema.json"
+        }
+      ]
+    },
+    "warc_capture": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  }
+}

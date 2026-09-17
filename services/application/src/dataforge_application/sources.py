@@ -130,6 +130,47 @@ def check_signals(store: ProjectStore, url: str, purpose: str) -> dict:
     return {"url": f"{parsed.scheme}://{parsed.netloc}{parsed.path}", "purpose": purpose, "allowed": allowed, "reason": reason, "hosts": checker.summary()}
 
 
+_CHECKERS: dict[str, tuple[SignalChecker, object, float]] = {}
+_CHECKERS_LOCK = threading.Lock()
+CHECKER_TTL_SECONDS = 600
+
+
+def shared_checker(purpose: str) -> SignalChecker:
+    """Signals for navigation checks outside collection jobs (Scrape Studio). Cached per purpose for ten
+    minutes, so each host's robots.txt, TDMRep, and ai.txt are read once per session, not once per page."""
+    import time
+
+    if purpose not in PURPOSES:
+        raise ValueError(f"purpose must be one of {', '.join(PURPOSES)}")
+    with _CHECKERS_LOCK:
+        cached = _CHECKERS.get(purpose)
+        if cached and time.monotonic() - cached[2] < CHECKER_TTL_SECONDS:
+            return cached[0]
+        if cached:
+            cached[1].close()
+        client = make_client(None, timeout=20.0)
+        checker = SignalChecker(client, purpose)
+        _CHECKERS[purpose] = (checker, client, time.monotonic())
+        return checker
+
+
+def check_navigation(url: str, purpose: str) -> dict:
+    """{allowed, reason, skippable}: a robots.txt disallow on one detail link is skippable; TDMRep and AIPREF
+    reservations, and robots errors, stop the whole collection."""
+    try:
+        shared_checker(purpose).check_url(url)
+    except PolicyViolation as error:
+        message = str(error)
+        return {"allowed": False, "reason": message, "skippable": "robots.txt disallows this URL" in message}
+    return {"allowed": True, "reason": None, "skippable": False}
+
+
+def navigation_signals(purpose: str, urls: list[str]) -> list[dict]:
+    checker = shared_checker(purpose)
+    hosts = {urlparse(u).netloc for u in urls}
+    return [info for info in checker.summary() if info["host"] in hosts]
+
+
 def frontier_store(store: ProjectStore, job_id: str) -> FrontierStore:
     connection = store._connection
 
@@ -182,10 +223,15 @@ def make_archive_kind(presets_resolver) -> JobKind:
         preset = presets_resolver(store, params.get("preset_id", ""), params.get("preset_version", ""))
         if preset["errors"]:
             raise JobValidationError("Preset is invalid: " + "; ".join(preset["errors"]))
+        if params.get("compare") and params.get("archive") != "wayback":
+            raise JobValidationError("Comparing captures over time uses the Wayback Machine")
+        if params.get("compare") and not (preset.get("validation") or {}).get("unique_by"):
+            raise JobValidationError("Comparing captures needs a preset with validation.unique_by, so records can be matched across versions")
         run_mode = params.get("run_mode", "test")
         limit = min(int(params.get("max_captures") or 50), 500)
         if run_mode == "test":
-            limit = min(limit, TEST_MODE_MAX_RECORDS)
+            # Tests read at most 10 captures; a comparison needs enough history to find two versions of a page.
+            limit = min(limit, 50 if params.get("compare") else TEST_MODE_MAX_RECORDS)
         return {**params, "url_pattern": pattern, "purpose": purpose, "run_mode": run_mode, "max_captures": limit,
                 "resolved_preset": {k: v for k, v in preset.items() if k not in ("errors", "health_status")}}
 
@@ -218,6 +264,22 @@ def make_archive_kind(presets_resolver) -> JobKind:
                         raise ValueError("Common Crawl index list is empty")
                     captures = archives.parse_common_crawl_cdx(get(archives.common_crawl_query_url(crawl["cdx_api"], params["url_pattern"], params["max_captures"])).text, crawl["id"])
                 captures = [c for c in captures if (c.mime or "").startswith("text/html") or not c.mime][: params["max_captures"]]
+                roles: dict[tuple[str, str], str] = {}
+                if params.get("compare"):
+                    # Earliest and latest distinct capture of each URL: "what changed on this page since then".
+                    by_url: dict[str, list] = {}
+                    for capture in captures:
+                        by_url.setdefault(capture.url, []).append(capture)
+                    captures = []
+                    for versions in by_url.values():
+                        if len(versions) < 2:
+                            continue
+                        versions.sort(key=lambda c: c.timestamp)
+                        captures += [versions[0], versions[-1]]
+                        roles[(versions[0].url, versions[0].timestamp)] = "before"
+                        roles[(versions[-1].url, versions[-1].timestamp)] = "after"
+                    if not captures:
+                        warnings.append("No URL has two different captures to compare in that range")
                 for index, capture in enumerate(captures, start=1):
                     context.checkpoint()
                     if params["archive"] == "wayback":
@@ -225,12 +287,22 @@ def make_archive_kind(presets_resolver) -> JobKind:
                         body, headers = response.content, {k.lower(): v for k, v in response.headers.items()}
                     else:
                         url, range_header = archives.warc_range(capture)
-                        body, headers = archives.read_warc_record(get(url, range_header).content)
+                        try:
+                            body, headers = archives.read_warc_record(get(url, range_header).content)
+                        except PolicyViolation as error:
+                            if "robots.txt" in str(error):
+                                raise PolicyViolation(
+                                    f"Found {len(captures)} Common Crawl captures, but data.commoncrawl.org disallows automated fetching in robots.txt, "
+                                    "so DataForge will not read the WARC records. Use the Wayback Machine source, or obtain the files through Common Crawl's own download channels."
+                                ) from error
+                            raise
                     captures_read += 1
                     text = body.decode("utf-8", "replace")
                     page = extract_page(text, body, headers.get("content-type", "text/html"), capture.url, preset, warnings)
                     for record in page:
                         record.update(capture.provenance())
+                        if roles:
+                            record["archive_role"] = roles.get((capture.url, capture.timestamp), "after")
                     candidates.extend(page)
                     context.stage("page_extracted", {"page": index, "captures": len(captures), "candidates": len(page)})
                 signals = checker.summary()
@@ -240,6 +312,13 @@ def make_archive_kind(presets_resolver) -> JobKind:
         except Exception as error:
             store.fail_scrape_run(run_id, "policy_violation" if isinstance(error, PolicyViolation) else type(error).__name__, str(error))
             raise
+        archive_diff = None
+        if params.get("compare"):
+            unique_by = (preset.get("validation") or {}).get("unique_by") or []
+            before = [c for c in candidates if c.get("archive_role") == "before"]
+            after = [c for c in candidates if c.get("archive_role") == "after"]
+            archive_diff = diff_records(before, after, unique_by, ignore={"archive_capture_time", "archive_digest", "archive_role", "archive", "archive_crawl"})
+            candidates = after  # the staged dataset is the newest version
         valid, rejected, more = validate_candidates(candidates, preset)
         limit = TEST_MODE_MAX_RECORDS if params["run_mode"] == "test" else preset["request_limits"]["max_records_default"]
         records = valid[:limit]
@@ -251,7 +330,7 @@ def make_archive_kind(presets_resolver) -> JobKind:
         record_signals(store, run_id, signals)
         return {"run_mode": params["run_mode"], "archive": params["archive"], "captures_read": captures_read, "records_extracted": len(records),
                 "records_rejected": len(rejected), "warnings": list(dict.fromkeys(warnings + more))[:50], "sample_records": records[:TEST_MODE_MAX_RECORDS],
-                "dataset_id": dataset_id, "signals": signals, "stop_reason": "completed", "engine": "httpx"}
+                "dataset_id": dataset_id, "signals": signals, "stop_reason": "completed", "engine": "httpx", "archive_diff": archive_diff}
 
     return JobKind(run=run, validate=validate)
 
@@ -489,6 +568,49 @@ def save_fingerprints(store: ProjectStore, preset: dict, fixtures: dict[str, str
         saved.append({"fixture": path, "fields": sorted(prints)})
     store._connection.commit()
     return saved
+
+
+def health_suggestions(store: ProjectStore, preset: dict, fixtures: dict[str, str]) -> list[dict]:
+    """Suggested selector fixes for a failing health check, from the newest fingerprints of any version of the preset."""
+    row = store._connection.execute(
+        "SELECT fingerprints_json FROM preset_fingerprints WHERE preset_id = ? ORDER BY created_at DESC LIMIT 1", (preset["id"],)
+    ).fetchone()
+    if row is None:
+        return []
+    prints = json.loads(row["fingerprints_json"])
+    out = []
+    for path, text in fixtures.items():
+        if text.startswith("base64:") or path.endswith((".json", ".pdf")):
+            continue
+        for suggestion in relocation_suggestions(text, preset, prints):
+            out.append({"fixture": path, **suggestion})
+    return out
+
+
+def fixture_from_capture(store: ProjectStore, job_id: str, url: str | None = None) -> dict:
+    """Write a sanitized fixture from a job's opt-in WARC capture into the project (`project:fixtures/...`)."""
+    from dataforge_scraping.fixtures import sanitize_html
+
+    row = store._connection.execute("SELECT warc_path, preset_id FROM scrape_runs WHERE job_id = ? ORDER BY created_at DESC LIMIT 1", (job_id,)).fetchone()
+    if row is None or not row["warc_path"] or not Path(row["warc_path"]).is_file():
+        raise ValueError("That job has no page capture. Turn on page capture in Settings → Collection and run it again.")
+    chosen = None
+    for target, body, headers in archives.replay_warc(Path(row["warc_path"])):
+        if "html" not in headers.get("content-type", "html"):
+            continue
+        if url is None or target == url:
+            chosen = (target, body, headers)
+            break
+    if chosen is None:
+        raise ValueError("No captured HTML page matches that URL")
+    target, body, headers = chosen
+    html, redactions = sanitize_html(body.decode("utf-8", "replace"))
+    digest = hashlib.sha256(html.encode("utf-8")).hexdigest()[:16]
+    relative = Path("fixtures") / "captured" / str(row["preset_id"]).replace(".", "_") / f"{digest}.html"
+    destination = store.project_root / relative
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text(html, encoding="utf-8")
+    return {"fixture": "project:" + relative.as_posix(), "source_url": target, "bytes": len(html.encode("utf-8")), "redactions": redactions}
 
 
 def maintenance_report(store: ProjectStore, preset: dict, html: str, url: str) -> dict:

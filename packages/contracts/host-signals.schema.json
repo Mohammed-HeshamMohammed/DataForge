@@ -1,0 +1,109 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dataforge.local/contracts/host-signals.schema.json",
+  "title": "HostSignals",
+  "description": "Site signals read before collection and applied to the declared purpose (robots.txt, TDMRep, AIPREF, ai.txt).",
+  "type": "object",
+  "required": [
+    "host",
+    "checked_at",
+    "robots_status",
+    "crawl_delay",
+    "sitemaps",
+    "tdm_reservation",
+    "tdm_policy",
+    "tdmrep_source",
+    "content_usage",
+    "ai_txt",
+    "warnings"
+  ],
+  "properties": {
+    "host": {
+      "type": "string",
+      "minLength": 1
+    },
+    "checked_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "robots_status": {
+      "enum": [
+        "not_checked",
+        "ok",
+        "missing",
+        "unreachable",
+        "forbidden",
+        "local"
+      ]
+    },
+    "crawl_delay": {
+      "type": [
+        "number",
+        "null"
+      ],
+      "minimum": 0
+    },
+    "sitemaps": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "tdm_reservation": {
+      "enum": [
+        0,
+        1,
+        null
+      ]
+    },
+    "tdm_policy": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "tdmrep_source": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "content_usage": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": [
+            "path",
+            "prefs"
+          ],
+          "properties": {
+            "path": {
+              "type": "string"
+            },
+            "prefs": {
+              "type": "object",
+              "additionalProperties": {
+                "enum": [
+                  "y",
+                  "n"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "ai_txt": {
+      "type": "boolean"
+    },
+    "warnings": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
+  "additionalProperties": false
+}

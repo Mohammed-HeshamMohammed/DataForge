@@ -1,16 +1,17 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import type { Navigate } from "../../app/App.tsx";
 import { call, isTauri } from "../../lib/ipc.ts";
-import { studioHost, type Bounds } from "../../lib/desktop.ts";
+import { getZoom, studioHost, type Bounds } from "../../lib/desktop.ts";
 import { useJob, useService } from "../../lib/hooks.ts";
 import { isActive } from "../../lib/format.ts";
 import { ErrorNote, JobProgress } from "../../components/ui.tsx";
 import { ScrapeResult } from "../scraping/Scraping.tsx";
+import { PURPOSES } from "../scraping/sources.ts";
 
-type Selector = { css: string; attribute?: string };
+type Selector = { css?: string; xpath?: string; attribute?: string };
 type Field = { key: string; type: "string" | "url" | "decimal" | "integer"; required: boolean; selectors: Selector[]; transforms: string[] };
 type Preset = Record<string, any> & { id: string; version: string; display_name: string; strategy: { preferred: string; allowed: string[] }; request_limits: Record<string, number> };
-type Pick = { mode: string; tag: string; text: string; attributes: Record<string, string>; suggested_attribute: string | null; selector: string; relative_selector?: string | null; inside_record_root?: boolean; repeated?: { selector: string; count: number } | null };
+type Pick = { fallback_xpaths?: string[]; mode: string; tag: string; text: string; attributes: Record<string, string>; suggested_attribute: string | null; selector: string; relative_selector?: string | null; inside_record_root?: boolean; repeated?: { selector: string; count: number } | null };
 type Extracted = { url: string; candidates: number; records: Record<string, string>[]; next_url: string | null; error: string | null };
 type PageInfo = { url: string; title: string; ready_state: string; challenge_detected: boolean; password_fields: number; inaccessible_frames: number };
 
@@ -37,7 +38,9 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export function Studio({ navigate }: { navigate: Navigate }) {
   const presets = useService<Preset[]>("preset.list");
-  const bases = (presets.data ?? []).filter((p) => p.strategy.allowed.includes("webview") && p.status !== "disabled" && p.status !== "deprecated");
+  const bases = (presets.data ?? []).filter((p) => p.strategy.allowed.includes("webview") && p.status !== "disabled" && p.status !== "deprecated" && !((p.extraction as { mode?: string })?.mode ?? "").match(/structured_data|article|document_tables/));
+  const structuredPreset = (presets.data ?? []).find((p) => p.id === "generic.structured_data");
+  const [structured, setStructured] = useState<{ url: string; types: Record<string, number>; suggested_type: string | null } | null>(null);
   const [baseKey, setBaseKey] = useState("");
   const base = bases.find((p) => `${p.id}@${p.version}` === baseKey) ?? bases[0];
 
@@ -57,6 +60,11 @@ export function Studio({ navigate }: { navigate: Navigate }) {
   const [version, setVersion] = useState("1.0.0");
   const [maxPages, setMaxPages] = useState(3);
   const [acknowledged, setAcknowledged] = useState(false);
+  const settings = useService<{ default_purpose: string }>("settings.get");
+  const [purpose, setPurpose] = useState("");
+  useEffect(() => {
+    if (!purpose && settings.data) setPurpose(settings.data.default_purpose);
+  }, [settings.data, purpose]);
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [running, setRunning] = useState<string | null>(null);
@@ -70,7 +78,9 @@ export function Studio({ navigate }: { navigate: Navigate }) {
 
   const bounds = (): Bounds | null => {
     const rect = previewRef.current?.getBoundingClientRect();
-    return rect ? { x: rect.left, y: rect.top, width: rect.width, height: rect.height } : null;
+    // The child WebView is positioned in window units; CSS pixels are scaled by the page zoom (View → Zoom).
+    const zoom = getZoom();
+    return rect ? { x: rect.left * zoom, y: rect.top * zoom, width: rect.width * zoom, height: rect.height * zoom } : null;
   };
 
   // Keep the native child WebView positioned over the preview placeholder.
@@ -103,6 +113,39 @@ export function Studio({ navigate }: { navigate: Navigate }) {
     return () => unlisten();
   }, [desktop]);
 
+  // Offer selector-free extraction when the loaded page carries schema.org structured data.
+  useEffect(() => {
+    if (!desktop || loaded?.state !== "finished") return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const snapshot = await studioHost.call<{ url: string; html: string }>("html");
+        const found = await call<{ types: Record<string, number>; suggested_type: string | null; mapped_types: string[] }>("scrape.detect_structured", { html: snapshot.html, url: snapshot.url });
+        if (!cancelled) setStructured(found.mapped_types.length ? { url: snapshot.url, types: found.types, suggested_type: found.suggested_type } : null);
+      } catch {
+        if (!cancelled) setStructured(null);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [desktop, loaded]);
+
+  const testStructured = async () => {
+    if (!structuredPreset || !scopeUrl) return;
+    try {
+      setError(null);
+      const snapshot = await studioHost.call<{ url: string; html: string }>("html");
+      const { source: _s, errors: _e, health_status: _h, declared_status: _d, package: _p, ...clean } = structuredPreset;
+      const result = await call<{ job_id: string }>("scrape.stage_rendered", {
+        preset: clean, pages: [{ url: snapshot.url, html: snapshot.html, retrieved_at: new Date().toISOString() }], run_mode: "test", policy_acknowledgement: acknowledged, purpose,
+      });
+      setJobId(result.job_id);
+    } catch (err) {
+      fail(err);
+    }
+  };
+
   const draftPreset = useCallback((): Preset | null => {
     if (!base) return null;
     const { source: _s, errors: _e, health_status: _h, declared_status: _d, package: _p, ...clean } = base;
@@ -130,8 +173,9 @@ export function Studio({ navigate }: { navigate: Navigate }) {
 
   const fail = (err: unknown) => setError(err instanceof Error ? err.message : String(err));
 
-  const checkUrl = async (target: string, scope: string) => {
-    const result = await call<{ allowed: boolean; reason: string | null }>("scrape.check_url", { preset: draftPreset(), url: target, scope_url: scope });
+  /** Scope check for browsing; with `collecting`, also the site's robots.txt, TDMRep, and AIPREF signals for the purpose. */
+  const checkUrl = async (target: string, scope: string, collecting = false) => {
+    const result = await call<{ allowed: boolean; reason: string | null; skippable: boolean }>("scrape.check_url", { preset: draftPreset(), url: target, scope_url: scope, ...(collecting ? { purpose } : {}) });
     if (!result.allowed) throw new Error(result.reason ?? "URL is not allowed");
   };
 
@@ -247,7 +291,10 @@ export function Studio({ navigate }: { navigate: Navigate }) {
           key: current.some((f) => f.key === key) ? `${key}_${current.length + 1}` : key,
           type,
           required: current.length === 0,
-          selectors: [{ css: css === ":scope" ? "" : css, ...(pick.suggested_attribute ? { attribute: pick.suggested_attribute } : {}) }],
+          selectors: [
+            { css: css === ":scope" ? "" : css, ...(pick.suggested_attribute ? { attribute: pick.suggested_attribute } : {}) },
+            ...(pick.fallback_xpaths ?? []).map((xpath) => ({ xpath, ...(pick.suggested_attribute ? { attribute: pick.suggested_attribute } : {}) })),
+          ],
           transforms: TRANSFORM_DEFAULTS[type],
         },
       ]);
@@ -265,7 +312,7 @@ export function Studio({ navigate }: { navigate: Navigate }) {
   };
 
   const stage = async (runMode: "test" | "full", pages: { url: string; records: Record<string, string>[]; retrieved_at: string }[]) => {
-    const result = await call<{ job_id: string }>("scrape.stage_rendered", { preset: draftPreset(), pages, run_mode: runMode, policy_acknowledgement: acknowledged, dataset_name: `${name} (Scrape Studio)` });
+    const result = await call<{ job_id: string }>("scrape.stage_rendered", { preset: draftPreset(), pages, run_mode: runMode, policy_acknowledgement: acknowledged, purpose, dataset_name: `${name} (Scrape Studio)` });
     setJobId(result.job_id);
   };
 
@@ -303,6 +350,7 @@ export function Studio({ navigate }: { navigate: Navigate }) {
     const recordLimit = runMode === "test" ? 10 : base.request_limits.max_records_default;
     const scrollLimit = runMode === "test" ? 0 : maxScrolls;
     try {
+      await checkUrl((await studioHost.call<PageInfo>("pageInfo")).url, scopeUrl, true);
       if (pageMode === "infinite_scroll") {
         // Scroll until the item count stops growing (twice in a row), the scroll cap, or the record cap.
         let last = -1;
@@ -325,7 +373,8 @@ export function Studio({ navigate }: { navigate: Navigate }) {
         let current = (await studioHost.call<PageInfo>("pageInfo")).url;
         for (const url of found.urls.slice(0, recordLimit)) {
           if (stopRequested.current) break;
-          const allowed = await call<{ allowed: boolean }>("scrape.check_url", { preset: draftPreset(), url, scope_url: scopeUrl });
+          const allowed = await call<{ allowed: boolean; reason: string | null; skippable: boolean }>("scrape.check_url", { preset: draftPreset(), url, scope_url: scopeUrl, purpose });
+          if (!allowed.allowed && !allowed.skippable) throw new Error(allowed.reason ?? "The site's signals do not allow this collection");
           if (!allowed.allowed) continue;
           await sleep(delay);
           await studioHost.navigate(url);
@@ -345,7 +394,7 @@ export function Studio({ navigate }: { navigate: Navigate }) {
           pages.push({ url: page.url, records: page.records, retrieved_at: new Date().toISOString() });
           setNotice(`Page ${pages.length}: ${page.records.length} records`);
           if (pageMode !== "next_link" || page.records.length === 0 || !page.next_url || index + 1 >= pageLimit) break;
-          await checkUrl(page.next_url, scopeUrl);
+          await checkUrl(page.next_url, scopeUrl, true);
           setLoaded(null);
           await sleep(delay);
           await studioHost.navigate(page.next_url);
@@ -363,7 +412,7 @@ export function Studio({ navigate }: { navigate: Navigate }) {
   };
 
   const draft = draftPreset();
-  const canExtract = !!scopeUrl && !!recordRoot && fields.length > 0 && acknowledged && !running && !(job && isActive(job.state));
+  const canExtract = !!scopeUrl && !!recordRoot && fields.length > 0 && acknowledged && !!purpose && !running && !(job && isActive(job.state));
   const saved = (presets.data ?? []).some((p) => p.id === draft?.id && p.version === version);
 
   if (!desktop) {
@@ -415,6 +464,20 @@ export function Studio({ navigate }: { navigate: Navigate }) {
           at least {Math.max(base?.request_limits.min_delay_ms ?? 0, 1000)} ms between pages.
         </p>
         {pageInfo && pageInfo.inaccessible_frames > 0 && <p className="note note-warning small">{pageInfo.inaccessible_frames} cross-origin frame(s) are unavailable and will not be inspected.</p>}
+        {structured && (
+          <div className="note small">
+            <p>
+              This page carries structured data:{" "}
+              {Object.entries(structured.types)
+                .map(([type, count]) => `${type} ×${count}`)
+                .join(", ")}
+              . Structured data survives redesigns better than selectors.
+            </p>
+            <button type="button" className="btn btn-small" disabled={!acknowledged || !purpose || !structuredPreset} onClick={() => void testStructured()} title={acknowledged ? undefined : "Confirm authorization below first"}>
+              Use structured data (test 10 records)
+            </button>
+          </div>
+        )}
 
         <h3 className="section-label">1. Repeated item</h3>
         <div className="row-actions">
@@ -460,10 +523,15 @@ export function Studio({ navigate }: { navigate: Navigate }) {
             <input
               className="code"
               aria-label="Selector relative to record root"
-              value={field.selectors[0].css}
-              onChange={(e) => setFields(fields.map((f, i) => (i === index ? { ...f, selectors: [{ ...f.selectors[0], css: e.target.value }] } : f)))}
+              value={field.selectors[0].css ?? ""}
+              onChange={(e) => setFields(fields.map((f, i) => (i === index ? { ...f, selectors: [{ ...f.selectors[0], css: e.target.value }, ...f.selectors.slice(1)] } : f)))}
               spellCheck={false}
             />
+            {field.selectors.length > 1 && (
+              <p className="muted small">
+                Fallbacks if the selector stops matching: {field.selectors.slice(1).map((s) => <code key={s.xpath}>{s.xpath}</code>).reduce<ReactNode[]>((all, node, i) => (i ? [...all, " then ", node] : [node]), [])}
+              </p>
+            )}
             <div className="field-card-row small">
               <label className="toggle">
                 <input type="checkbox" checked={field.required} onChange={(e) => setFields(fields.map((f, i) => (i === index ? { ...f, required: e.target.checked } : f)))} /> required
@@ -471,7 +539,7 @@ export function Studio({ navigate }: { navigate: Navigate }) {
               <select
                 aria-label="Extract"
                 value={field.selectors[0].attribute ?? "text"}
-                onChange={(e) => setFields(fields.map((f, i) => (i === index ? { ...f, selectors: [{ css: f.selectors[0].css, ...(e.target.value === "text" ? {} : { attribute: e.target.value }) }] } : f)))}
+                onChange={(e) => setFields(fields.map((f, i) => (i === index ? { ...f, selectors: f.selectors.map(({ attribute: _a, ...rest }) => ({ ...rest, ...(e.target.value === "text" ? {} : { attribute: e.target.value }) })) } : f)))}
               >
                 {["text", "href", "src", "alt", "title", "datetime", "aria-label", "data-testid"].map((a) => (
                   <option key={a}>{a}</option>
@@ -535,6 +603,16 @@ export function Studio({ navigate }: { navigate: Navigate }) {
         </div>
         <label className="toggle block small">
           <input type="checkbox" checked={acknowledged} onChange={(e) => setAcknowledged(e.target.checked)} /> I am authorized to collect and use this data and accept the site's terms.
+        </label>
+        <label className="field">
+          <span>Purpose of this collection</span>
+          <select value={purpose} onChange={(e) => setPurpose(e.target.value)}>
+            {PURPOSES.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.label}
+              </option>
+            ))}
+          </select>
         </label>
         <div className="row-actions">
           <button type="button" className="btn btn-primary" disabled={!canExtract} onClick={() => void collect("test")}>

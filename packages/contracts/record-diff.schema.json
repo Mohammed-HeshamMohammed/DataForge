@@ -1,0 +1,66 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dataforge.local/contracts/record-diff.schema.json",
+  "title": "RecordDiff",
+  "type": "object",
+  "required": [
+    "counts",
+    "added",
+    "removed",
+    "changed"
+  ],
+  "properties": {
+    "counts": {
+      "type": "object",
+      "required": [
+        "added",
+        "removed",
+        "changed",
+        "unchanged",
+        "unkeyed"
+      ],
+      "additionalProperties": {
+        "type": "integer",
+        "minimum": 0
+      }
+    },
+    "added": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "removed": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
+    "changed": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "key",
+          "changes"
+        ],
+        "properties": {
+          "key": {
+            "type": "object"
+          },
+          "changes": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "object",
+              "required": [
+                "before",
+                "after"
+              ]
+            }
+          }
+        }
+      }
+    }
+  },
+  "additionalProperties": false
+}

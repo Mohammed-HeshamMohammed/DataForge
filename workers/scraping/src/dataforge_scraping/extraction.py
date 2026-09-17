@@ -124,8 +124,12 @@ def extract_page(body: str, content: bytes, content_type: str, url: str, preset:
     if mode == "document_tables":
         if content[:5] != b"%PDF-":
             return []  # listing pages only contribute file links
-        from .documents import pdf_tables
+        from .documents import pdf_tables, pdf_text
 
+        if extraction.get("output") == "text":
+            pages, more = pdf_text(content, url, bool(extraction.get("ocr")))
+            warnings.extend(more)
+            return [_with_provenance(_project_fields(page, fields, url, preset), url, preset) for page in pages]
         rows, more = pdf_tables(content, url, extraction)
         warnings.extend(more)
         return [_with_provenance(_project_fields(row, fields, url, preset), url, preset) for row in rows]
@@ -150,7 +154,7 @@ def _project_fields(record: dict[str, object], fields: list, url: str, preset: d
         value = record.get(field.get("path", field["key"]))
         if value not in (None, ""):
             projected[field["key"]] = apply_field(value if isinstance(value, (int, float)) else str(value), field, url, preset)
-    for key in ("structured_conflicts", "structured_syntax", "schema_type", "source_page", "source_table", "source_row"):
+    for key in ("structured_conflicts", "structured_syntax", "schema_type", "source_page", "source_table", "source_row", "text_source"):
         if key in record:
             projected[key] = record[key]
     return projected
@@ -278,6 +282,9 @@ def _extract_records_parsel(text: str, source_url: str, root_css: str | None, ro
 def _parsel_value(root, selector: dict) -> str | None:
     if selector.get("xpath"):
         matches = root.xpath(str(selector["xpath"]))
+        if matches and isinstance(selector.get("attribute"), str) and not isinstance(matches[0].root, str):
+            value = matches[0].attrib.get(selector["attribute"])
+            return (str(value).strip() or None) if value is not None else None
     else:
         css = str(selector.get("css", ""))
         attribute = selector.get("attribute")
@@ -337,6 +344,8 @@ def _extract_json_records(document: object, source_url: str, extraction: dict, f
         record: dict[str, object] = {}
         if extraction.get("capture_all") and isinstance(item, dict):
             for key, value in _flatten(item).items():
+                if key.startswith((":", "@")):  # platform bookkeeping such as Socrata :@computed_region_* columns
+                    continue
                 if value not in (None, "") and len(record) < 200:
                     record[key] = value
         for field in fields:

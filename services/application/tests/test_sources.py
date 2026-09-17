@@ -187,3 +187,95 @@ def test_new_presets_pass_health_checks_in_service(service: Service) -> None:
     results = {r["id"]: r["status"] for r in ok(service, "preset.health_check")}
     for preset_id in ("generic.structured_data", "generic.document_tables", "generic.feed", "osm.overpass_pois", "wikidata.sparql", "sec.submissions", "gdelt.doc_search"):
         assert results[preset_id] == "passed", preset_id
+
+
+def test_studio_navigation_and_staging_apply_site_signals(service: Service, site, monkeypatch: pytest.MonkeyPatch) -> None:
+    from dataforge_scraping.signals import SignalChecker
+
+    base, state = site
+    state.robots = "User-agent: *\nDisallow: /product/SKU-2\n"
+    checkers: dict[str, SignalChecker] = {}
+    monkeypatch.setattr(sources, "shared_checker", lambda purpose: checkers.setdefault(purpose, SignalChecker(httpx.Client(), purpose, include_local=True)))
+    preset = next(p for p in ok(service, "preset.list") if p["id"] == "generic.structured_data")
+    allowed = ok(service, "scrape.check_url", preset=preset, url=base + "/product/SKU-1", scope_url=base + "/", purpose="internal_analysis")
+    blocked = ok(service, "scrape.check_url", preset=preset, url=base + "/product/SKU-2", scope_url=base + "/", purpose="internal_analysis")
+    assert allowed["allowed"] and not blocked["allowed"] and blocked["skippable"] and "robots.txt" in blocked["reason"]
+    assert ok(service, "scrape.check_url", preset=preset, url=base + "/product/SKU-2", scope_url=base + "/")["allowed"]  # user browsing is not collection
+
+    html = product_page(PRODUCTS[0])
+    missing = call(service, "scrape.stage_rendered", preset=preset, pages=[{"url": base + "/product/SKU-1", "html": html}], run_mode="test", policy_acknowledgement=True)
+    assert "purpose" in missing["error"]["message"]
+    refused = call(service, "scrape.stage_rendered", preset=preset, pages=[{"url": base + "/product/SKU-2", "html": html}], run_mode="test", policy_acknowledgement=True, purpose="internal_analysis")
+    assert "robots.txt" in refused["error"]["message"]
+    state.tdmrep = [{"location": "/", "tdm-reservation": 1}]
+    checkers.clear()
+    tdm = ok(service, "scrape.check_url", preset=preset, url=base + "/product/SKU-1", scope_url=base + "/", purpose="internal_analysis")
+    assert not tdm["allowed"] and not tdm["skippable"]
+    state.tdmrep = None
+    checkers.clear()
+    job = wait(service, ok(service, "scrape.stage_rendered", preset=preset, pages=[{"url": base + "/product/SKU-1", "html": html}], run_mode="test", policy_acknowledgement=True, purpose="lead_research")["job_id"])
+    assert job["state"] == "completed", job
+    assert job["result"]["sample_records"][0]["sku"] == "SKU-1"
+    assert ok(service, "scrape.run_signals", job_id=job["id"])[0]["robots_status"] == "ok"
+
+
+def test_capture_to_fixture_health_suggestions_and_archive_compare(service: Service, site, monkeypatch: pytest.MonkeyPatch) -> None:
+    base, _ = site
+    ok(service, "settings.update", changes={"warc_capture": {"enabled": True, "retention_days": 7}})
+    html_list = next(p for p in ok(service, "preset.list") if p["id"] == "generic.html_list" and p["version"] == "1.1.0")
+    custom = {k: v for k, v in html_list.items() if k not in ("source", "package", "errors", "health_status", "declared_status")}
+    custom.update(id="custom.me.product", version="1.0.0", pagination={"type": "none"}, validation={"unique_by": ["sku"]})
+    custom["extraction"] = {"record_root": {"css": "main.product"}, "fields": [{"key": "sku", "required": True, "selectors": [{"css": "span.sku"}]}, {"key": "price", "selectors": [{"css": "span.price"}]}]}
+    custom["request_limits"] = {**custom["request_limits"], "min_delay_ms": 0}
+    ok(service, "preset.save_custom", preset=custom)
+    job = scrape(service, preset_id="custom.me.product", preset_version="1.0.0", start_url=base + "/product/SKU-4")
+    assert job["state"] == "completed", job
+
+    fixture = ok(service, "preset.fixture_from_capture", job_id=job["id"])
+    assert fixture["fixture"].startswith("project:fixtures/captured/") and fixture["source_url"].endswith("/product/SKU-4")
+    healthy = {**custom, "version": "1.0.1", "health": {"fixture_tests": [fixture["fixture"]], "expected": {"minimum_records": 1}}}
+    ok(service, "preset.save_custom", preset=healthy)
+    [passed] = ok(service, "preset.health_check", preset_id="custom.me.product")[-1:]
+    assert passed["status"] == "passed" and passed["version"] == "1.0.1"
+
+    broken = {**healthy, "version": "1.0.2", "extraction": {**healthy["extraction"], "fields": [{"key": "sku", "required": True, "selectors": [{"css": "span.stock-code"}]}, healthy["extraction"]["fields"][1]]}}
+    ok(service, "preset.save_custom", preset=broken)
+    results = {r["version"]: r for r in ok(service, "preset.health_check", preset_id="custom.me.product")}
+    assert results["1.0.2"]["status"] == "failed"
+    assert any(s["field"] == "sku" and s["suggested"] == "span.sku" for s in results["1.0.2"]["suggestions"])
+
+    versions = {"20200101000000": product_page(PRODUCTS[0]), "20250101000000": product_page({**PRODUCTS[0], "price": "99.00"})}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path in ("/robots.txt", "/ai.txt") or request.url.path.startswith("/.well-known"):
+            return httpx.Response(404)
+        if request.url.path == "/cdx/search/cdx":
+            header = ["urlkey", "timestamp", "original", "mimetype", "statuscode", "digest", "length"]
+            return httpx.Response(200, json=[header] + [["k", ts, "https://shop.test/product/SKU-1", "text/html", "200", "D" + ts, "1"] for ts in versions])
+        for timestamp, page in versions.items():
+            if f"/web/{timestamp}id_/" in request.url.path:
+                return httpx.Response(200, text=page, headers={"content-type": "text/html"})
+        return httpx.Response(404)
+
+    real = sources.make_client
+    monkeypatch.setattr(sources, "make_client", lambda *a, **k: real(*a, **{**k, "transport": httpx.MockTransport(handler)}))
+    assert "unique_by" in call(service, "archive.create_job", archive="wayback", url_pattern="shop.test/product/*", preset_id="generic.structured_data", preset_version="1.0.0",
+                                policy_acknowledgement=True, purpose="research", compare=True)["error"]["message"]
+    compare = wait(service, ok(service, "archive.create_job", archive="wayback", url_pattern="shop.test/product/*", preset_id="custom.me.product", preset_version="1.0.1",
+                                policy_acknowledgement=True, purpose="research", run_mode="test", compare=True)["job_id"])
+    assert compare["state"] == "completed", compare
+    diff = compare["result"]["archive_diff"]
+    assert diff["counts"] == {"added": 0, "removed": 0, "changed": 1, "unchanged": 0, "unkeyed": 0}
+    assert diff["changed"][0]["changes"]["price"] == {"before": "$19.99", "after": "$99.00"}
+    assert [r["archive_capture_time"] for r in compare["result"]["sample_records"]] == ["20250101000000"]
+
+
+def test_watches_refuse_presets_that_need_a_saved_credential(service: Service) -> None:
+    base = next(p for p in ok(service, "preset.list") if p["id"] == "generic.json_api")
+    custom = {k: v for k, v in base.items() if k not in ("source", "package", "errors", "health_status", "declared_status")}
+    custom.update(id="custom.me.keyedwatch", version="1.0.0")
+    custom["strategy"] = {**custom["strategy"], "api_integration": {"auth": "bearer"}}
+    ok(service, "preset.save_custom", preset=custom)
+    refused = call(service, "watch.create", name="Keyed", interval_minutes=60, params={"preset_id": "custom.me.keyedwatch", "preset_version": "1.0.0", "start_url": "https://api.example.test/items",
+                                                                                     "policy_acknowledgement": True, "purpose": "research", "credential_ref": "vendor"})
+    assert "saved credential" in refused["error"]["message"]

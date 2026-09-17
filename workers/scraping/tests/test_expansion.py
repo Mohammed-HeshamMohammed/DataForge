@@ -307,6 +307,7 @@ def test_api_template_post_body_and_query_param_credential_never_stored(site) ->
     base, state = site
     overpass = load("osm.overpass_pois@1.0.0.json")
     overpass["request"]["url_template"] = base + "/interpreter"
+    del overpass["request"]["variables"]["endpoint"]
     overpass = local(overpass, base)
     result = extract_html_pages("", overpass, variables={"amenity": "cafe", "south": 30.2, "west": -97.8, "north": 30.3, "east": -97.7, "limit": 5})
     assert result.records[0]["name"] == "Cafe" and "out+center+5" in state.requests[-1].replace("%20", "+")
@@ -443,3 +444,166 @@ def test_new_bundled_presets_validate() -> None:
     broken["pagination"] = {"type": "next_link", "next": {"css": "a"}}
     errors = validate_preset(broken)
     assert any("same_host_only" in e for e in errors) and any("max_depth" in e for e in errors) and any("cannot be combined" in e for e in errors)
+
+
+# --- regressions found by scripts/live-check.py ----------------------------------------------------
+
+def test_live_regressions_structured_nesting_duplicates_and_subtypes() -> None:
+    page = ('<script type="application/ld+json">{"@type":"LiveBlogPosting","@id":"https://news.test/a","headline":"Rates rise",'
+            '"publisher":{"@type":"Organization","name":"News"},"liveBlogUpdate":[{"@type":"BlogPosting","headline":"Update 1"}]}</script>'
+            '<script type="application/ld+json">{"@type":"LiveBlogPosting","@id":"https://news.test/a","headline":"Rates rise","datePublished":"2026-09-16"}</script>')
+    records = structured.extract_structured_records(page, "https://news.test/a", {})
+    assert len(records) == 1 and records[0]["schema_type"] == "LiveBlogPosting"
+    assert records[0]["publisher"] == "News" and records[0]["date_published"] == "2026-09-16"
+
+
+def test_live_regressions_nquads_unicode_escapes_and_capture_all_bookkeeping() -> None:
+    lines = ['_:a <http://www.w3.org/1999/02/22-rdf-syntax-ns#type> <http://schema.org/LocalBusiness> <https://cafe.test/> .',
+             '_:a <http://schema.org/name> "Caf\u00E9 M\u00fcller \\"Nord\\"" <https://cafe.test/> .']
+    [(_, entities)] = list(archives.iter_nquad_pages(iter(lines)))
+    assert structured.entity_records(entities, ["LocalBusiness"])[0]["name"] == 'Café Müller "Nord"'
+    preset = load("socrata.dataset_rows@1.0.0.json")
+    records, _, _ = extract_document(json.dumps([{"case": "1", ":@computed_region_x": "9", "location": {"latitude": "41.9", "type": "Point"}}]), "https://city.test/resource/abcd-1234.json", preset)
+    assert "case" in records[0] and not any(key.startswith(":") for key in records[0]) and records[0]["location.latitude"] == "41.9"
+
+
+def test_live_regressions_coverage_counts_only_considered_candidates(site) -> None:
+    base, _ = site
+    preset = local(load("generic.html_list@1.1.0.json"), base)
+    preset["extraction"] = {"record_root": {"css": "li.item"}, "fields": [{"key": "name", "required": True, "selectors": [{"css": "a"}]}]}
+    preset["pagination"] = {"type": "none"}
+    result = extract_html_pages(base + "/products?page=1", preset, max_records=2)
+    assert len(result.records) == 2 and not any("coverage" in w for w in result.warnings)
+
+
+def test_live_regressions_transient_gateway_errors_retry_and_path_variables() -> None:
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        return httpx.Response(504 if calls["n"] == 1 else 200, text="ok")
+
+    waits: list[float] = []
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        assert fetch(client, "https://api.test/x", {"request_limits": {}}, lambda u, p: None, sleep=waits.append, check_challenge=False).text == "ok"
+    assert waits == [3.0]
+    from dataforge_scraping.runtime import build_request
+
+    ckan = load("ckan.package_search@1.0.0.json")
+    variables = resolve_variables(ckan, {"portal": "open.canada.ca", "base_path": "/data", "query": "water quality"}, 10)
+    assert build_request("", ckan, variables)[0] == "https://open.canada.ca/data/api/3/action/package_search?q=water%20quality&rows=50"
+    with pytest.raises(PolicyViolation, match="simple path"):
+        resolve_variables(ckan, {"portal": "open.canada.ca", "base_path": "/../x", "query": "q"}, 10)
+
+
+# --- Scrapy engine: pause, resume after cancel, incremental runs -----------------------------------
+
+def _product_requests(state) -> list[str]:
+    return [path for path in state.requests if path.startswith("/product/")]
+
+
+def test_scrapy_engine_pause_resume_and_resume_after_cancel(site, tmp_path) -> None:
+    import threading
+    import time as clock
+
+    from dataforge_scraping.engines.launcher import collect_with_scrapy
+
+    base, state = site
+    preset = local(load("generic.sitemap_structured@1.0.0.json"), base)
+    preset["request_limits"]["min_delay_ms"] = 300
+    preset["discovery"]["sitemap"]["url_pattern"] = "^/product/"
+    preset["validation"]["unique_by"] = ["sku"]
+
+    # Pause: no new product requests while paused, then the run completes.
+    control = {"paused": False, "pages": 0, "frozen_at": None, "frozen_after": None}
+
+    def on_page(event):
+        control["pages"] += 1
+        if control["pages"] == 2 and control["frozen_at"] is None:
+            control["paused"] = True
+
+    def should_stop():
+        if control["paused"] and control["frozen_at"] is None:
+            clock.sleep(1.0)  # let the in-flight request finish
+            control["frozen_at"] = len(_product_requests(state))
+            clock.sleep(1.5)
+            control["frozen_after"] = len(_product_requests(state))
+            control["paused"] = False
+        return False
+
+    result = collect_with_scrapy(base + "/", preset, 500, 50, should_stop=should_stop, on_page=on_page, is_paused=lambda: control["paused"], include_local_signals=True)
+    assert control["frozen_at"] is not None and control["frozen_after"] == control["frozen_at"]
+    assert len(result.records) == 12
+
+    # Cancel after three pages, then run again with the same resume directory.
+    state.requests.clear()
+    resume = tmp_path / "resume"
+    seen = {"pages": 0}
+    first = collect_with_scrapy(base + "/", preset, 500, 50, should_stop=lambda: seen["pages"] >= 3, on_page=lambda e: seen.__setitem__("pages", seen["pages"] + 1),
+                                include_local_signals=True, resume_dir=resume)
+    assert first.stop_reason == "cancelled"
+    fetched_first = set(_product_requests(state))
+    state.requests.clear()
+    second = collect_with_scrapy(base + "/", preset, 500, 50, include_local_signals=True, resume_dir=resume)
+    assert not (set(_product_requests(state)) & fetched_first)
+    assert sorted({r["sku"] for r in first.records} | {r["sku"] for r in second.records}) == sorted(p["sku"] for p in PRODUCTS)
+    del threading
+
+
+def test_scrapy_engine_incremental_runs_skip_pages_with_known_items(site, tmp_path) -> None:
+    from dataforge_scraping.engines.launcher import collect_with_scrapy
+
+    base, _ = site
+    preset = local(load("generic.sitemap_structured@1.0.0.json"), base)
+    preset["discovery"]["sitemap"]["url_pattern"] = "^/product/"
+    first = collect_with_scrapy(base + "/", preset, 500, 50, include_local_signals=True, incremental=True, deltafetch_dir=tmp_path / "delta")
+    second = collect_with_scrapy(base + "/", preset, 500, 50, include_local_signals=True, incremental=True, deltafetch_dir=tmp_path / "delta")
+    assert len(first.records) == 12 and len(second.records) == 0
+
+
+def test_xpath_fallback_selectors_in_http_runtime() -> None:
+    html = "".join(f"<article class='card'><h3 title='Widget {n}'>Widget {n}</h3><dl><dt>SKU</dt><dd class='renamed'>W-{n}</dd></dl></article>" for n in range(1, 4))
+    preset = load("generic.html_list@1.1.0.json")
+    preset["extraction"] = {"record_root": {"css": "article.card"}, "fields": [
+        {"key": "sku", "required": True, "selectors": [{"css": "dd.sku"}, {"xpath": ".//dt[normalize-space(.)='SKU']/following-sibling::dd[1]"}]},
+        {"key": "title", "selectors": [{"css": "h4::attr(title)"}, {"xpath": "./h3[1]", "attribute": "title"}]},
+    ]}
+    assert validate_preset(preset) == []
+    records, _, _ = extract_document(html, "https://shop.test/", preset)
+    assert [(r["sku"], r["title"]) for r in records] == [("W-1", "Widget 1"), ("W-2", "Widget 2"), ("W-3", "Widget 3")]
+    broken = copy.deepcopy(preset)
+    broken["extraction"]["fields"][0]["selectors"].append({"xpath": "//*["})
+    assert any("invalid XPath" in e for e in validate_preset(broken))
+
+
+def test_fixture_sanitizer_removes_scripts_tokens_and_contact_details() -> None:
+    from dataforge_scraping.fixtures import sanitize_html
+
+    html = ("<html><head><meta name='csrf-token' content='abc123'><script>track()</script>"
+            "<script type='application/ld+json'>{\"@type\":\"Product\",\"name\":\"Widget\"}</script></head><body><!-- build 42 -->"
+            "<form><input type='hidden' name='authenticity_token' value='zzz'></form><iframe src='https://ads.test/'></iframe>"
+            "<a href='/next?page=2&session_id=s3cr3t'>next</a><p>Call 512-555-0100 or write ana@example.com</p>"
+            "<div class='card' data-api-key='k1'><h3>Widget</h3></div></body></html>")
+    cleaned, counts = sanitize_html(html)
+    for leaked in ("abc123", "track()", "zzz", "s3cr3t", "512-555-0100", "ana@example.com", "build 42", "ads.test", "k1"):
+        assert leaked not in cleaned, leaked
+    assert "application/ld+json" in cleaned and "page=2" in cleaned and "<h3>Widget</h3>" in cleaned
+    assert counts["scripts"] == 1 and counts["contact_details"] == 1 and counts["tokens"] >= 3
+
+
+def test_pdf_text_output_and_optional_ocr(monkeypatch) -> None:
+    from dataforge_scraping import documents
+
+    text_pdf = table_pdf([["Name", "City"], ["Acme", "Austin"]])
+    scanned_pdf = table_pdf([])  # ruled lines only: no text layer, like a scanned page
+    preset = load("generic.document_tables@1.0.0.json")
+    preset["extraction"] = {**preset["extraction"], "output": "text"}
+    records, _, _ = extract_document(text_pdf, "https://docs.test/a.pdf", preset)
+    assert records[0]["source_page"] == 1 and "Acme" in records[0]["text"] and records[0]["text_source"] == "pdf"
+
+    monkeypatch.setattr(documents, "_ocr_reader", lambda: None)
+    pages, warnings = documents.pdf_text(scanned_pdf, "https://docs.test/s.pdf", ocr=True)
+    assert pages == [] and "OCR add-on" in warnings[0]
+    monkeypatch.setattr(documents, "_ocr_reader", lambda: (lambda image: f"SCANNED {image.size[0]}x{image.size[1]}"))
+    pages, warnings = documents.pdf_text(scanned_pdf, "https://docs.test/s.pdf", ocr=True)
+    assert pages[0]["text"] == "SCANNED 1224x1584" and pages[0]["text_source"] == "ocr" and not warnings

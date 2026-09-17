@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "display_name": "OpenStreetMap: places in an area",
   "page_type": "api_collection",
-  "description": "Points of interest (for example cafes) inside a small bounding box from the OpenStreetMap Overpass API. The public server is shared: keep areas small or point at your own instance.",
+  "description": "Points of interest (for example cafes) inside a small bounding box from an OpenStreetMap Overpass API instance. overpass-api.de disallows /api/ in robots.txt, so DataForge will stop there; the default is the public Kumi Systems instance, or run your own.",
   "status": "active",
   "owner": "dataforge-core",
   "maintenance_review_date": "2027-03-01",
@@ -31,7 +31,8 @@
   },
   "url_scope": {
     "allowed_hosts": [
-      "overpass-api.de"
+      "overpass-api.de",
+      "overpass.kumi.systems"
     ],
     "allowed_path_patterns": []
   },
@@ -63,7 +64,7 @@
   },
   "request": {
     "method": "POST",
-    "url_template": "https://overpass-api.de/api/interpreter",
+    "url_template": "https://{{endpoint}}/api/interpreter",
     "form_field": "data",
     "body_template": "[out:json][timeout:25];nwr[\"amenity\"=\"{{amenity}}\"]({{south}},{{west}},{{north}},{{east}});out center {{limit}};",
     "limit_variable": "limit",
@@ -75,6 +76,14 @@
       "max_area_degrees": 0.25
     },
     "variables": {
+      "endpoint": {
+        "type": "enum",
+        "choices": [
+          "overpass.kumi.systems",
+          "overpass-api.de"
+        ],
+        "default": "overpass.kumi.systems"
+      },
       "amenity": {
         "type": "string",
         "required": true,

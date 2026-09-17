@@ -13,6 +13,7 @@ from functools import lru_cache
 from pathlib import Path
 
 SYNTAXES = ("json-ld", "microdata", "rdfa", "opengraph", "microformat")
+_CONTAINERS = ("mainEntity", "itemListElement", "item", "hasPart", "about", "subjectOf", "containsPlace", "subOrganization", "department", "makesOffer", "itemOffered")
 _MAPPINGS_PATH = Path(__file__).with_name("data") / "schemaorg_mappings.json"
 
 
@@ -38,9 +39,11 @@ def _walk(node: object, syntax: str, out: list[dict]) -> None:
         _walk(node["@graph"], syntax, out)
     if node.get("@type"):
         out.append({"syntax": syntax, "types": _type_names(node["@type"]), "data": node})
-    for key, value in node.items():
-        if key not in ("@graph", "@context") and isinstance(value, (dict, list)):
-            _walk(value, syntax, out)
+    # Descend only through container properties. Values such as `publisher` or `address` describe the
+    # parent entity and are read through the mappings, not emitted as records of their own.
+    for key in _CONTAINERS:
+        if isinstance(node.get(key), (dict, list)):
+            _walk(node[key], syntax, out)
 
 
 def extract_entities(html: str, url: str, syntaxes: tuple[str, ...] = SYNTAXES) -> list[dict]:
@@ -133,28 +136,22 @@ def entity_records(entities: list[dict], wanted_types: list[str] | None = None) 
         key = (record["schema_type"], str(record.get("identifier") or record.get("sku") or record.get("url") or record.get("name") or record.get("title") or "").lower())
         by_key.setdefault(key, []).append(record)
     kept: list[dict] = []
-    for group in by_key.values():
-        syntaxes = {r["structured_syntax"] for r in group}
-        if len(syntaxes) > 1:
-            fields = {k for r in group for k in r if k not in ("structured_syntax", "schema_type")}
-            conflicts = sorted(k for k in fields if len({str(r[k]) for r in group if k in r}) > 1)
-            if conflicts:
-                for record in group:
-                    record["structured_conflicts"] = ",".join(conflicts)
-                kept.extend(group)
-                continue
-            merged = dict(group[0])  # identical descriptions: keep one, remember every syntax
-            for record in group[1:]:
-                merged.update({k: v for k, v in record.items() if k not in merged})
-            merged["structured_syntax"] = ",".join(sorted(syntaxes))
-            kept.append(merged)
-        else:
-            seen = set()
-            for record in group:  # exact duplicates within one syntax (repeated script blocks)
-                signature = json.dumps(record, sort_keys=True, default=str)
-                if signature not in seen:
-                    seen.add(signature)
-                    kept.append(record)
+    for (schema_type, key), group in by_key.items():
+        if not key or len(group) == 1:
+            kept.extend(group)  # nothing identifies these as the same thing
+            continue
+        fields = {k for r in group for k in r if k not in ("structured_syntax", "schema_type")}
+        conflicts = sorted(k for k in fields if len({str(r[k]) for r in group if k in r}) > 1)
+        if conflicts:
+            for record in group:
+                record["structured_conflicts"] = ",".join(conflicts)
+            kept.extend(group)
+            continue
+        merged = dict(group[0])  # consistent descriptions (repeated blocks or several syntaxes): one record
+        for record in group[1:]:
+            merged.update({k: v for k, v in record.items() if k not in merged})
+        merged["structured_syntax"] = ",".join(sorted({r["structured_syntax"] for r in group}))
+        kept.append(merged)
     return kept
 
 

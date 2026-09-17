@@ -138,6 +138,40 @@ class _HeaderAdapter:
         self.headers = {k.decode("latin-1").lower(): v[0].decode("latin-1") for k, v in response.headers.items() if v}
 
 
+class DeltaFetchMiddleware:
+    """scrapy-deltafetch's rules (skip requests whose pages produced items before) with the async spider-output
+    interface Scrapy 2.13+ requires. The storage and keys are the upstream middleware's."""
+
+    @classmethod
+    def from_crawler(cls, crawler):
+        from scrapy_deltafetch.middleware import DeltaFetch
+
+        middleware = cls()
+        middleware.inner = DeltaFetch.from_crawler(crawler)
+        return middleware
+
+    def _process(self, response, output, spider=None):
+        inner = self.inner
+        if isinstance(output, Request):
+            if inner._get_key(output) in inner.db and inner._is_enabled_for_request(output):
+                inner.stats.inc_value("deltafetch/skipped")
+                return None
+        else:
+            inner.db[inner._get_key(response.request)] = str(__import__("time").time())
+            inner.stats.inc_value("deltafetch/stored")
+        return output
+
+    def process_spider_output(self, response, result, spider=None):
+        for output in result:
+            if (kept := self._process(response, output, spider)) is not None:
+                yield kept
+
+    async def process_spider_output_async(self, response, result, spider=None):
+        async for output in result:
+            if (kept := self._process(response, output, spider)) is not None:
+                yield kept
+
+
 class EmitPipeline:
     def process_item(self, item, spider=None):
         record = {k: v for k, v in dict(item).items() if k != "_validation"}
@@ -202,6 +236,8 @@ class PresetSpider(scrapy.Spider):
             self._control.stop()
         stats = self.crawler.stats.get_stats()
         validation_errors = sum(v for k, v in stats.items() if k.startswith("spidermon/validation/fields/errors") and isinstance(v, int))
+        stats_errors = sum(v for k, v in stats.items() if k.startswith("spidermon/validation/items/errors") and isinstance(v, int))
+        validation_errors = max(validation_errors, stats_errors)
         emit("done", reason=self.stop_reason or _reason(reason), pages=self.pages, records=self.records, discovered=self.discovered,
              cached=int(stats.get("httpcache/hit", 0)), validation_errors=validation_errors, warnings=self.warnings)
 
@@ -451,7 +487,9 @@ def settings_for(job: dict) -> dict:
         "AUTOTHROTTLE_ENABLED": True,  # AutoThrottle can only add delay above DOWNLOAD_DELAY
         "AUTOTHROTTLE_START_DELAY": max(delay, 0.5),
         "AUTOTHROTTLE_TARGET_CONCURRENCY": 1.0,
-        "RETRY_ENABLED": False,
+        "RETRY_ENABLED": True,  # mirrors the httpx engine: gateway errors and dropped connections only
+        "RETRY_TIMES": 2,
+        "RETRY_HTTP_CODES": [502, 503, 504],
         "COOKIES_ENABLED": False,
         "REDIRECT_MAX_TIMES": 5,
         "DOWNLOAD_MAXSIZE": 50 * 1024 * 1024,
@@ -478,9 +516,9 @@ def settings_for(job: dict) -> dict:
         "FEEDS": {},
     }
     if job.get("incremental"):
-        settings["SPIDER_MIDDLEWARES"]["scrapy_deltafetch.DeltaFetch"] = 100
+        settings["SPIDER_MIDDLEWARES"]["dataforge_scraping.engines.scrapy_engine.DeltaFetchMiddleware"] = 100
         settings["DELTAFETCH_ENABLED"] = True
-        settings["DELTAFETCH_DIR"] = str(work / "deltafetch")
+        settings["DELTAFETCH_DIR"] = job.get("deltafetch_dir") or str(work / "deltafetch")
     schema = _item_schema(preset)
     if schema:
         schema_path = work / "item-schema.json"

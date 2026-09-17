@@ -25,6 +25,51 @@ export async function windowAction(action: "minimize" | "toggleMaximize" | "clos
   await getCurrentWindow()[action]();
 }
 
+export async function toggleFullscreen(): Promise<void> {
+  if (!isTauri()) {
+    if (document.fullscreenElement) await document.exitFullscreen();
+    else await document.documentElement.requestFullscreen?.();
+    return;
+  }
+  const { getCurrentWindow } = await import("@tauri-apps/api/window");
+  const window = getCurrentWindow();
+  await window.setFullscreen(!(await window.isFullscreen()));
+}
+
+const ZOOM_STEPS = [0.8, 0.9, 1, 1.1, 1.25, 1.4];
+
+export function getZoom(): number {
+  const value = loadSetting<number>("zoom", 1);
+  return ZOOM_STEPS.includes(value) ? value : 1;
+}
+
+/** Native WebView zoom in the desktop app (Studio bounds are scaled by the same factor); CSS zoom in a browser. */
+export async function applyZoom(zoom: number): Promise<void> {
+  saveSetting("zoom", zoom);
+  if (isTauri()) {
+    const { getCurrentWebview } = await import("@tauri-apps/api/webview");
+    await getCurrentWebview().setZoom(zoom);
+  } else {
+    (document.documentElement.style as CSSStyleDeclaration & { zoom: string }).zoom = String(zoom);
+  }
+}
+
+export function stepZoom(current: number, direction: 1 | -1 | 0): number {
+  if (direction === 0) return 1;
+  const index = ZOOM_STEPS.indexOf(current);
+  return ZOOM_STEPS[Math.min(Math.max((index < 0 ? 2 : index) + direction, 0), ZOOM_STEPS.length - 1)];
+}
+
+export async function copyText(text: string): Promise<void> {
+  await navigator.clipboard.writeText(text);
+}
+
+export async function openPath(path: string): Promise<void> {
+  if (!isTauri()) return;
+  const { openPath: open } = await import("@tauri-apps/plugin-opener");
+  await open(path);
+}
+
 async function host<T>(command: string, args: Record<string, unknown> = {}): Promise<T> {
   if (!isTauri()) throw new Error("This feature needs the DataForge desktop app");
   const { invoke } = await import("@tauri-apps/api/core");
@@ -45,7 +90,7 @@ export const studioHost = {
   navigate: (url: string) => host<void>("studio_navigate", { url }),
   control: (action: "reload" | "stop" | "back") => host<void>("studio_control", { action }),
   close: () => host<void>("studio_close"),
-  call: <T>(action: "setMode" | "takePicks" | "pageInfo" | "count" | "extract" | "scrollStep" | "links", args: unknown[] = []) => host<T>("studio_call", { action, args }),
+  call: <T>(action: "setMode" | "takePicks" | "pageInfo" | "count" | "extract" | "scrollStep" | "links" | "html", args: unknown[] = []) => host<T>("studio_call", { action, args }),
   onEvent: async (handler: (event: { type: string; event?: string; url?: string }) => void) => {
     if (!isTauri()) return () => {};
     const { listen } = await import("@tauri-apps/api/event");

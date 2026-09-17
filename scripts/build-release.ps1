@@ -11,7 +11,9 @@ if (-not $SkipTests) {
   if ($LASTEXITCODE) { throw "Python tests failed" }
 }
 
-python -m pip install --quiet "pyinstaller>=6" openpyxl httpx beautifulsoup4 rapidfuzz cryptography
+python -m pip install --quiet "pyinstaller>=6" -r requirements.txt
+python scripts/check-licenses.py
+if ($LASTEXITCODE) { throw "License check failed" }
 python -m PyInstaller packaging/dataforge-service.spec --noconfirm --distpath build/service --workpath build/pyinstaller
 if ($LASTEXITCODE) { throw "PyInstaller build failed" }
 

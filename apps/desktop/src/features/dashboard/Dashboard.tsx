@@ -1,18 +1,13 @@
-import { useState } from "react";
 import type { Navigate } from "../../app/App.tsx";
-import { call } from "../../lib/ipc.ts";
-import { useJob, useService } from "../../lib/hooks.ts";
+import { useService } from "../../lib/hooks.ts";
 import { isActive } from "../../lib/format.ts";
 import type { Dataset, Job } from "../../lib/types.ts";
-import { ErrorNote, JobProgress, Metric } from "../../components/ui.tsx";
+import { Metric } from "../../components/ui.tsx";
 
 export function Dashboard({ navigate }: { navigate: Navigate }) {
   const datasets = useService<Dataset[]>("dataset.list");
   const jobs = useService<Job[]>("job.list", { limit: 50 }, 3000);
   const health = useService<{ status: string; service: string }>("health.check");
-  const [fixtureJob, setFixtureJob] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const fixture = useJob(fixtureJob);
 
   const list = jobs.data ?? [];
   const matchJobs = list.filter((j) => j.kind === "match" && j.state === "completed" && j.params.run_mode === "full");
@@ -26,6 +21,7 @@ export function Dashboard({ navigate }: { navigate: Navigate }) {
         <Metric label="Service" value={health.data?.status ?? "…"} icon={health.data?.status === "ok" ? "✓" : "!"} />
       </div>
 
+      <div className="dashboard-grid">
       <section className="panel">
         <h2>Start</h2>
         <div className="row-actions">
@@ -38,7 +34,11 @@ export function Dashboard({ navigate }: { navigate: Navigate }) {
           <button type="button" className="btn" onClick={() => navigate("match")}>
             Match & deduplicate
           </button>
+          <button type="button" className="btn" onClick={() => navigate("studio")}>
+            Open Scrape Studio
+          </button>
         </div>
+        <p className="muted small">Tip: press Ctrl+K to search every command, or use the menus in the title bar.</p>
       </section>
 
       {matchJobs.length > 0 && (
@@ -58,28 +58,8 @@ export function Dashboard({ navigate }: { navigate: Navigate }) {
           </ul>
         </section>
       )}
+      </div>
 
-      <section className="panel">
-        <h2>System check</h2>
-        <p className="muted">Runs a harmless multi-step test job to confirm that jobs, progress events, pause, and cancel work end to end.</p>
-        <button
-          type="button"
-          className="btn"
-          disabled={!!fixture && isActive(fixture.state)}
-          onClick={async () => {
-            try {
-              setFixtureJob((await call<{ job_id: string }>("job.start_fixture", { steps: 8 })).job_id);
-              setError(null);
-            } catch (err) {
-              setError(err instanceof Error ? err.message : String(err));
-            }
-          }}
-        >
-          Run test job
-        </button>
-        <ErrorNote message={error} />
-        {fixtureJob && <JobProgress job={fixture} />}
-      </section>
     </div>
   );
 }

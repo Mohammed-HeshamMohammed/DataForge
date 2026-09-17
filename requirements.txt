@@ -1,0 +1,34 @@
+# Runtime dependencies of the application service and workers (bundled into the installer).
+# Every package must pass scripts/check-licenses.py; see docs/Scrapper/Scraping Expansion Plan.md section 4.
+openpyxl==3.1.5
+rapidfuzz==3.14.6
+cryptography==50.0.0
+httpx==0.28.1
+truststore==0.10.4
+hishel==1.3.1
+beautifulsoup4==4.15.0
+lxml==6.1.1
+parsel==1.11.0
+selectolax==0.4.11
+protego==0.6.2
+feedparser==6.0.14
+extruct==0.18.0
+mf2py==2.0.1
+trafilatura==2.2.0
+htmldate==1.10.0
+courlan==1.4.0
+markdownify==1.2.3
+autoscraper==1.1.14
+phonenumbers==9.0.39
+usaddress==0.5.16
+price-parser==0.5.1
+dateparser==1.4.3
+tldextract==5.3.2
+pdfplumber==0.11.10
+warcio==1.8.1
+scrapy==2.19.0
+scrapy-deltafetch==2.1.0
+spidermon==1.27.0
+itemadapter==0.13.1
+itemloaders==1.4.0
+w3lib==2.4.1

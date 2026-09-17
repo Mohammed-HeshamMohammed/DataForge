@@ -28,7 +28,9 @@
         "dataset_import",
         "scrape",
         "scrape_rendered",
-        "match"
+        "match",
+        "archive_query",
+        "bulk_import"
       ]
     },
     "state": {

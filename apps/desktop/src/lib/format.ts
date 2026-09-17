@@ -28,6 +28,8 @@ export const JOB_KIND_LABELS: Record<string, string> = {
   match: "Match",
   scrape: "Scrape",
   scrape_rendered: "Studio scrape",
+  archive_query: "Archive",
+  bulk_import: "Bulk import",
   fixture: "Test job",
 };
 

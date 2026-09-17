@@ -44,6 +44,18 @@
         },
         "authentication": {
           "const": "forbidden"
+        },
+        "purpose": {
+          "enum": [
+            "internal_analysis",
+            "lead_research",
+            "dataset_building",
+            "price_monitoring",
+            "research",
+            "archival",
+            "search_indexing",
+            "ai_training"
+          ]
         }
       }
     },
@@ -74,6 +86,106 @@
             "infinite_scroll",
             "api_cursor",
             "detail_links"
+          ]
+        }
+      }
+    },
+    "engine": {
+      "enum": [
+        "auto",
+        "httpx",
+        "scrapy"
+      ]
+    },
+    "requires_contact_user_agent": {
+      "type": "boolean"
+    },
+    "discovery": {
+      "type": "object",
+      "properties": {
+        "mode": {
+          "enum": [
+            "none",
+            "sitemap",
+            "feed",
+            "crawl",
+            "llms_txt"
+          ]
+        },
+        "crawl": {
+          "type": "object",
+          "properties": {
+            "max_depth": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 5
+            },
+            "same_host_only": {
+              "const": true
+            }
+          }
+        },
+        "sitemap": {
+          "type": "object"
+        },
+        "feed": {
+          "type": "object"
+        },
+        "llms_txt": {
+          "type": "object"
+        },
+        "file_links": {
+          "type": "boolean"
+        },
+        "max_files": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "request": {
+      "type": "object",
+      "properties": {
+        "method": {
+          "enum": [
+            "GET",
+            "POST"
+          ]
+        },
+        "url_template": {
+          "type": "string",
+          "pattern": "^https://"
+        },
+        "variables": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "enum": [
+                  "string",
+                  "integer",
+                  "number",
+                  "enum",
+                  "sparql",
+                  "path"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "extraction": {
+      "type": "object",
+      "properties": {
+        "mode": {
+          "enum": [
+            "selectors",
+            "structured_data",
+            "article",
+            "document_tables",
+            "api"
           ]
         }
       }

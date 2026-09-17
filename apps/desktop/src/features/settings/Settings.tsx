@@ -6,19 +6,41 @@ import { credentials, loadSetting, saveSetting, updates, type UpdateInfo } from 
 import { formatTime } from "../../lib/format.ts";
 import { ConfirmButton, ErrorNote, PathInput } from "../../components/ui.tsx";
 
-type PresetRow = { id: string; version: string; display_name: string; source: string; status: string; declared_status: string; successor?: string; package?: string | null; health_status: { status: string; checked_at: string; failures: string[] } | null };
+type PresetRow = { id: string; version: string; display_name: string; source: string; status: string; declared_status: string; successor?: string; package?: string | null; health_status: { status: string; checked_at: string; failures: string[]; suggestions?: { field: string; suggested: string; score: number }[] } | null; extraction?: { record_root?: unknown } };
 type PackageRow = { name: string; version: string; key_id: string; installed_at: string; removed_at: string | null };
 
 export type UpdatePrefs = { repository: string; channel: "stable" | "beta"; autoCheck: boolean; lastCheck: number | null };
 export const DEFAULT_UPDATE_PREFS: UpdatePrefs = { repository: "", channel: "stable", autoCheck: false, lastCheck: null };
 
+const SETTINGS_SECTIONS = [
+  { id: "project", label: "Project" },
+  { id: "collection", label: "Collection" },
+  { id: "presets", label: "Presets" },
+  { id: "credentials", label: "Credentials" },
+  { id: "updates", label: "Updates" },
+] as const;
+type SettingsSection = (typeof SETTINGS_SECTIONS)[number]["id"];
+
+/** One section at a time with a vertical section list, so settings never need a long page scroll. */
 export function Settings({ project, onUpdateInfo }: { project: Project; onUpdateInfo?: (info: UpdateInfo | null) => void }) {
+  const [section, setSection] = useState<SettingsSection>(() => loadSetting<SettingsSection>("settingsSection", "project"));
+  useEffect(() => saveSetting("settingsSection", section), [section]);
   return (
-    <div className="stack">
-      <ProjectSection project={project} />
-      <UpdatesSection onUpdateInfo={onUpdateInfo} />
-      <CredentialsSection />
-      <PresetsSection />
+    <div className="settings-layout">
+      <nav className="settings-nav" role="tablist" aria-label="Settings sections" aria-orientation="vertical">
+        {SETTINGS_SECTIONS.map((s) => (
+          <button key={s.id} type="button" role="tab" id={`settings-tab-${s.id}`} aria-controls="settings-panel" aria-selected={section === s.id} onClick={() => setSection(s.id)}>
+            {s.label}
+          </button>
+        ))}
+      </nav>
+      <div id="settings-panel" role="tabpanel" aria-labelledby={`settings-tab-${section}`}>
+        {section === "project" && <ProjectSection project={project} />}
+        {section === "collection" && <CollectionSection />}
+        {section === "presets" && <PresetsSection />}
+        {section === "credentials" && <CredentialsSection />}
+        {section === "updates" && <UpdatesSection onUpdateInfo={onUpdateInfo} />}
+      </div>
     </div>
   );
 }
@@ -40,6 +62,131 @@ function ProjectSection({ project }: { project: Project }) {
         <dt>Service</dt>
         <dd>{health.data ? `${health.data.status} (checked ${new Date(health.data.checked_at).toLocaleTimeString()})` : "…"}</dd>
       </dl>
+    </section>
+  );
+}
+
+type CollectionSettings = {
+  contact_identity: { organization: string; email: string };
+  default_purpose: string;
+  http_cache: { enabled: boolean };
+  warc_capture: { enabled: boolean; retention_days: number };
+  ai_suggestions: { provider: "local_heuristic" | "model"; endpoint: string; model: string; remote_consent: boolean };
+};
+
+const PURPOSE_OPTIONS: [string, string][] = [
+  ["internal_analysis", "Internal analysis"], ["lead_research", "Lead research"], ["dataset_building", "Building a dataset"], ["price_monitoring", "Price monitoring"],
+  ["research", "Research"], ["archival", "Archiving"], ["search_indexing", "Search indexing"], ["ai_training", "AI training"],
+];
+
+function CollectionSection() {
+  const saved = useService<CollectionSettings>("settings.get");
+  const [draft, setDraft] = useState<CollectionSettings | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    if (saved.data) setDraft(saved.data);
+  }, [saved.data]);
+  if (!draft) return null;
+  const remote = draft.ai_suggestions.provider === "model" && !!draft.ai_suggestions.endpoint && !/^https?:\/\/(127\.0\.0\.1|localhost|\[::1\])(:|\/|$)/.test(draft.ai_suggestions.endpoint);
+  const save = async () => {
+    try {
+      await call("settings.update", { changes: draft });
+      setNotice("Collection settings saved.");
+      setError(null);
+      void saved.reload();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  };
+  const purge = async () => {
+    try {
+      const { bytes_removed } = await call<{ bytes_removed: number }>("cache.purge");
+      setNotice(`Cache cleared (${Math.round(bytes_removed / 1024)} KB).`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  };
+  return (
+    <section className="panel">
+      <h2>Collection</h2>
+      <h3 className="section-label">Contact identity</h3>
+      <p className="muted small">
+        Some sources (SEC EDGAR, Wikidata) require a way to contact you in each request's User-Agent. It is sent only to presets that require it and stored in this project only.
+      </p>
+      <div className="split tight-2">
+        <label className="field">
+          <span>Organization or name</span>
+          <input value={draft.contact_identity.organization} onChange={(e) => setDraft({ ...draft, contact_identity: { ...draft.contact_identity, organization: e.target.value } })} />
+        </label>
+        <label className="field">
+          <span>Contact email</span>
+          <input type="email" value={draft.contact_identity.email} onChange={(e) => setDraft({ ...draft, contact_identity: { ...draft.contact_identity, email: e.target.value } })} />
+        </label>
+      </div>
+      <label className="field">
+        <span>Default purpose</span>
+        <select value={draft.default_purpose} onChange={(e) => setDraft({ ...draft, default_purpose: e.target.value })}>
+          {PURPOSE_OPTIONS.map(([id, label]) => (
+            <option key={id} value={id}>
+              {label}
+            </option>
+          ))}
+        </select>
+      </label>
+      <h3 className="section-label">Caching and capture</h3>
+      <label className="toggle block">
+        <input type="checkbox" checked={draft.http_cache.enabled} onChange={(e) => setDraft({ ...draft, http_cache: { enabled: e.target.checked } })} /> Cache responses and revalidate them on re-runs
+        (unchanged pages cost a 304)
+      </label>
+      <label className="toggle block">
+        <input type="checkbox" checked={draft.warc_capture.enabled} onChange={(e) => setDraft({ ...draft, warc_capture: { ...draft.warc_capture, enabled: e.target.checked } })} /> Keep a WARC copy of
+        fetched pages for reproducibility and fixtures (cookies and authorization headers are removed)
+      </label>
+      {draft.warc_capture.enabled && (
+        <label className="field inline">
+          <span>Delete captures after (days)</span>
+          <input type="number" min={1} max={3650} value={draft.warc_capture.retention_days} onChange={(e) => setDraft({ ...draft, warc_capture: { ...draft.warc_capture, retention_days: Number(e.target.value) } })} />
+        </label>
+      )}
+      <h3 className="section-label">Suggestions</h3>
+      <label className="field">
+        <span>Draft preset proposals</span>
+        <select value={draft.ai_suggestions.provider} onChange={(e) => setDraft({ ...draft, ai_suggestions: { ...draft.ai_suggestions, provider: e.target.value as "local_heuristic" | "model" } })}>
+          <option value="local_heuristic">On this computer, without AI (structured data and page structure)</option>
+          <option value="model">Also ask a language model (OpenAI-compatible endpoint)</option>
+        </select>
+      </label>
+      {draft.ai_suggestions.provider === "model" && (
+        <>
+          <div className="split tight-2">
+            <label className="field">
+              <span>Endpoint</span>
+              <input value={draft.ai_suggestions.endpoint} onChange={(e) => setDraft({ ...draft, ai_suggestions: { ...draft.ai_suggestions, endpoint: e.target.value.trim() } })} placeholder="http://127.0.0.1:11434/v1" spellCheck={false} />
+            </label>
+            <label className="field">
+              <span>Model</span>
+              <input value={draft.ai_suggestions.model} onChange={(e) => setDraft({ ...draft, ai_suggestions: { ...draft.ai_suggestions, model: e.target.value.trim() } })} placeholder="llama3.1" spellCheck={false} />
+            </label>
+          </div>
+          {remote && (
+            <label className="toggle block">
+              <input type="checkbox" checked={draft.ai_suggestions.remote_consent} onChange={(e) => setDraft({ ...draft, ai_suggestions: { ...draft.ai_suggestions, remote_consent: e.target.checked } })} /> Allow
+              sending page text to this remote endpoint. Emails, phone numbers, and long numbers are removed first.
+            </label>
+          )}
+        </>
+      )}
+      <div className="row-actions">
+        <button type="button" className="btn btn-primary" onClick={() => void save()}>
+          Save collection settings
+        </button>
+        <button type="button" className="btn" onClick={() => void purge()}>
+          Clear HTTP cache
+        </button>
+      </div>
+      {notice && <p className="note small">{notice}</p>}
+      <ErrorNote message={error} />
     </section>
   );
 }
@@ -198,6 +345,89 @@ function CredentialsSection() {
   );
 }
 
+type MaintenanceReport = { records: number; coverage: Record<string, number>; drift: { field: string; baseline: number; current: number }[]; suggestions: { field: string; suggested: string; score: number; sample?: string }[] };
+
+/** Compare a live page with a preset's stored fingerprints: coverage drift and suggested selectors. Nothing is changed. */
+function MaintenanceCheck({ presets }: { presets: PresetRow[] }) {
+  const candidates = presets.filter((p) => p.extraction?.record_root);
+  const [key, setKey] = useState("");
+  const [url, setUrl] = useState("");
+  const [purpose, setPurpose] = useState("internal_analysis");
+  const [report, setReport] = useState<MaintenanceReport | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const preset = candidates.find((p) => `${p.id}@${p.version}` === key) ?? candidates[0];
+  const check = async () => {
+    if (!preset) return;
+    setBusy(true);
+    try {
+      setReport(await call<MaintenanceReport>("preset.maintenance_report", { preset_id: preset.id, preset_version: preset.version, url, purpose }));
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <details>
+      <summary className="small">Check a preset against a live page</summary>
+      <p className="muted small">Fetches one permitted page and compares it with the fingerprints saved by the preset's last passing health check.</p>
+      <div className="split tight-2">
+        <label className="field">
+          <span>Preset</span>
+          <select value={preset ? `${preset.id}@${preset.version}` : ""} onChange={(e) => setKey(e.target.value)}>
+            {candidates.map((p) => (
+              <option key={`${p.id}@${p.version}`} value={`${p.id}@${p.version}`}>
+                {p.display_name} — {p.id}@{p.version}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="field">
+          <span>Page URL</span>
+          <input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://example.com/listings" spellCheck={false} />
+        </label>
+      </div>
+      <label className="field inline">
+        <span>Purpose</span>
+        <select value={purpose} onChange={(e) => setPurpose(e.target.value)}>
+          {PURPOSE_OPTIONS.map(([id, label]) => (
+            <option key={id} value={id}>
+              {label}
+            </option>
+          ))}
+        </select>
+      </label>
+      <button type="button" className="btn btn-small" disabled={!preset || !url.startsWith("https://") || busy} onClick={() => void check()}>
+        {busy ? "Checking…" : "Check page"}
+      </button>
+      {report && (
+        <div className="stack small">
+          <p>
+            {report.records} records ·{" "}
+            {Object.entries(report.coverage)
+              .map(([field, value]) => `${field} ${Math.round(value * 100)}%`)
+              .join(" · ")}
+          </p>
+          {!report.drift.length && !report.suggestions.length && <p className="note">No drift: the saved selectors still match this page.</p>}
+          {report.drift.map((d) => (
+            <p key={d.field} className="note note-warning">
+              {d.field}: coverage fell from {Math.round(d.baseline * 100)}% to {Math.round(d.current * 100)}%.
+            </p>
+          ))}
+          {report.suggestions.map((s) => (
+            <p key={`${s.field}-${s.suggested}`} className="note">
+              Suggested selector for {s.field === "__root__" ? "the record root" : s.field}: <code>{s.suggested}</code> ({Math.round(s.score * 100)}% similar){s.sample ? `, e.g. "${s.sample}"` : ""}
+            </p>
+          ))}
+        </div>
+      )}
+      <ErrorNote message={error} />
+    </details>
+  );
+}
+
 function PresetsSection() {
   const presets = useService<PresetRow[]>("preset.list");
   const packages = useService<PackageRow[]>("preset.packages");
@@ -220,7 +450,7 @@ function PresetsSection() {
   const activePackages = [...new Set((packages.data ?? []).filter((p) => !p.removed_at).map((p) => p.name))];
 
   return (
-    <section className="panel">
+    <section className="panel settings-presets">
       <h2>Presets</h2>
       <div className="row-actions">
         <button type="button" className="btn" onClick={() => void run(async () => {
@@ -230,6 +460,7 @@ function PresetsSection() {
           Run fixture health checks
         </button>
       </div>
+      <MaintenanceCheck presets={presets.data ?? []} />
       <div className="table-wrap">
         <table className="data-table">
           <thead>
@@ -263,6 +494,11 @@ function PresetsSection() {
                   {p.health_status ? (
                     <>
                       {p.health_status.status === "passed" ? "✓ passed" : `✕ ${p.health_status.failures[0] ?? "failed"}`}
+                      {(p.health_status.suggestions ?? []).map((s) => (
+                        <div key={`${s.field}-${s.suggested}`} className="note note-warning small">
+                          Suggested fix for {s.field === "__root__" ? "the record root" : s.field}: <code>{s.suggested}</code> ({Math.round(s.score * 100)}% similar). Save a new version to apply it.
+                        </div>
+                      ))}
                       <div className="muted">{formatTime(p.health_status.checked_at)}</div>
                     </>
                   ) : (
@@ -285,7 +521,8 @@ function PresetsSection() {
         </table>
       </div>
 
-      <h3 className="section-head">Signed preset packages</h3>
+      <details className="settings-subsection">
+      <summary className="section-label">Signed preset packages</summary>
       <p className="muted small">Packages must be signed by a trusted Ed25519 key and pass their fixture tests before they install. Rolling back removes the newest version; jobs keep the exact preset version they started with.</p>
       <PathInput label="Package file (.dfpreset)" value={packagePath} onChange={setPackagePath} placeholder="C:\presets\vendor-pack-1.0.0.dfpreset" onBrowse={isTauri() ? () => pickFile([{ name: "DataForge preset package", extensions: ["dfpreset"] }]) : undefined} />
       <div className="row-actions">
@@ -319,7 +556,10 @@ function PresetsSection() {
         </ul>
       )}
 
-      <h3 className="section-head">Import or export a custom preset</h3>
+      </details>
+
+      <details className="settings-subsection">
+      <summary className="section-label">Import or export a custom preset</summary>
       {exportText && <textarea className="code full" rows={8} readOnly value={exportText} aria-label="Exported preset" />}
       <label className="field">
         <span>Paste an exported preset</span>
@@ -332,6 +572,7 @@ function PresetsSection() {
       })}>
         Validate and import
       </button>
+      </details>
       {status && <p className="note" role="status">{status}</p>}
       <ErrorNote message={error ?? presets.error} />
     </section>

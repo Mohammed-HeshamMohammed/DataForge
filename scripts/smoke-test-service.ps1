@@ -43,9 +43,13 @@ try {
   $results = Invoke-Service "match.results" @{ job_id = $full.id }
   $presets = Invoke-Service "preset.list"
   $healthChecks = Invoke-Service "preset.health_check"
+  $detected = Invoke-Service "scrape.detect_structured" @{ url = "https://shop.example/p"; html = '<script type="application/ld+json">{"@type":"Product","name":"Widget","sku":"W-1","offers":{"price":"9.99"}}</script>' }
+  if ($detected.suggested_type -ne "Product") { throw "structured data detection failed in the packaged build" }
+  $proposals = Invoke-Service "scrape.propose_presets" @{ url = "https://shop.example/"; html = ("<ul>" + ((1..4) | ForEach-Object { "<li class='card'><h3><a href='/p/$_'>Item $_ name</a></h3><span class='price'>`$$_.99</span></li>" }) -join "" + "</ul>") }
+  if (-not @($proposals.proposals).Count) { throw "preset proposals failed in the packaged build" }
   if ($results.canonical_records -ne 2) { throw "expected 2 canonical records, got $($results.canonical_records)" }
   if (@($healthChecks | Where-Object { $_.status -ne "passed" }).Count) { throw "bundled preset health checks failed" }
-  "Smoke test passed: service $($health.status), $($import.result.row_count) rows imported, $($results.canonical_records) canonical records, $(@($presets).Count) presets, all fixture health checks passed"
+  "Smoke test passed: service $($health.status), $($import.result.row_count) rows imported, $($results.canonical_records) canonical records, $(@($presets).Count) presets, all fixture health checks passed, structured data and proposals work"
 }
 finally {
   $process.StandardInput.Close()

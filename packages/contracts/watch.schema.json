@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dataforge.local/contracts/watch.schema.json",
+  "title": "Watch",
+  "type": "object",
+  "required": [
+    "id",
+    "project_id",
+    "name",
+    "params",
+    "interval_minutes",
+    "status",
+    "next_run_at",
+    "last_job_id",
+    "created_at",
+    "updated_at",
+    "runs"
+  ],
+  "properties": {
+    "id": {
+      "type": "string"
+    },
+    "project_id": {
+      "type": "string"
+    },
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "params": {
+      "type": "object",
+      "not": {
+        "required": [
+          "credential_secret"
+        ]
+      }
+    },
+    "interval_minutes": {
+      "type": "integer",
+      "minimum": 15
+    },
+    "status": {
+      "enum": [
+        "active",
+        "paused",
+        "stopped"
+      ]
+    },
+    "next_run_at": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "last_job_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "created_at": {
+      "type": "string"
+    },
+    "updated_at": {
+      "type": "string"
+    },
+    "runs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "job_id",
+          "dataset_id",
+          "previous_dataset_id",
+          "diff",
+          "created_at"
+        ],
+        "properties": {
+          "diff": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "record-diff.schema.json"
+              }
+            ]
+          }
+        }
+      }
+    }
+  }
+}

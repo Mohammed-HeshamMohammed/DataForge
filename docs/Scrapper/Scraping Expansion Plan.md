@@ -363,6 +363,66 @@ Phases 1–2 deliver the most value at the lowest risk: compliance first, then t
 | Bulk archive data volume | Streaming readers, per-job byte and record caps, and a disk-space preflight check. |
 | Structured data is spammy or contradictory | Keep every source block with provenance and flag conflicts; the matching guards stay authoritative. |
 
+## 9. Implementation status (2026-09-16)
+
+All eight phases are implemented. Automated tests stay offline; `scripts/live-check.py` verifies the same paths against real, permitted sources.
+
+### What was built
+
+| Phase | Implemented in | Notes and deviations from the plan |
+| --- | --- | --- |
+| 1. Compliance and politeness | `workers/scraping/.../signals.py`, `fetch.py` | Protego robots with RFC 9309 error handling (5xx or unreachable = disallow-all, 4xx = allow). TDMRep (well-known file, header, meta), AIPREF Content-Usage (robots rules and header), ai.txt as advisory. Required `purpose` on every job. hishel cache per project. Per-host scheduler (preset delay, Crawl-delay, rps). Contact User-Agent. **Added:** OS trust store for TLS (`truststore`), bounded retries for 502/503/504 and dropped connections. |
+| 2. Structured data, articles, normalizers | `structured.py`, `normalize.py`, `data/schemaorg_mappings.json` | extruct + mf2py; nested property values (publisher, address) are read through mappings, not emitted as records; consistent duplicate blocks merge, conflicting ones are kept and flagged. trafilatura + htmldate article mode. phonenumbers, usaddress, price-parser, dateparser, tldextract (offline snapshot) as transforms. lingua is an optional extra. Studio offers "Use structured data" on pages that carry it. |
+| 3. Discovery and Scrapy engine | `discovery.py`, `runtime.py`, `engines/` | In-house sitemap parser (gzip, index, text, entity-safe), feedparser on bytes only, persisted crawl frontier (retry resumes), llms.txt. Scrapy child process with a generic `PresetSpider`, DataForge policy middleware, OS-trusted TLS verification, deltafetch for incremental watches, Spidermon item validation. Parity test: both engines produce identical records. |
+| 4. Open data APIs | presets `ckan.package_search`, `socrata.dataset_rows`, `wikidata.sparql`, `openalex.works`, `osm.overpass_pois`, `sec.submissions`, `gdelt.doc_search` | Request templates with typed, validated variables; `query_param` auth; read-only SPARQL with an enforced LIMIT; bounding-box area cap; columnar JSON. **Changed:** catalog.data.gov no longer serves the CKAN API, so the CKAN preset defaults to open.canada.ca. overpass-api.de disallows `/api/` in robots.txt, so the Overpass preset defaults to the Kumi Systems public instance. |
+| 5. Documents | `documents.py` | pdfplumber tables (ruled, then text strategy) with page, table, and row provenance; magic-byte checks and a 50 MB cap; CSV links become rows, XLSX/JSON links are imported as datasets. **Changed:** camelot-py 2.0 needs numpy, pandas, and OpenCV, so it moved to an optional extra with Docling. |
+| 6. Archives and bulk corpora | `archives.py`, `archive_query` and `bulk_import` jobs | Wayback CDX and Common Crawl index queries, WARC range reads (warcio), streaming Web Data Commons N-Quads. **Changed:** the CDX protocol runs over DataForge's policy client instead of cdx-toolkit, whose own `requests` session would bypass the scheduler, robots checks, and trust store. |
+| 7. Resilience and monitoring | `resilience.py`, `diff.py`, watches | Field fingerprints saved on passing health checks, relocation suggestions, coverage drift, autoscraper example-based selectors, watches with a local scheduler and dataset diffs, opt-in WARC capture with retention. |
+| 8. AI suggestions | `suggest.py` | Local heuristic proposals by default; OpenAI-compatible endpoint optional. Loopback endpoints need no consent; remote endpoints need per-project consent, HTTPS, and redacted page text. Every proposal must pass extraction on the page before it is shown. |
+
+Packaging: `requirements.txt` pins the bundle and `scripts/check-licenses.py` gates it (108 packages, all permissive or weak copyleft). Spidermon's `jsonschema[format]` extra pulls rfc3987 (GPL-3.0-or-later), which is excluded from the PyInstaller build.
+
+### Live verification
+
+Run on 2026-09-16 with `scripts/live-check.py` (small caps, test mode unless noted).
+
+| Check | Source | Result |
+| --- | --- | --- |
+| Signals | books.toscrape.com, theguardian.com, en.wikipedia.org, overpass-api.de | Allowed where permitted. Wikipedia refused: Wikimedia returns 403 for robots.txt without a contact User-Agent, treated as disallow-all. Overpass `/api/` disallowed by robots.txt. |
+| Selectors + next link | books.toscrape.com | Test 10 records; full run 60 records over 3 pages; repeat run revalidated from cache. |
+| Example-based and proposed selectors | books.toscrape.com | Examples produced a root matching 20 items; the local proposal extracted 20 records at 100% coverage. |
+| Crawl, both engines | books.toscrape.com travel category | 11 books from 12 pages on each engine; identical UPC sets. |
+| Feed + article | blog.python.org | 10 feed entries; article text and date extracted (803 words). |
+| llms.txt and sitemap | llmstxt.org | 3 Markdown pages from llms.txt; 3 articles from the sitemap. |
+| Structured data from a news sitemap | theguardian.com | One `LiveBlogPosting` record per page with author and publisher. |
+| PDF tables | pdfplumber example PDF on raw.githubusercontent.com | Rows with page, table, and row provenance. |
+| CKAN | open.canada.ca | 10 datasets, 100% field coverage; robots Crawl-delay of 20 s applied. Also run from the desktop UI. |
+| Socrata | data.cityofchicago.org | 10 rows; Crawl-delay 1 s applied. |
+| OpenAlex | api.openalex.org | 10 works without a key. |
+| GDELT | api.gdeltproject.org | 10 articles (a first attempt hit a dropped connection, now retried). |
+| Overpass | overpass.kumi.systems | 9 libraries in a downtown Austin bounding box (a first attempt hit a 504, now retried). |
+| SEC EDGAR, Wikidata | — | Refused before any request until a contact identity is set. |
+| Wayback Machine | web.archive.org | 10 records from a 2017 capture with archive provenance. |
+| Common Crawl | index.commoncrawl.org, data.commoncrawl.org | Index query works; data.commoncrawl.org disallows all paths in robots.txt, so the job stops with an explanation. |
+| Watch + diff | quotes.toscrape.com | Two runs, 20 records each: 0 added, 0 removed, 0 changed. |
+| Web Data Commons | LocalBusiness sample file | 21 records from 31 pages. |
+| Maintenance | books.toscrape.com page | No drift on the live page; a simulated class rename produced price drift and the suggestion `p.price-now`. |
+
+Bugs found by the live run and fixed, each with a regression test: spurious coverage warnings under the test cap; nested structured-data entities emitted as records; unmerged duplicate JSON-LD blocks; missing schema.org Article subtypes; an invalid codec error handler in N-Quads unescaping; Socrata bookkeeping columns; no retries for transient gateway errors.
+
+### Follow-up completed 2026-09-17
+
+| Gap | Resolution | Verified |
+| --- | --- | --- |
+| Studio collections skipped site signals | Purpose in Studio; `scrape.check_url` with purpose on every automated navigation; `stage_rendered` requires a purpose and records signals (decision D24) | Service test with robots.txt and TDMRep; real desktop app on books.toscrape.com and theguardian.com |
+| Studio "Use structured data" untested in the app | — | Real desktop app: a Guardian article offered `NewsArticle ×1` and staged one record (title, date, publisher) |
+| Selector fallbacks | Label-anchored and structural XPath fallbacks from the picker, evaluated by the bridge and both engines | jsdom bridge tests; runtime test; real app (a book title was wrongly used as a label, now rejected) |
+| Scrapy resume, pause, incremental | JOBDIR resume folder kept across retries; pause test; deltafetch via an async wrapper; Spidermon errors surfaced | Engine tests: no requests while paused, cancel then resume refetches nothing, second incremental run yields 0 |
+| Contracts | New schemas for signals, scrape results, diffs, watches, settings; job kinds fixed | Contract test on live service responses |
+| Fixtures from captures, health-check fixes, archive diffs, OCR | Implemented (decision D25); OCR is an optional add-on | Service and worker tests; live Wayback comparison of llmstxt.org's earliest and latest captures reported 1 changed record (title, text, author, date) after the Internet Archive recovered from an outage |
+
+Still not verified: SEC EDGAR and Wikidata live runs (they need your contact identity), a model endpoint for AI proposals (none configured), real Tesseract OCR (not installed), and the packaged build. On this machine every newly built PyInstaller executable disappears as it is written, including a one-line "hello" program, so the block is the antivirus policy rather than DataForge's bundle; an exception for the build folder is needed.
+
 ## Sources
 
 Research conducted 2026-09-16. Versions and licenses were read from PyPI metadata on the same date.

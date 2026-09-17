@@ -35,6 +35,7 @@ ACCESS_STOP_CODES = {401, 402, 403, 407, 408, 425, 429, 451}
 CHALLENGE_MARKERS = ("g-recaptcha", "h-captcha", "cf-challenge", "/cdn-cgi/challenge-platform", "captcha-delivery")
 MAX_RETRY_AFTER_SECONDS = 60
 MAX_BODY_BYTES = 50 * 1024 * 1024
+TRANSIENT_BACKOFF_SECONDS = (3.0, 10.0)
 _EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
 
 
@@ -123,11 +124,23 @@ def fetch(
     """One in-scope request. Redirects are followed manually so every hop is scope-checked."""
     limits = preset.get("request_limits") if isinstance(preset.get("request_limits"), dict) else {}
     retries_left = 3 if limits.get("respect_retry_after") else 0
+    transient_left = 2  # gateway errors and dropped connections are retried twice with backoff
     hops = 0
     while True:
         if scheduler is not None:
             scheduler.wait(url)
-        response = client.request(method, url, content=content, headers=headers, follow_redirects=False)
+        try:
+            response = client.request(method, url, content=content, headers=headers, follow_redirects=False)
+        except (httpx.RemoteProtocolError, httpx.ConnectError, httpx.ReadTimeout) as error:
+            if not transient_left:
+                raise
+            sleep(TRANSIENT_BACKOFF_SECONDS[2 - transient_left])
+            transient_left -= 1
+            continue
+        if response.status_code in (502, 503, 504) and transient_left and not response.headers.get("retry-after"):
+            sleep(TRANSIENT_BACKOFF_SECONDS[2 - transient_left])
+            transient_left -= 1
+            continue
         if response.status_code in (429, 503) and retries_left:
             wait = _retry_after_seconds(response.headers.get("retry-after"))
             if wait is not None and wait <= MAX_RETRY_AFTER_SECONDS:

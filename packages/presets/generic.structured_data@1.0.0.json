@@ -36,7 +36,8 @@
   "strategy": {
     "preferred": "http",
     "allowed": [
-      "http"
+      "http",
+      "webview"
     ],
     "prohibited_escalations": [
       "access_denied",

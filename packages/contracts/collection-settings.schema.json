@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dataforge.local/contracts/collection-settings.schema.json",
+  "title": "CollectionSettings",
+  "type": "object",
+  "required": [
+    "contact_identity",
+    "http_cache",
+    "warc_capture",
+    "ai_suggestions",
+    "default_purpose"
+  ],
+  "properties": {
+    "contact_identity": {
+      "type": "object",
+      "required": [
+        "organization",
+        "email"
+      ],
+      "properties": {
+        "organization": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "email": {
+          "type": "string",
+          "maxLength": 200
+        }
+      },
+      "additionalProperties": false
+    },
+    "http_cache": {
+      "type": "object",
+      "required": [
+        "enabled"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        }
+      }
+    },
+    "warc_capture": {
+      "type": "object",
+      "required": [
+        "enabled",
+        "retention_days"
+      ],
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "retention_days": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3650
+        }
+      }
+    },
+    "ai_suggestions": {
+      "type": "object",
+      "required": [
+        "provider",
+        "endpoint",
+        "model",
+        "remote_consent"
+      ],
+      "properties": {
+        "provider": {
+          "enum": [
+            "local_heuristic",
+            "model"
+          ]
+        },
+        "remote_consent": {
+          "type": "boolean"
+        }
+      }
+    },
+    "default_purpose": {
+      "enum": [
+        "internal_analysis",
+        "lead_research",
+        "dataset_building",
+        "price_monitoring",
+        "research",
+        "archival",
+        "search_indexing",
+        "ai_training"
+      ]
+    }
+  },
+  "additionalProperties": false
+}

@@ -53,7 +53,31 @@ Command names match `^[a-z_]+\.[a-z_]+$` (enforced by the host). Unknown additiv
 
 `match.results` also returns `compare_dataset_id`, `review_turnaround`, and `mapping_flags`. Its metrics include `stage_seconds`, `rows_per_second`, `cluster_size_distribution`, `decisions_by_scope`, and `survivor_sources`. `match.clusters` items include `canonical_values`, `field_provenance`, and `conflicts`. Machine-checked JSON schemas for these responses live in `packages/contracts/`.
 
-Studio bridge actions also include `scrollStep` and `links(css)` for infinite scroll and detail links.
+Studio bridge actions also include `scrollStep` and `links(css)` for infinite scroll and detail links, and `html()` (read-only page snapshot, capped at 5 MB) for structured-data detection.
+
+### Scraping expansion (schema_version 1, additive)
+
+| Command | Payload | Result |
+| --- | --- | --- |
+| `scrape.create_job` | adds **required** `purpose` (`internal_analysis`, `lead_research`, `dataset_building`, `price_monitoring`, `research`, `archival`, `search_indexing`, `ai_training`), `engine?` (`auto`\|`httpx`\|`scrapy`), `variables?` (preset request variables; `start_url` may be empty when the preset has a URL template), `incremental?` | `{job_id}`; result adds `engine`, `source_kind`, `purpose`, `signals`, `cached_responses`, `discovered_urls`, `file_datasets`, `watch_diff`, `warc_capture` |
+| `scrape.check_signals` | `url` (HTTPS), `purpose?` | `{url, purpose, allowed, reason, hosts: [signals]}` |
+| `scrape.run_signals` | `job_id` | per-host signals recorded for that run |
+| `scrape.detect_structured` | `html` + `url`, or `url` + `preset` (fetched with the policy client) | `{types, syntaxes, suggested_type, mapped_types}` |
+| `scrape.suggest_selectors` | page as above, `examples` `{field: visible value}` | `{record_root, fields, record_count, notes}` |
+| `scrape.propose_presets` | page as above, `provider?` | `{provider, proposals: [{source, preset, evaluation}], labels}` |
+| `scrape.check_url` | adds `purpose?`: when present (automated Studio navigation), robots.txt, TDMRep, and AIPREF are applied too | `{allowed, reason, skippable}`; `skippable` is true only for a robots.txt disallow on one URL |
+| `scrape.stage_rendered` | **requires** `purpose`; `pages[].html` instead of `records` for selector-free presets; page URLs are re-checked against site signals | `{job_id}`; the run records signals |
+| `preset.fixture_from_capture` | `job_id`, `url?` | `{fixture: "project:fixtures/captured/...", source_url, bytes, redactions}` |
+| `preset.maintenance_report` | `preset_id`, `preset_version`, `html` + `url`, or `url` + `purpose` (fetched with the policy client) | `{records, coverage, drift, suggestions}` |
+| `preset.health_check` | — | failed results for selector presets add `suggestions` from stored fingerprints |
+| `archive.create_job` | `archive` (`wayback`\|`common_crawl`), `url_pattern`, `preset_id`, `preset_version`, `purpose`, `run_mode`, `policy_acknowledgement`, `max_captures?`, `from_date?`, `to_date?`, `crawl?`, `compare?` (Wayback: earliest vs latest capture per URL; needs `unique_by`) | `{job_id}`; result adds `archive_diff` |
+| `bulk.create_job` | `path` (.nq or .nq.gz), `schema_types`, `domain_suffix?`, `max_records?`, `run_mode` | `{job_id}` |
+| `watch.create` / `watch.list` / `watch.get` / `watch.set_status` / `watch.run_now` | `name`, `interval_minutes` (≥ 15), `params` (scrape job params) / — / `watch_id` / `watch_id`, `status` / `watch_id` | watch with recent runs and diff counts / `{job_id}` |
+| `dataset.diff` | `before_dataset_id`, `after_dataset_id`, `unique_by` | `{counts, added, removed, changed}` |
+| `settings.get` / `settings.update` | — / `changes` (`contact_identity`, `default_purpose`, `http_cache`, `warc_capture`, `ai_suggestions`) | project settings |
+| `cache.purge` | — | `{bytes_removed}` |
+
+Studio bridge picks add `fallback_xpaths` (label-anchored when a repeated caption exists, then structural); `extract` evaluates `{xpath, attribute?}` selectors. Presets may set `extraction.output: "text"` with `ocr: true` for document presets. Job kinds add `archive_query` and `bulk_import`. Contracts: `host-signals`, `scrape-result`, `record-diff`, `watch`, and `collection-settings` schemas in `packages/contracts/`. Stage names add `finding_captures`. Scrapy engine page events carry `engine: "scrapy"`.
 
 `scrape.create_job` and `job.retry` accept `credential_ref`. Only the desktop host may add `credential_secret`; the host rejects UI payloads that contain it, and the service keeps it in memory only.
 

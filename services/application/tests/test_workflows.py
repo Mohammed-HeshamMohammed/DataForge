@@ -375,13 +375,13 @@ def test_rendered_records_are_scope_checked_validated_and_staged(service: Servic
     assert ok(service, "scrape.check_url", preset=draft, url="https://evil.example/", scope_url="https://example.org/")["allowed"] is False
 
     pages = [{"url": "https://example.org/list", "records": [{"title": "  Alpha  ", "link": "/a"}, {"title": "", "link": "/b"}, {"title": "Alpha", "link": "/a"}]}]
-    job = wait(service, ok(service, "scrape.stage_rendered", preset=draft, pages=pages, run_mode="test", policy_acknowledgement=True)["job_id"])
+    job = wait(service, ok(service, "scrape.stage_rendered", preset=draft, pages=pages, run_mode="test", policy_acknowledgement=True, purpose="internal_analysis")["job_id"])
     assert job["state"] == "completed", job
     assert job["result"]["records_extracted"] == 1 and job["result"]["records_rejected"] == 1 and job["result"]["records_duplicate"] == 1
     assert job["result"]["sample_records"][0]["link"] == "https://example.org/a" and job["result"]["strategy_used"] == "webview"
-    assert "Save this custom preset" in call(service, "scrape.stage_rendered", preset=draft, pages=pages, run_mode="full", policy_acknowledgement=True)["error"]["message"]
+    assert "Save this custom preset" in call(service, "scrape.stage_rendered", preset=draft, pages=pages, run_mode="full", policy_acknowledgement=True, purpose="internal_analysis")["error"]["message"]
     outside = [{"url": "https://evil.example/x", "records": []}, *pages]
-    assert "allow-list" in call(service, "scrape.stage_rendered", preset=draft, pages=pages[:0] + [pages[0], outside[0]], run_mode="test", policy_acknowledgement=True)["error"]["message"]
+    assert "allow-list" in call(service, "scrape.stage_rendered", preset=draft, pages=pages[:0] + [pages[0], outside[0]], run_mode="test", policy_acknowledgement=True, purpose="internal_analysis")["error"]["message"]
 
 
 def test_commands_work_from_other_threads_like_the_http_bridge(service: Service) -> None:

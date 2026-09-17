@@ -496,6 +496,13 @@ function ReviewQueue({ jobId, onChanged, onDone, onBadMapping }: { jobId: string
     }
   };
 
+  // Edit → Undo (Ctrl+Z) in the menu bar undoes the last decision made in this review session.
+  useEffect(() => {
+    const listener = () => void undo();
+    window.addEventListener("dataforge:undo", listener);
+    return () => window.removeEventListener("dataforge:undo", listener);
+  });
+
   useKeyboardShortcuts(
     {
       j: () => setIndex((i) => Math.min(i + 1, items.length - 1)),

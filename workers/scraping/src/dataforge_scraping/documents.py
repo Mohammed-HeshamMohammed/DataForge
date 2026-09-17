@@ -112,11 +112,42 @@ def pdf_tables(content: bytes, source_url: str, extraction: dict | None = None) 
     return rows, warnings
 
 
-def pdf_text(content: bytes) -> list[dict]:
+def pdf_text(content: bytes, source_url: str = "", ocr: bool = False) -> tuple[list[dict], list[str]]:
+    """One record per page with its text layer. With `ocr`, pages without text are rendered and read by
+    Tesseract when the optional OCR add-on (pytesseract plus the Tesseract program) is installed."""
     import pdfplumber
 
+    records, warnings, needs_ocr = [], [], []
     with pdfplumber.open(io.BytesIO(content)) as pdf:
-        return [{"source_page": number, "text": page.extract_text() or ""} for number, page in enumerate(pdf.pages, start=1)]
+        for number, page in enumerate(pdf.pages, start=1):
+            text = (page.extract_text() or "").strip()
+            if not text:
+                needs_ocr.append(number)
+            records.append({"source_url": source_url, "source_page": number, "text": text, "text_source": "pdf" if text else None})
+    if needs_ocr and ocr:
+        reader = _ocr_reader()
+        if reader is None:
+            warnings.append("Some pages are scanned images. Install the OCR add-on (pip install pytesseract, plus the Tesseract program) to read them.")
+        else:
+            import pypdfium2
+
+            document = pypdfium2.PdfDocument(content)
+            for number in needs_ocr:
+                image = document[number - 1].render(scale=2).to_pil()
+                records[number - 1].update(text=reader(image).strip(), text_source="ocr")
+    elif needs_ocr:
+        warnings.append(f"{len(needs_ocr)} page(s) have no text layer (scanned); enable OCR in the preset to read them")
+    return [r for r in records if r["text"]], warnings
+
+
+def _ocr_reader():
+    try:
+        import pytesseract
+
+        pytesseract.get_tesseract_version()
+    except Exception:  # noqa: BLE001 - missing package or missing Tesseract program
+        return None
+    return lambda image: pytesseract.image_to_string(image)
 
 
 def _page_filter(value: object) -> set[int]:

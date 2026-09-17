@@ -54,7 +54,12 @@ def collect_with_scrapy(
     work_dir: Path | None = None,
     include_local_signals: bool = False,
     credential: str | None = None,
+    resume_dir: Path | None = None,
+    deltafetch_dir: Path | None = None,
 ) -> ScrapeResult:
+    """`resume_dir` keeps Scrapy's scheduler queue and seen-request filter (JOBDIR), so a cancelled or failed
+    crawl continues where it stopped when run again with the same directory. `deltafetch_dir` backs incremental
+    runs: pages that produced items before are skipped."""
     if credential or ((preset.get("strategy") or {}).get("api_integration") or {}).get("auth"):
         raise PolicyViolation("The Scrapy engine does not handle credentials; run API presets with the httpx engine")
     if (preset.get("strategy") or {}).get("preferred") != "http":
@@ -78,6 +83,7 @@ def collect_with_scrapy(
         "start_url": start_url, "preset": preset, "max_records": max_records, "max_pages": max_pages, "purpose": purpose,
         "signals": checker.export(), "user_agent": user_agent(preset, contact), "cache_dir": str(cache_dir) if cache_dir else None,
         "control_file": str(control), "work_dir": str(work), "incremental": incremental,
+        "resume_dir": str(resume_dir) if resume_dir else None, "deltafetch_dir": str(deltafetch_dir) if deltafetch_dir else None,
     }
     job_path = work / "job.json"
     job_path.write_text(json.dumps(job), encoding="utf-8")
@@ -168,6 +174,8 @@ def collect_with_scrapy(
         raise RuntimeError(f"Scrapy engine exited without finishing (code {process.returncode}): {stop_message or tail[-600:]}")
     if stop_message and done.get("reason") not in ("cancelled",):
         raise PolicyViolation(stop_message)
+    if done.get("validation_errors"):
+        warnings.append(f"Spidermon item validation reported {done['validation_errors']} field error(s); see rejected records")
     valid, rejected, more = validate_candidates(records, preset)
     valid = valid[:max_records]
     duplicates = len(records) - len(valid) - len(rejected)

@@ -31,25 +31,9 @@ export function PaneHeader<T extends string>({
   const now = useClock();
   return (
     <div className="pane-header">
-      <div className="pane-header-top">
-        <div>
-          <p className="pane-clock">
-            <strong>{now.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</strong>{" "}
-            <span>{now.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" })}</span>
-          </p>
-          <h1 id="pane-title" className="pane-title">
-            {title}
-          </h1>
-        </div>
-        <div className="pane-header-actions">
-          <button type="button" className="chip" onClick={chip.onClick}>
-            <ReviewIcon size={14} /> {chip.label} <strong>{formatCount(chip.value)}</strong>
-          </button>
-          <button type="button" className="icon-btn" onClick={onRefresh} aria-label="Refresh" title="Refresh">
-            <RefreshIcon size={20} />
-          </button>
-        </div>
-      </div>
+      <h1 id="pane-title" className="sr-only">
+        {title}
+      </h1>
       <nav className="pane-tabs" role="tablist" aria-label="Sections">
         {tabs.map((t) => (
           <button key={t.id} type="button" role="tab" aria-selected={t.id === activeTab} className="pane-tab" onClick={() => onTab(t.id)}>
@@ -57,6 +41,17 @@ export function PaneHeader<T extends string>({
           </button>
         ))}
       </nav>
+      <div className="pane-header-actions">
+        <p className="pane-clock" aria-label="Current time">
+          <strong>{now.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</strong> <span>{now.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" })}</span>
+        </p>
+        <button type="button" className="chip" onClick={chip.onClick} aria-label={`${chip.label}: ${formatCount(chip.value)}`} title={chip.label}>
+          <ReviewIcon size={14} /> <span className="chip-label">{chip.label}</span> <strong>{formatCount(chip.value)}</strong>
+        </button>
+        <button type="button" className="icon-btn" onClick={onRefresh} aria-label="Refresh" title="Refresh (F5)">
+          <RefreshIcon size={18} />
+        </button>
+      </div>
     </div>
   );
 }

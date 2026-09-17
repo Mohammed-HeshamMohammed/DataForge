@@ -103,3 +103,67 @@ In Scrape Studio, "Test 10 records" runs the full-run collection logic, capped a
 - **Contracts:** `packages/contracts/*.schema.json` is the shared contract. Python tests validate live service responses and worker results against it, including a rule that job params never contain a credential secret.
 - **UI:** Vitest with jsdom and Testing Library covers behaviour; axe-core covers accessibility rules that do not depend on layout. Colour contrast needs a real browser and stays manual.
 - **Real app:** Studio flows were verified in the actual desktop app, driving WebView2's local debugging port. `apps/desktop/vite.config.ts` pre-bundles the lazily imported Tauri modules so the dev server cannot reload the page mid-session.
+
+## D18. Every collection declares a purpose, and site signals are applied to it
+
+Scrape and archive jobs require a purpose. Before the first request to a host, DataForge reads robots.txt (Protego, RFC 9309), `/.well-known/tdmrep.json`, and ai.txt; each response is also checked for `tdm-reservation` and `Content-Usage`.
+- **robots.txt errors:** 5xx or unreachable means disallow-all; 401/403 means disallow-all; other 4xx means no restrictions. Wikimedia sites answer 403 without a contact User-Agent, so they are refused until one is configured.
+- **TDMRep:** a reservation stops every purpose, since collecting for analysis is text and data mining.
+- **AIPREF:** `bots=n` stops every purpose; `train-ai`/`train-genai` govern AI training and `search` governs search indexing.
+- **ai.txt:** recorded as advisory provenance only.
+Signals are stored per run (`usage_signals`) so audits show what applied.
+
+## D19. TLS uses the operating system trust store
+
+Desktop users sit behind corporate proxies and antivirus TLS inspection (this development machine inspects TLS). Python's bundled certifi roots reject those chains, so the httpx client uses `truststore` and the Scrapy engine builds its trust root from the Windows certificate store. Certificate verification is never disabled.
+
+## D20. Two engines, one extraction path
+
+`extract_page` is the only place records are produced; the httpx runtime, the Scrapy spider, health checks, Studio staging, and archive replays all call it, and both engines share `validate_candidates`. Scrapy runs as a child process (the packaged service's `--engine scrapy` entry point) because Twisted's reactor cannot live in job threads. `engine: auto` picks Scrapy only for sitemap or crawl jobs above 200 pages; tests always use httpx. Parity is tested on a fixture site and was confirmed live.
+**Revisit when:** Scrapy's per-host concurrency is needed for jobs where the child-process start-up cost matters.
+
+## D21. Library substitutions made during implementation
+
+- **cdx-toolkit → CDX over the policy client.** cdx-toolkit uses its own `requests` session, which would bypass the scheduler, robots checks, and trust store. The CDX protocol is small.
+- **camelot-py → optional extra.** Version 2.0 requires numpy, pandas, and OpenCV. pdfplumber's line strategy covers ruled tables in the base install.
+- **rfc3987 excluded.** Spidermon requests `jsonschema[format]`, which installs rfc3987 (GPL-3.0-or-later). jsonschema imports it optionally, so the PyInstaller build excludes it and `scripts/check-licenses.py` gates everything else.
+
+## D22. Watches run only while DataForge is open
+
+A background thread starts due watches every 30 seconds while a project is open. Each run stages a new dataset; `watch_runs` links it to the previous version with a diff keyed by the preset's `unique_by`. Nothing runs when the app is closed, consistent with local-first operation.
+
+## D23. Suggestions never apply themselves
+
+Relocation suggestions, example-based selectors, and draft proposals all return data for review. Proposals must extract records from the page they came from before they are shown. Remote models need per-project consent and receive redacted text; the exact payload is returned.
+
+## D24. Scrape Studio collections obey the same site signals
+
+Browsing in Studio is the user's own navigation, so only scope is checked. Collection runs are automated: before the first page and before every next-link or detail-link navigation, Studio calls `scrape.check_url` with the declared purpose, which applies robots.txt, TDMRep, and AIPREF through a per-purpose checker cached for ten minutes. A robots.txt disallow on one detail link skips that link; anything else stops the run. `scrape.stage_rendered` requires the purpose, re-checks every page URL, and records the signals on the run.
+
+## D25. Resilience features close the loop without applying changes
+
+- **Fallback selectors:** Studio picks store the CSS selector plus XPath fallbacks. A label-anchored XPath is offered only when the caption looks like a label and repeats across items; a structural XPath is always offered. Both engines and the Studio bridge try selectors in order.
+- **Health checks:** a failing selector preset gets suggested fixes from the newest stored fingerprints of any version.
+- **Fixtures from captures:** `preset.fixture_from_capture` sanitizes a captured page (scripts except JSON-LD, comments, frames, form values, tokens in meta tags and URLs, contact details) into `project:fixtures/...`, which custom presets can reference.
+- **Watches and credentials:** scheduled runs start without the desktop host, which alone reads saved credentials, so presets that need one cannot be watched.
+- **Scrapy runs:** a per-run work folder is deleted after the run; a resume folder (JOBDIR) is kept after a cancel or failure so a retry continues, and deleted after completion. Incremental watches use deltafetch through an async-compatible wrapper, because scrapy-deltafetch 2.1.0 does not support Scrapy 2.19's async spider output.
+
+## D26. Academic licensing policy
+
+DataForge is a graduation project used in a research paper, so GPL, AGPL, LGPL, and MPL components are allowed when they add value (see `DATAFORGE_MASTER_PLAN.md`, principle 6). `scripts/check-licenses.py` now prints an inventory for the thesis software-citation appendix (`--markdown`) and exits 0; `--strict` restores the permissive-only gate. Redistributed binaries that bundle GPL components are covered by the GPL, which publishing the source alongside the thesis satisfies. Collection policy (robots.txt, TDMRep, AIPREF, stop rules, no evasion) is unchanged: it is what makes source certification credible.
+
+## D27. Window chrome: menu bar, project location, command palette
+
+- **Title bar:** a menu bar (File, Edit, Selection, View, Go, Run, Help), then a wide **command center**, then Settings, theme, updates, minimize, maximize, and close.
+  - The command center shows the open project's name and folder. Clicking it (or Ctrl+K / Ctrl+Shift+P) turns it into a search field; results, including project actions and recent projects, drop down directly beneath it.
+  - The left sidebar holds no buttons, and the sidebar project card was removed.
+- **One command registry:** `lib/commands.ts` drives the menus, the palette (Ctrl+K or Ctrl+Shift+P), and global shortcuts. Text fields keep native editing keys; Edit → Undo sends `dataforge:undo`, which the review queue handles.
+- **Less scrolling:**
+  - the pane header is one row;
+  - Scraping splits into Collect, Site signals, Watches, and Customize preset, with Collect in two independently scrolling columns;
+  - Settings shows one section at a time;
+  - long tables scroll inside their own area.
+
+  At 1366×768 no tab needs a page scroll.
+- **View options:** sidebars can be hidden (Ctrl+B, Ctrl+J), compact density, native WebView zoom (Studio bounds are scaled to match), and full screen. These need the `set-fullscreen`, `is-fullscreen`, `set-webview-zoom`, and scoped `open-path` capabilities.
+

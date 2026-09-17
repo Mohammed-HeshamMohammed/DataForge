@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "display_name": "CKAN portal: dataset search",
   "page_type": "api_collection",
-  "description": "Search datasets on any CKAN open data portal (for example catalog.data.gov or data.gov.uk).",
+  "description": "Search datasets on a CKAN open data portal, for example open.canada.ca (path /data) or ckan.publishing.service.gov.uk. catalog.data.gov no longer serves the CKAN API.",
   "status": "active",
   "owner": "dataforge-core",
   "maintenance_review_date": "2027-03-01",
@@ -32,7 +32,7 @@
     "allowed_hosts": [],
     "user_supplied_host": true,
     "allowed_path_patterns": [
-      "^/api/3/action/"
+      "^(/[A-Za-z0-9_.-]+){0,4}/api/3/action/"
     ]
   },
   "strategy": {
@@ -62,13 +62,17 @@
   },
   "request": {
     "method": "GET",
-    "url_template": "https://{{portal}}/api/3/action/package_search?q={{query}}&rows=50",
+    "url_template": "https://{{portal}}{{base_path}}/api/3/action/package_search?q={{query}}&rows=50",
     "variables": {
       "portal": {
         "type": "string",
         "required": true,
         "pattern": "[a-z0-9.-]{4,80}",
-        "default": "catalog.data.gov"
+        "default": "open.canada.ca"
+      },
+      "base_path": {
+        "type": "path",
+        "default": "/data"
       },
       "query": {
         "type": "string",

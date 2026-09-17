@@ -78,6 +78,10 @@ def resolve_variables(preset: dict, variables: dict | None, record_limit: int) -
                 raise PolicyViolation(f"Request variable '{name}' must be one of {', '.join(spec.get('choices', []))}")
         elif kind == "sparql":
             value = sparql_with_limit(str(value), record_limit)
+        elif kind == "path":
+            value = str(value).rstrip("/")
+            if not re.fullmatch(r"(/[A-Za-z0-9_.-]{1,40}){0,4}", value) or ".." in value:
+                raise PolicyViolation(f"Request variable '{name}' must be a simple path such as /data")
         else:
             value = str(value)
             if len(value) > int(spec.get("max_length", 500)):
@@ -113,17 +117,18 @@ def sparql_with_limit(query: str, cap: int) -> str:
     return stripped.strip() + f"\nLIMIT {cap}"
 
 
-def _render(template: str, values: dict[str, str], encode: bool) -> str:
+def _render(template: str, values: dict[str, str], encode: bool, path_variables: frozenset[str] = frozenset()) -> str:
     def replace(match: re.Match) -> str:
         value = values.get(match.group(1), "")
-        return quote(value, safe="") if encode else value
+        return quote(value, safe="/" if match.group(1) in path_variables else "") if encode else value
 
     return re.sub(r"\{\{\s*([a-zA-Z_][\w]*)\s*\}\}", replace, template)
 
 
 def build_request(start_url: str, preset: dict, variables: dict[str, str]) -> tuple[str, str, bytes | None, dict[str, str]]:
     request = preset.get("request") if isinstance(preset.get("request"), dict) else {}
-    url = start_url or _render(str(request.get("url_template", "")), variables, encode=True)
+    path_variables = frozenset(name for name, spec in (request.get("variables") or {}).items() if isinstance(spec, dict) and spec.get("type") == "path")
+    url = start_url or _render(str(request.get("url_template", "")), variables, encode=True, path_variables=path_variables)
     if not url:
         raise PolicyViolation("A start URL is required")
     method = str(request.get("method", "GET")).upper()
@@ -242,11 +247,11 @@ def collect(
 
     def accept(candidates: list[dict]) -> int:
         nonlocal rejected, duplicates, candidate_count
-        candidate_count += len(candidates)
         added = 0
         for candidate in candidates:
             if len(records) >= record_limit:
                 break
+            candidate_count += 1  # only candidates actually considered count toward coverage
             errors = _validate_record(candidate, fields)
             if errors:
                 rejected += 1

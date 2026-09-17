@@ -7,7 +7,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from dataforge_scraping.engines.launcher import choose_engine, collect_with_scrapy
-from dataforge_scraping.extraction import TEST_MODE_MAX_RECORDS, PolicyViolation, apply_field, extract_html_pages, validate_candidates, validate_url
+from dataforge_scraping.extraction import TEST_MODE_MAX_RECORDS, PolicyViolation, apply_field, extract_html_pages, extract_page, validate_candidates, validate_url
 from dataforge_scraping.runtime import build_request, resolve_variables
 from dataforge_scraping.signals import PURPOSES
 from dataforge_scraping.packages import run_health_check, verify_package
@@ -76,8 +76,11 @@ def _fixtures(store: ProjectStore, presets_dir: Path, preset: dict) -> dict[str,
         if any(p["id"] == preset["id"] and p["version"] == preset["version"] for p in package["presets"]):
             fixtures.update(package.get("fixtures", {}))
     for path in (preset.get("health") or {}).get("fixture_tests", []):
-        candidate = (presets_dir / path).resolve()
-        if path not in fixtures and candidate.is_relative_to(presets_dir.resolve()) and candidate.is_file():
+        base_dir = presets_dir
+        if path.startswith("project:"):  # fixtures captured into this project (sources.fixture_from_capture)
+            base_dir = store.project_root
+        candidate = (base_dir / path.removeprefix("project:")).resolve()
+        if path not in fixtures and candidate.is_relative_to(base_dir.resolve()) and candidate.is_file():
             if candidate.suffix.lower() in (".pdf", ".gz", ".warc"):
                 import base64
 
@@ -96,9 +99,12 @@ def run_health_checks(store: ProjectStore, presets_dir: Path, preset_id: str | N
         result = run_health_check(preset, fixtures)
         if result["status"] == "passed" and (preset.get("extraction") or {}).get("record_root"):
             sources.save_fingerprints(store, preset, fixtures)
+        elif result["status"] == "failed" and (preset.get("extraction") or {}).get("record_root"):
+            # Degraded with a suggested fix: compare the failing fixture with the last fingerprints for this preset.
+            result["suggestions"] = sources.health_suggestions(store, preset, fixtures)
         store._connection.execute(
             "INSERT INTO preset_health_checks(preset_id, preset_version, status, result_json, checked_at) VALUES (?,?,?,?,?)",
-            (preset["id"], preset["version"], result["status"], json.dumps({"fixtures": result["fixtures"], "failures": result["failures"]}), utc_now()),
+            (preset["id"], preset["version"], result["status"], json.dumps({"fixtures": result["fixtures"], "failures": result["failures"], "suggestions": result.get("suggestions", [])}), utc_now()),
         )
         results.append({"id": preset["id"], "version": preset["version"], **result})
     store._connection.commit()
@@ -259,6 +265,8 @@ def make_scrape_kind(presets_dir: Path) -> JobKind:
         warnings = _status_warnings(preset)
         return {
             **params, "run_mode": run_mode, "start_url": start_url, "max_records": max_records, "max_pages": max_pages, "purpose": purpose,
+            # Stable across retries (params are copied), so a retried Scrapy crawl resumes from the same queue.
+            "resume_root": params.get("resume_root") or uuid4().hex,
             "engine": engine, "variables": variables,
             # Pin the exact resolved preset so later package changes cannot alter this job.
             "resolved_preset": {k: v for k, v in resolved.items() if k not in ("errors",)}, "warnings": warnings,
@@ -288,7 +296,9 @@ def make_scrape_kind(presets_dir: Path) -> JobKind:
                     params["start_url"], preset, params["max_records"], params["max_pages"], should_stop=context.should_stop,
                     on_page=lambda event: context.stage("page_extracted", event), is_paused=lambda: context._control.pause.is_set(),
                     contact=settings["contact_identity"], cache_dir=sources.cache_dir(store), purpose=params.get("purpose"),
-                    incremental=bool(params.get("incremental")), work_dir=store.project_root / "engine" / context.job_id,
+                    incremental=bool(params.get("incremental")), work_dir=store.project_root / "engine" / "runs" / context.job_id,
+                    resume_dir=store.project_root / "engine" / "resume" / params["resume_root"] if mode in ("crawl", "sitemap") else None,
+                    deltafetch_dir=store.project_root / "engine" / "deltafetch" / (params.get("watch_id") or preset["id"]),
                 )
             else:
                 result = extract_html_pages(
@@ -308,6 +318,14 @@ def make_scrape_kind(presets_dir: Path) -> JobKind:
                 store._connection.execute("UPDATE scrape_runs SET warc_path = ? WHERE id = ?", (str(capture.path), run_id))
                 store._connection.commit()
         sources.record_signals(store, run_id, list(result.signals))
+        if engine == "scrapy":
+            import shutil
+
+            shutil.rmtree(store.project_root / "engine" / "runs" / context.job_id, ignore_errors=True)  # job file and item schema only
+        if engine == "scrapy" and result.stop_reason != "cancelled":
+            import shutil
+
+            shutil.rmtree(store.project_root / "engine" / "resume" / params["resume_root"], ignore_errors=True)  # finished: nothing to resume
         if result.stop_reason == "cancelled":
             store.fail_scrape_run(run_id, "cancelled", "Cancelled by user")
             raise JobCancelled()
@@ -391,12 +409,18 @@ def make_rendered_kind(presets_dir: Path) -> JobKind:
         page_cap = limits["max_records_default"] if kind == "detail_links" else 1 if kind in ("none", "infinite_scroll") else limits["max_pages_default"]
         if len(pages) > page_cap:
             raise JobValidationError(f"{len(pages)} pages exceed this preset's limit of {page_cap} for {kind} pagination")
+        purpose = params.get("purpose")
+        if purpose not in PURPOSES:
+            raise JobValidationError("Choose the purpose of this collection (for example internal analysis or lead research)")
         resolved = resolve_for_url(preset, pages[0]["url"])
         for page in pages:
             try:
                 validate_url(page["url"], resolved)
             except PolicyViolation as error:
                 raise JobValidationError(f"{page['url']}: {error}") from error
+            decision = sources.check_navigation(page["url"], purpose)
+            if not decision["allowed"]:
+                raise JobValidationError(f"{page['url']}: {decision['reason']}")
         if run_mode == "full" and preset["id"].startswith("custom."):
             if stored is None:
                 raise JobValidationError("Save this custom preset before a full run")
@@ -406,19 +430,31 @@ def make_rendered_kind(presets_dir: Path) -> JobKind:
             ).fetchone()
             if not tested:
                 raise JobValidationError("Run a successful 10-record test of this custom preset before a full run")
-        return {**params, "run_mode": run_mode, "resolved_preset": {k: v for k, v in resolved.items() if k not in ("errors", "health_status", "declared_status", "source", "package")}, "warnings": _status_warnings(preset)}
+        return {**params, "run_mode": run_mode, "purpose": purpose, "signals": sources.navigation_signals(purpose, [p["url"] for p in pages]),
+                "resolved_preset": {k: v for k, v in resolved.items() if k not in ("errors", "health_status", "declared_status", "source", "package")}, "warnings": _status_warnings(preset)}
 
     def run(context: JobContext) -> dict:
         params, store = context.params, context.store
         preset = params["resolved_preset"]
-        fields = preset["extraction"]["fields"]
+        fields = preset["extraction"].get("fields", [])
         limit = min(preset["request_limits"]["max_records_default"], TEST_MODE_MAX_RECORDS if params["run_mode"] == "test" else 10**9)
         run_id = store.create_scrape_run(context.job_id, preset["id"], preset["version"], "webview", params["pages"][0]["url"])
-        store._connection.execute("UPDATE scrape_runs SET run_mode = ? WHERE id = ?", (params["run_mode"], run_id))
+        store._connection.execute("UPDATE scrape_runs SET run_mode = ?, purpose = ?, engine = 'webview', source_kind = 'studio' WHERE id = ?", (params["run_mode"], params["purpose"], run_id))
+        sources.record_signals(store, run_id, params.get("signals") or [])
         store._connection.commit()
         candidates = []
+        selector_free = (preset.get("extraction") or {}).get("mode", "selectors") != "selectors"
         for page in params["pages"]:
             context.checkpoint()
+            if selector_free:
+                # Structured data or article text read from the page exactly as the embedded WebView rendered it.
+                html = str(page.get("html") or "")[:5_000_000]
+                page_warnings: list[str] = []
+                for record in extract_page(html, html.encode("utf-8"), "text/html", page["url"], preset, page_warnings):
+                    record.update(source_retrieved_at=page.get("retrieved_at") or utc_now(), strategy_used="webview")
+                    candidates.append(record)
+                context.stage("page_extracted", {"url": page["url"], "candidates": len(candidates)})
+                continue
             for raw in page.get("records", [])[: preset["request_limits"]["max_records_default"]]:
                 record = {}
                 for field in fields:
@@ -438,7 +474,8 @@ def make_rendered_kind(presets_dir: Path) -> JobKind:
                 params.get("dataset_name") or f"{preset.get('display_name', preset['id'])} (Scrape Studio)",
             ).dataset_id
         store.complete_scrape_run(run_id, len(params["pages"]), len(records), len(rejected), duplicates)
-        coverage = {f["key"]: round(sum(1 for r in records if r.get(f["key"]) not in (None, "")) / len(records), 3) if records else 0 for f in fields}
+        keys = [f["key"] for f in fields] or sorted({k for r in records for k in r if not k.startswith(("source_", "preset_", "strategy_"))})[:40]
+        coverage = {key: round(sum(1 for r in records if r.get(key) not in (None, "")) / len(records), 3) if records else 0 for key in keys}
         return {
             "run_mode": params["run_mode"], "preset": f"{preset['id']}@{preset['version']}", "strategy_used": "webview",
             "strategy_rationale": "Rendered in DataForge's visible embedded WebView because the preset allows rendering for this page.",

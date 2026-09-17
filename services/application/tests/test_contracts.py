@@ -84,3 +84,35 @@ def test_contract_rejects_leaked_secrets_in_job_params() -> None:
     with pytest.raises(AssertionError):
         validate("job.schema.json", {"id": "j", "project_id": "p", "kind": "scrape", "state": "queued", "created_at": "2026-01-01T00:00:00Z", "updated_at": "x", "params": {"credential_secret": "x"}, "result": None, "error": None})
     assert call  # imported helper is shared with other suites
+
+
+def test_expansion_responses_match_contracts(service: Service, tmp_path: Path) -> None:
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).parents[3] / "workers" / "scraping" / "tests"))
+    from fixture_site import serve
+    from test_workflows import wait
+
+    base, state, server = serve()
+    try:
+        validate("collection-settings.schema.json", ok(service, "settings.get"))
+        custom = next(p for p in ok(service, "preset.list") if p["id"] == "generic.sitemap_structured")
+        preset = {k: v for k, v in custom.items() if k not in ("source", "package", "errors", "health_status", "declared_status")}
+        preset.update(id="custom.me.products", version="1.0.0", validation={"unique_by": ["sku"]}, discovery={"mode": "sitemap", "sitemap": {"url_pattern": "^/product/"}})
+        preset["request_limits"] = {**preset["request_limits"], "min_delay_ms": 0}
+        ok(service, "preset.save_custom", preset=preset)
+        params = dict(preset_id="custom.me.products", preset_version="1.0.0", start_url=base + "/", policy_acknowledgement=True, purpose="price_monitoring")
+        test = wait(service, ok(service, "scrape.create_job", **params, run_mode="test")["job_id"], 60)
+        validate("job.schema.json", test)
+        validate("scrape-result.schema.json", test["result"])
+        watch = ok(service, "watch.create", name="Prices", interval_minutes=60, params={**params, "engine": "httpx"})
+        for _ in range(2):
+            job = wait(service, ok(service, "watch.run_now", watch_id=watch["id"])["job_id"], 120)
+            validate("scrape-result.schema.json", job["result"])
+        watch = ok(service, "watch.get", watch_id=watch["id"])
+        validate("watch.schema.json", watch)
+        assert watch["runs"][0]["diff"]["counts"]["unchanged"] == 12
+        for signals in ok(service, "scrape.run_signals", job_id=job["id"]):
+            validate("host-signals.schema.json", signals)
+    finally:
+        server.shutdown()

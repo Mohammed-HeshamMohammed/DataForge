@@ -49,6 +49,7 @@ class Service:
         self.watch_scheduler: sources.WatchScheduler | None = None
         self.commands: dict[str, Callable[[dict], object]] = {
             "health.check": lambda p: health_check().to_dict(),
+            "app.info": self._app_info,
             "project.create": lambda p: self._open(p.get("path", ""), p.get("name"), create=True),
             "project.open": lambda p: self._open(p.get("path", "")),
             "project.current": lambda p: self.project,
@@ -87,9 +88,10 @@ class Service:
             "scrape.suggest_selectors": lambda p: sources.suggest_selectors(*sources.page_html(p, self._store(), scraping.validate_url), p.get("examples") or {}),
             "scrape.propose_presets": lambda p: sources.propose_presets(self._store(), *sources.page_html(p, self._store(), scraping.validate_url), p.get("provider")),
             "preset.maintenance_report": self._maintenance_report,
+            "preset.fixture_from_capture": lambda p: sources.fixture_from_capture(self._store(), p["job_id"], p.get("url")),
             "archive.create_job": lambda p: {"job_id": self._submit("archive_query", p)},
             "bulk.create_job": lambda p: {"job_id": self._submit("bulk_import", p)},
-            "watch.create": lambda p: sources.create_watch(self._store(), self._project_id(), p, scraping.make_scrape_kind(self.presets_dir).validate),
+            "watch.create": self._watch_create,
             "watch.list": lambda p: sources.list_watches(self._store(), self._project_id()),
             "watch.get": lambda p: sources.get_watch(self._store(), p["watch_id"]),
             "watch.set_status": lambda p: sources.set_watch_status(self._store(), p["watch_id"], p["status"]),
@@ -172,14 +174,37 @@ class Service:
         try:
             scraping.validate_url(payload["url"], scraping.resolve_for_url(preset, payload.get("scope_url") or payload["url"]))
         except (scraping.PolicyViolation, ValueError) as error:
-            return {"allowed": False, "reason": str(error)}
-        return {"allowed": True, "reason": None}
+            return {"allowed": False, "reason": str(error), "skippable": False}
+        if payload.get("purpose"):
+            # Automated Studio navigation (collection runs) obeys the same site signals as HTTP jobs.
+            return sources.check_navigation(payload["url"], payload["purpose"])
+        return {"allowed": True, "reason": None, "skippable": False}
+
+    def _app_info(self, payload: dict) -> dict:
+        """Folders the desktop Help and File menus open. Nothing here is sensitive; paths stay on this computer."""
+        docs = REPO_ROOT / "docs"
+        app_data = projects.app_data_dir()
+        return {
+            "app_data_dir": str(app_data), "logs_dir": str(app_data / "logs"), "docs_dir": str(docs) if docs.is_dir() else None,
+            "plan_file": str(REPO_ROOT / "DATAFORGE_MASTER_PLAN.md") if (REPO_ROOT / "DATAFORGE_MASTER_PLAN.md").is_file() else None,
+            "project_root": self.project["root_path"] if self.project else None, "schema_version": SCHEMA_VERSION,
+        }
 
     def _scrape_run_id(self, job_id: str) -> str:
         row = self._store()._connection.execute("SELECT id FROM scrape_runs WHERE job_id = ? ORDER BY created_at DESC LIMIT 1", (job_id,)).fetchone()
         if row is None:
             raise CommandError("not_found", "That job has no scrape run")
         return row["id"]
+
+    def _watch_create(self, payload: dict) -> dict:
+        store = self._store()
+        params = payload.get("params") or {}
+        preset = scraping.resolve_preset(store, self.presets_dir, params.get("preset_id", ""), params.get("preset_version", ""))
+        integration = (preset.get("strategy") or {}).get("api_integration") or {}
+        if integration.get("auth") and not integration.get("optional"):
+            # Scheduled runs start without the desktop host, the only component that reads saved credentials.
+            raise CommandError("invalid_request", "Presets that need a saved credential cannot be watched; run them manually from the Scraping tab")
+        return sources.create_watch(store, self._project_id(), payload, scraping.make_scrape_kind(self.presets_dir).validate)
 
     def _watch_run_now(self, payload: dict) -> dict:
         store = self._store()

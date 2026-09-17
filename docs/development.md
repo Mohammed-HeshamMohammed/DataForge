@@ -7,7 +7,7 @@
 | Desktop UI | `apps/desktop/src` | React + TypeScript in a frameless window. **Title bar:** theme, updates, minimize, close. **Left sidebar:** review ring, datasets, actions, project card. **Main pane:** clock header, tabs. **Right sidebar:** job center, service status. **Tabs:** Overview, Scraping, Scrape Studio, Datasets, Match & Deduplicate, Settings. |
 | Desktop host | `apps/desktop/src-tauri` | Tauri 2. Supervised service sidecar (dev Python or packaged exe), command validation, credential injection, OS credential store, Scrape Studio child WebView + bridge, signature-verified updater, native dialogs. |
 | Application services | `services/application` | **Data:** projects with pre-migration backups, tracked migrations, CSV/JSON/XLSX import, content-addressed artifacts, profiling, fuzzy-assisted mapping proposals. **Jobs:** pause/cancel/retry/restart recovery with in-memory secrets. **Scraping:** HTTP/API and rendered-page staging, presets, health checks, signed packages. **Matching:** match jobs, review, split/lock groups, ranking, exports. |
-| Scraping worker | `workers/scraping` | HTTP and API strategies, selectors, transforms, pagination, robots.txt, challenge/redirect stops, fixture extraction, preset validation, health checks, Ed25519 package signing. |
+| Scraping worker | `workers/scraping` | **Engines:** in-process httpx runtime and a Scrapy child process with identical extraction. **Sources:** pages with pagination, sitemaps, feeds, scoped crawls, llms.txt, open data APIs with request templates, PDFs and linked files, Wayback and Common Crawl, Web Data Commons N-Quads. **Extraction:** CSS/XPath selectors (BeautifulSoup, parsel, selectolax), schema.org structured data, article text, PDF tables, normalizers. **Policy:** robots.txt (RFC 9309), TDMRep, AIPREF, ai.txt, per-host politeness, HTTP cache, challenge and redirect stops. **Maintenance:** fingerprints, relocation and example-based suggestions, drift, diffs, draft proposals, WARC capture. |
 | Matching worker | `workers/matching` | Normalization, capped multi-pass blocking, evidence, guards, decisions, constrained clustering with bridge rejection and locks, canonical records, ordering-only ranking model. |
 | Presets | `packages/presets` | Generic list/table (1.0.0 deprecated, 1.1.0 WebView-capable), generic JSON/API, Wikipedia search API, Hacker News search API. Fixtures are in `fixtures/`. |
 | Packaging and release | `packaging`, `scripts`, `.github/workflows` | PyInstaller service, packaged-service smoke test, NSIS installer with bundled resources, updater artifacts, CI, and a tag-driven release with SHA256SUMS and SBOM. |
@@ -17,7 +17,7 @@
 Requirements: Python 3.11+, Node 20+, Rust/Cargo, and WebView2 on Windows.
 
 ```powershell
-python -m pip install openpyxl httpx beautifulsoup4 rapidfuzz cryptography pytest hypothesis jsonschema
+python -m pip install -r requirements-dev.txt
 npm run setup:desktop
 ```
 
@@ -131,6 +131,23 @@ The CLI uses the same command API as the desktop app. With `--wait`, it follows 
 4. Save the custom preset and run a full multi-page collection in the visible embedded WebView.
 
 The run stages an immutable `scrape` dataset.
+
+### Menus and shortcuts
+
+Every action is in the title-bar menus and the command palette (Ctrl+K). Help → Keyboard shortcuts (Ctrl+/) lists them all. The command catalog is in `apps/desktop/src/app/App.tsx`, and the plan's Pillar F documents it.
+
+### Collection sources and live checks
+
+- **Sources:** the Scraping tab picks a source type (Website, Sitemap, Feed, Site crawl, Open data API, Documents, Web archive, Bulk corpus). Every job declares a purpose; site signals are applied to it (decision D18).
+- **Engines:** `engine: auto` uses Scrapy for sitemap and crawl jobs above 200 pages. `python -m dataforge_scraping.engines.scrapy_engine <job.json>` runs the child directly for debugging.
+- **Settings → Collection:** contact identity (required by SEC EDGAR and Wikidata), default purpose, HTTP cache, WARC capture with retention, and suggestion provider.
+- **Licenses:** `python scripts/check-licenses.py` must pass before a release build.
+- **Scrape Studio:** collections need a purpose; each automated navigation is checked against site signals (decision D24). Picked fields carry XPath fallbacks. Pages with schema.org data offer "Use structured data".
+- **Maintenance:** failing health checks show suggested selectors; Settings → Presets can check a preset against a live page; a run with page capture on can save a sanitized fixture (`project:fixtures/...`).
+- **Archives:** the Wayback source can compare each page's earliest and latest capture and report field changes.
+- **Optional extras:** `pip install -e "workers/scraping[ocr]"` (plus the Tesseract program) for scanned PDFs, `[tables]` for camelot, `[docling]`, and `[language]`.
+- **Live verification:** `python scripts/live-check.py [--only signals,crawl_engines,...]` runs every source type against permitted public sites with small caps in a throwaway project and prints counts only. It is never part of CI.
+- **UI sandbox:** `powershell -File scripts/dev-bridge-sandbox.ps1` starts the dev bridge with empty app data, so browser previews never open real projects.
 
 ### Logs
 

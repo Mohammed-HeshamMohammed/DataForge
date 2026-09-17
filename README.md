@@ -96,7 +96,7 @@ The per-phase status and remaining release hardening are in [IMPLEMENTATION_PLAN
 ## Quick Start
 
 ```powershell
-python -m pip install openpyxl httpx beautifulsoup4 rapidfuzz cryptography pytest
+python -m pip install -r requirements-dev.txt
 npm run setup:desktop
 npm run dev:tauri
 ```
