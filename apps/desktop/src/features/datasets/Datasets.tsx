@@ -6,6 +6,8 @@ import { displayValue, formatCount, formatTime, isActive } from "../../lib/forma
 import type { Dataset, Row } from "../../lib/types.ts";
 import { ConfirmButton, ErrorNote, JobProgress, PathInput } from "../../components/ui.tsx";
 import { MappingEditor } from "../../components/MappingEditor.tsx";
+import { RecordInspector } from "../../components/RecordInspector.tsx";
+import { detailCount, looksPersonal, tableColumns } from "../../lib/details.ts";
 
 const IMPORT_FILTERS = [{ name: "Data files", extensions: ["csv", "xlsx", "json"] }];
 
@@ -140,18 +142,31 @@ function RowSample({ datasetId }: { datasetId: string }) {
   const [revealed, setRevealed] = useState(false);
   const rows = useService<Row[]>("dataset.rows", { dataset_id: datasetId, offset, limit: 25 });
   const mapping = useService<{ mapping: Record<string, string> } | null>("dataset.mapping", { dataset_id: datasetId });
+  const [showDetails, setShowDetails] = useState(false);
+  const [inspected, setInspected] = useState<string | null>(null);
   const sensitiveRoles = new Set(["phone", "email", "address", "mailing_address", "name", "first_name", "last_name"]);
-  const columns = rows.data?.[0] ? Object.keys(rows.data[0].raw) : [];
-  // Until a mapping exists every column is treated as potentially sensitive.
-  const isSensitive = (column: string) => !mapping.data || sensitiveRoles.has(mapping.data.mapping[column] ?? "");
+  const records = (rows.data ?? []).map((row) => row.raw);
+  const columns = tableColumns(records, { includeDetails: showDetails, keepProvenance: true });
+  const hasDetails = records.some((record) => detailCount(record) > 0);
+  // Until a mapping exists every column is treated as potentially sensitive; unmapped detail columns that
+  // look like contact data (phones, e-mails, addresses) stay masked too.
+  const isSensitive = (column: string) => !mapping.data || sensitiveRoles.has(mapping.data.mapping[column] ?? "") || (!mapping.data.mapping[column] && looksPersonal(column));
+  const inspectedRow = rows.data?.find((row) => row.id === inspected);
 
   return (
     <section aria-labelledby="rows-title">
       <div className="section-head">
         <h3 id="rows-title">Source rows</h3>
-        <label className="toggle">
-          <input type="checkbox" checked={revealed} onChange={(e) => setRevealed(e.target.checked)} /> Reveal sensitive values
-        </label>
+        <div className="row-actions">
+          {hasDetails && (
+            <label className="toggle">
+              <input type="checkbox" checked={showDetails} onChange={(e) => setShowDetails(e.target.checked)} /> Show detail columns
+            </label>
+          )}
+          <label className="toggle">
+            <input type="checkbox" checked={revealed} onChange={(e) => setRevealed(e.target.checked)} /> Reveal sensitive values
+          </label>
+        </div>
       </div>
       <div className="table-wrap">
         <table className="data-table compact">
@@ -163,6 +178,7 @@ function RowSample({ datasetId }: { datasetId: string }) {
                   {c}
                 </th>
               ))}
+              {hasDetails && <th scope="col">Details</th>}
             </tr>
           </thead>
           <tbody>
@@ -172,11 +188,26 @@ function RowSample({ datasetId }: { datasetId: string }) {
                 {columns.map((c) => (
                   <td key={c}>{displayValue(row.raw[c], isSensitive(c), revealed)}</td>
                 ))}
+                {hasDetails && (
+                  <td>
+                    <button type="button" className="btn btn-small" aria-label={`Inspect row ${row.row_number}`} aria-expanded={inspected === row.id} onClick={() => setInspected(inspected === row.id ? null : row.id)}>
+                      {detailCount(row.raw)} details
+                    </button>
+                  </td>
+                )}
               </tr>
             ))}
           </tbody>
         </table>
       </div>
+      {inspectedRow && (
+        <RecordInspector
+          record={inspectedRow.raw}
+          title={`Row ${inspectedRow.row_number}`}
+          onClose={() => setInspected(null)}
+          display={(key, value) => displayValue(value, isSensitive(key), revealed)}
+        />
+      )}
       <div className="row-actions">
         <button type="button" className="btn btn-small" disabled={offset === 0} onClick={() => setOffset(Math.max(0, offset - 25))}>
           Previous

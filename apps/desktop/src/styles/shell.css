@@ -1693,3 +1693,47 @@ fieldset.scope legend {
     justify-content: center;
   }
 }
+
+/* ---------- Record inspector ---------- */
+.record-inspector {
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+  padding: var(--spacing-sm) var(--spacing-md);
+  margin-top: var(--spacing-sm);
+}
+
+.inspector-group > summary {
+  cursor: pointer;
+  font-weight: 600;
+  padding: var(--spacing-xs) 0;
+}
+
+.inspector-facts {
+  margin-top: var(--spacing-xs);
+}
+
+.inspector-facts dt {
+  font-family: var(--font-mono, ui-monospace, monospace);
+  font-size: 0.8rem;
+  max-width: 22rem;
+  overflow-wrap: anywhere;
+}
+
+.inspector-facts dd {
+  white-space: pre-wrap;
+}
+
+.field-hint {
+  font-family: var(--font-body, inherit);
+  font-weight: 400;
+}
+
+.btn-link {
+  background: none;
+  border: none;
+  padding: 0;
+  color: var(--color-accent, inherit);
+  text-decoration: underline;
+  cursor: pointer;
+  font: inherit;
+}

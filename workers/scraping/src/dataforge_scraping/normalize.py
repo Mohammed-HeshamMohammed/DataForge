@@ -48,7 +48,9 @@ def _tld_extractor():
 
 def registrable_domain(value: object) -> str | None:
     result = _tld_extractor()(str(value))
-    domain = getattr(result, "top_domain_under_public_suffix", None) or result.registered_domain
+    domain = getattr(result, "top_domain_under_public_suffix", None)
+    if domain is None:  # tldextract < 5.3
+        domain = result.registered_domain
     return domain.lower() or None
 
 

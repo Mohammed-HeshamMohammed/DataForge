@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from uuid import uuid4
 
+from dataforge_scraping import details
 from dataforge_scraping.engines.launcher import choose_engine, collect_with_scrapy
 from dataforge_scraping.extraction import TEST_MODE_MAX_RECORDS, PolicyViolation, apply_field, extract_html_pages, extract_page, validate_candidates, validate_url
 from dataforge_scraping.runtime import build_request, resolve_variables
@@ -224,6 +225,7 @@ def make_scrape_kind(presets_dir: Path) -> JobKind:
             raise JobValidationError("Choose the purpose of this collection (for example internal analysis or lead research)")
         if params.get("engine", "auto") not in ("auto", "httpx", "scrapy"):
             raise JobValidationError("engine must be auto, httpx, or scrapy")
+        detail_level = _detail_level(params, preset)
         variables = params.get("variables") or {}
         if not isinstance(variables, dict):
             raise JobValidationError("variables must be an object")
@@ -267,9 +269,9 @@ def make_scrape_kind(presets_dir: Path) -> JobKind:
             **params, "run_mode": run_mode, "start_url": start_url, "max_records": max_records, "max_pages": max_pages, "purpose": purpose,
             # Stable across retries (params are copied), so a retried Scrapy crawl resumes from the same queue.
             "resume_root": params.get("resume_root") or uuid4().hex,
-            "engine": engine, "variables": variables,
-            # Pin the exact resolved preset so later package changes cannot alter this job.
-            "resolved_preset": {k: v for k, v in resolved.items() if k not in ("errors",)}, "warnings": warnings,
+            "engine": engine, "variables": variables, "detail_level": detail_level,
+            # Pin the exact resolved preset (and detail level) so later package changes cannot alter this job.
+            "resolved_preset": details.with_level({k: v for k, v in resolved.items() if k not in ("errors",)}, detail_level), "warnings": warnings,
         }
 
     def run(context: JobContext) -> dict:
@@ -294,7 +296,7 @@ def make_scrape_kind(presets_dir: Path) -> JobKind:
             if engine == "scrapy":
                 result = collect_with_scrapy(
                     params["start_url"], preset, params["max_records"], params["max_pages"], should_stop=context.should_stop,
-                    on_page=lambda event: context.stage("page_extracted", event), is_paused=lambda: context._control.pause.is_set(),
+                    on_page=lambda event: _page_event(context, event), is_paused=lambda: context._control.pause.is_set(),
                     contact=settings["contact_identity"], cache_dir=sources.cache_dir(store), purpose=params.get("purpose"),
                     incremental=bool(params.get("incremental")), work_dir=store.project_root / "engine" / "runs" / context.job_id,
                     resume_dir=store.project_root / "engine" / "resume" / params["resume_root"] if mode in ("crawl", "sitemap") else None,
@@ -304,7 +306,7 @@ def make_scrape_kind(presets_dir: Path) -> JobKind:
                 result = extract_html_pages(
                     params["start_url"] if not (preset.get("request") or {}).get("url_template") else "", preset,
                     max_records=params["max_records"], max_pages=params["max_pages"],
-                    should_stop=context.should_stop, on_page=lambda event: context.stage("page_extracted", event),
+                    should_stop=context.should_stop, on_page=lambda event: _page_event(context, event),
                     credential=context.secrets.get("credential"), contact=settings["contact_identity"], cache_dir=sources.cache_dir(store),
                     capture=capture, purpose=params.get("purpose"), variables=params.get("variables"),
                     frontier_store=sources.frontier_store(store, context.job_id) if mode == "crawl" else None,
@@ -353,8 +355,7 @@ def make_scrape_kind(presets_dir: Path) -> JobKind:
         diff = None
         if params.get("watch_id") and params["run_mode"] == "full":
             diff = sources.record_watch_run(store, params["watch_id"], context.job_id, dataset_id, list(result.records), preset)
-        fields = [f["key"] for f in preset["extraction"].get("fields", [])] or sorted({k for r in result.records for k in r if not k.startswith(("source_", "preset_", "strategy_"))})[:40]
-        coverage = {key: round(sum(1 for r in result.records if r.get(key) not in (None, "")) / len(result.records), 3) if result.records else 0 for key in fields}
+        coverage = _field_coverage(list(result.records), preset)
         return {
             "run_mode": params["run_mode"], "preset": f"{preset['id']}@{preset['version']}", "strategy_used": result.strategy_used, "engine": result.engine,
             "source_kind": source_kind, "purpose": params.get("purpose"),
@@ -364,9 +365,31 @@ def make_scrape_kind(presets_dir: Path) -> JobKind:
             "sample_records": list(result.records[:TEST_MODE_MAX_RECORDS]), "dataset_id": dataset_id, "file_datasets": file_datasets,
             "signals": list(result.signals), "cached_responses": result.cached_responses, "discovered_urls": result.discovered_urls,
             "watch_diff": diff, "warc_capture": str(capture.path) if capture is not None else None,
+            "details": details.summarize(list(result.records), details.level_of(preset), result.details),
         }
 
     return JobKind(run=run, validate=validate)
+
+
+def _detail_level(params: dict, preset: dict) -> str:
+    """The job's detail level: the request's choice, else the preset's, else standard (no extra requests)."""
+    level = params.get("detail_level") or ((preset.get("details") or {}).get("level") if isinstance(preset.get("details"), dict) else None) or details.DEFAULT_LEVEL
+    if level not in details.LEVELS:
+        raise JobValidationError(f"detail_level must be one of {', '.join(details.LEVELS)}")
+    return level
+
+
+def _page_event(context: JobContext, event: dict) -> None:
+    context.stage("detail_page_extracted" if "detail_page" in event else "page_extracted", event)
+
+
+def _field_coverage(records: list[dict], preset: dict) -> dict[str, float]:
+    """Coverage of the preset's fields (or, for selector-free presets, of the record's own fields; details are
+    summarized separately so they do not crowd out the fields the preset was built for)."""
+    fields = [f["key"] for f in (preset.get("extraction") or {}).get("fields", [])] or sorted(
+        {k for r in records for k in r if not k.startswith(("source_", "preset_", "strategy_")) and k not in details.PROVENANCE and details.detail_group(k, r) is None}
+    )[:40]
+    return {key: round(sum(1 for r in records if r.get(key) not in (None, "")) / len(records), 3) if records else 0 for key in fields}
 
 
 def _status_warnings(preset: dict) -> list[str]:
@@ -412,6 +435,7 @@ def make_rendered_kind(presets_dir: Path) -> JobKind:
         purpose = params.get("purpose")
         if purpose not in PURPOSES:
             raise JobValidationError("Choose the purpose of this collection (for example internal analysis or lead research)")
+        detail_level = _detail_level(params, preset)
         resolved = resolve_for_url(preset, pages[0]["url"])
         for page in pages:
             try:
@@ -430,8 +454,9 @@ def make_rendered_kind(presets_dir: Path) -> JobKind:
             ).fetchone()
             if not tested:
                 raise JobValidationError("Run a successful 10-record test of this custom preset before a full run")
-        return {**params, "run_mode": run_mode, "purpose": purpose, "signals": sources.navigation_signals(purpose, [p["url"] for p in pages]),
-                "resolved_preset": {k: v for k, v in resolved.items() if k not in ("errors", "health_status", "declared_status", "source", "package")}, "warnings": _status_warnings(preset)}
+        return {**params, "run_mode": run_mode, "purpose": purpose, "signals": sources.navigation_signals(purpose, [p["url"] for p in pages]), "detail_level": detail_level,
+                "resolved_preset": details.with_level({k: v for k, v in resolved.items() if k not in ("errors", "health_status", "declared_status", "source", "package")}, detail_level),
+                "warnings": _status_warnings(preset)}
 
     def run(context: JobContext) -> dict:
         params, store = context.params, context.store
@@ -444,6 +469,7 @@ def make_rendered_kind(presets_dir: Path) -> JobKind:
         store._connection.commit()
         candidates = []
         selector_free = (preset.get("extraction") or {}).get("mode", "selectors") != "selectors"
+        level_standard, region = details.at_least(preset, "standard"), details.region_of(preset)
         for page in params["pages"]:
             context.checkpoint()
             if selector_free:
@@ -455,18 +481,38 @@ def make_rendered_kind(presets_dir: Path) -> JobKind:
                     candidates.append(record)
                 context.stage("page_extracted", {"url": page["url"], "candidates": len(candidates)})
                 continue
+            # The WebView sends a sanitized copy of each record's element and of the page head (no scripts, form
+            # fields, or unsafe attributes), so rendered records get the same item and page details as HTTP ones.
+            page_metadata = details.page_details(str(page.get("head_html") or "")[:1_000_000], page["url"]) if level_standard and page.get("head_html") else {}
             for raw in page.get("records", [])[: preset["request_limits"]["max_records_default"]]:
                 record = {}
                 for field in fields:
                     value = raw.get(field["key"]) if isinstance(raw, dict) else None
                     if value not in (None, ""):
                         record[field["key"]] = apply_field(str(value)[:10_000], field, page["url"], preset)
+                element = raw.get("__element") if isinstance(raw, dict) else None
+                if level_standard and isinstance(element, str) and element:
+                    for key, value in details.element_details(element[:200_000], page["url"], region).items():
+                        record.setdefault(key, value)
+                if details.at_least(preset, "basic"):
+                    record.update(details.value_details(record, page["url"], region))
                 record.update(source_url=page["url"], source_retrieved_at=page.get("retrieved_at") or utc_now(), preset_id=preset["id"], preset_version=preset["version"], strategy_used="webview")
+                for key, value in page_metadata.items():
+                    record.setdefault(key, value)
                 candidates.append(record)
             context.stage("page_extracted", {"url": page["url"], "candidates": len(page.get("records", []))})
         valid, rejected, warnings = validate_candidates(candidates, preset)
         duplicates = len(candidates) - len(valid) - len(rejected)
         records = valid[:limit]
+        follow_stats = None
+        if details.at_least(preset, "full") and records and (preset.get("pagination") or {}).get("type") != "detail_links":
+            if "http" in preset["strategy"].get("allowed", []):
+                follow_stats, _ = details.follow_with_policy_client(
+                    records, preset, contact=sources.get_settings(store)["contact_identity"], cache_dir=sources.cache_dir(store), purpose=params["purpose"],
+                    limit=limit, should_stop=context.should_stop, on_page=lambda event: _page_event(context, event), warnings=warnings,
+                )
+            else:
+                warnings.append("Detail pages are followed only for presets that allow HTTP; use detail-link pagination in Scrape Studio for rendered detail pages")
         dataset_id = None
         if params["run_mode"] == "full" and records:
             dataset_id = register_staged_rows(
@@ -474,14 +520,14 @@ def make_rendered_kind(presets_dir: Path) -> JobKind:
                 params.get("dataset_name") or f"{preset.get('display_name', preset['id'])} (Scrape Studio)",
             ).dataset_id
         store.complete_scrape_run(run_id, len(params["pages"]), len(records), len(rejected), duplicates)
-        keys = [f["key"] for f in fields] or sorted({k for r in records for k in r if not k.startswith(("source_", "preset_", "strategy_"))})[:40]
-        coverage = {key: round(sum(1 for r in records if r.get(key) not in (None, "")) / len(records), 3) if records else 0 for key in keys}
+        coverage = _field_coverage(records, preset)
         return {
             "run_mode": params["run_mode"], "preset": f"{preset['id']}@{preset['version']}", "strategy_used": "webview",
             "strategy_rationale": "Rendered in DataForge's visible embedded WebView because the preset allows rendering for this page.",
             "pages_fetched": len(params["pages"]), "records_extracted": len(records), "records_rejected": len(rejected), "records_duplicate": duplicates,
             "stop_reason": "max_records" if len(valid) > limit else "completed", "warnings": params.get("warnings", []) + warnings,
             "field_coverage": coverage, "sample_records": records[:TEST_MODE_MAX_RECORDS], "dataset_id": dataset_id,
+            "details": details.summarize(records, details.level_of(preset), follow_stats),
         }
 
     return JobKind(run=run, validate=validate)

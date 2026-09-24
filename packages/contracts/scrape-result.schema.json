@@ -157,6 +157,9 @@
         "string",
         "null"
       ]
+    },
+    "details": {
+      "$ref": "record-details.schema.json"
     }
   }
 }

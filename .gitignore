@@ -23,6 +23,8 @@ build/
 
 # Real source data (contains personal information) - never commit
 Data/
+# The scraping worker's bundled data folder is code, not source data (Data/ also matches data/ on Windows)
+!workers/scraping/src/dataforge_scraping/data/
 
 # Local tool and editor settings
 .claude/

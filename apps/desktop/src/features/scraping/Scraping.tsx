@@ -5,6 +5,8 @@ import { credentials, loadSetting, saveSetting } from "../../lib/desktop.ts";
 import { useJob, useService } from "../../lib/hooks.ts";
 import { formatCount, isActive } from "../../lib/format.ts";
 import { ErrorNote, JobProgress } from "../../components/ui.tsx";
+import { DetailLevelField, RecordInspector } from "../../components/RecordInspector.tsx";
+import { DEFAULT_DETAIL_LEVEL, describeDetails, detailCount, isDetailLevel, tableColumns, type DetailLevel, type DetailSummary } from "../../lib/details.ts";
 import { ArchiveForm, BulkForm, CreateWatch, SignalsPanel, SignalsTable, WatchesPanel, type HostSignals } from "./panels.tsx";
 import {
   PURPOSES, SOURCES, defaultVariables, needsStartUrl, presetsFor, type RequestVariable, type SourceKind, type SourcePreset, variablePayload, variableProblems,
@@ -52,6 +54,11 @@ export function Scraping({ navigate }: { navigate: Navigate }) {
   const [variables, setVariables] = useState<Record<string, string>>({});
   const [acknowledged, setAcknowledged] = useState(false);
   const [maxPages, setMaxPages] = useState("");
+  const [detailLevel, setDetailLevel] = useState<DetailLevel>(() => {
+    const saved = loadSetting<string>("detailLevel", DEFAULT_DETAIL_LEVEL);
+    return isDetailLevel(saved) ? saved : DEFAULT_DETAIL_LEVEL;
+  });
+  useEffect(() => saveSetting("detailLevel", detailLevel), [detailLevel]);
   const [credentialRef, setCredentialRef] = useState("");
   const [savedCredentials, setSavedCredentials] = useState<string[]>([]);
   const [jobId, setJobId] = useState<string | null>(null);
@@ -88,6 +95,7 @@ export function Scraping({ navigate }: { navigate: Navigate }) {
     policy_acknowledgement: acknowledged,
     max_pages: maxPages ? Number(maxPages) : undefined,
     credential_ref: integration?.auth ? credentialRef || undefined : undefined,
+    detail_level: detailLevel,
   });
 
   const start = async (runMode: "test" | "full") => {
@@ -222,6 +230,7 @@ export function Scraping({ navigate }: { navigate: Navigate }) {
                   </label>
                 )}
               </div>
+              <DetailLevelField value={detailLevel} onChange={setDetailLevel} />
               {problems.length > 0 && <p className="note note-warning small">{problems.join("; ")}</p>}
               <label className="toggle block">
                 <input type="checkbox" checked={acknowledged} onChange={(e) => setAcknowledged(e.target.checked)} /> I am authorized to collect and use this data and accept the source's terms.
@@ -381,10 +390,11 @@ function FixtureFromCapture({ jobId }: { jobId: string }) {
 
 export function ScrapeResult({ result, onOpenDataset, jobId }: { result: Record<string, any>; onOpenDataset: (id: string) => void; jobId?: string }) {
   const samples: Record<string, unknown>[] = result.sample_records ?? [];
-  const columns = samples[0]
-    ? [...new Set(samples.flatMap((r) => Object.keys(r)))].filter((k) => !["source_retrieved_at", "preset_id", "preset_version", "strategy_used", "text", "markdown"].includes(k)).slice(0, 16)
-    : [];
+  const columns = tableColumns(samples, { exclude: ["text", "markdown"], max: 16 });
   const diff = result.watch_diff as { counts: Record<string, number> } | null | undefined;
+  const details = result.details as DetailSummary | undefined;
+  const [inspected, setInspected] = useState<number | null>(null);
+  const hasDetails = samples.some((r) => detailCount(r) > 0);
   return (
     <div className="stack">
       <dl className="facts">
@@ -419,6 +429,12 @@ export function ScrapeResult({ result, onOpenDataset, jobId }: { result: Record<
                 .map(([k, v]) => `${k} ${Math.round(Number(v) * 100)}%`)
                 .join(" · ")}
             </dd>
+          </>
+        )}
+        {details && (
+          <>
+            <dt>Details</dt>
+            <dd>{describeDetails(details)}</dd>
           </>
         )}
         {diff && (
@@ -465,6 +481,7 @@ export function ScrapeResult({ result, onOpenDataset, jobId }: { result: Record<
                     {c}
                   </th>
                 ))}
+                {hasDetails && <th scope="col">Details</th>}
               </tr>
             </thead>
             <tbody>
@@ -473,12 +490,20 @@ export function ScrapeResult({ result, onOpenDataset, jobId }: { result: Record<
                   {columns.map((c) => (
                     <td key={c}>{String(r[c] ?? "").slice(0, 200)}</td>
                   ))}
+                  {hasDetails && (
+                    <td>
+                      <button type="button" className="btn btn-small" aria-label={`Inspect record ${i + 1}`} aria-expanded={inspected === i} onClick={() => setInspected(inspected === i ? null : i)}>
+                        {detailCount(r)} details
+                      </button>
+                    </td>
+                  )}
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
       )}
+      {inspected !== null && samples[inspected] && <RecordInspector record={samples[inspected]} title={`Record ${inspected + 1} of ${samples.length}`} onClose={() => setInspected(null)} />}
       {(result.file_datasets ?? []).map((f: { url: string; dataset_id?: string; error?: string }) =>
         f.dataset_id ? (
           <button key={f.url} type="button" className="btn btn-small" onClick={() => onOpenDataset(f.dataset_id!)}>

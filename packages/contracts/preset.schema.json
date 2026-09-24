@@ -189,6 +189,39 @@
           ]
         }
       }
+    },
+    "details": {
+      "type": "object",
+      "description": "How much detail each record carries beyond the declared fields. none: fields only; basic: + value details (price amount/currency, E.164 phones, ISO dates, domains, ratings, numbers); standard (default): + the record's element (item.*) and page metadata (page.*); full: + each record's detail page (detail.*), followed under the preset's scope and policy.",
+      "properties": {
+        "level": {
+          "enum": [
+            "none",
+            "basic",
+            "standard",
+            "full"
+          ]
+        },
+        "follow": {
+          "type": "object",
+          "properties": {
+            "field": {
+              "type": "string",
+              "minLength": 1
+            },
+            "max_pages": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 10000
+            },
+            "max_duration_seconds": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 7200
+            }
+          }
+        }
+      }
     }
   }
 }

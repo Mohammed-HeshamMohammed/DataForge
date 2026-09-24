@@ -7,7 +7,9 @@ the same entity differently, both records are kept and flagged; they are never m
 
 from __future__ import annotations
 
+import html as html_lib
 import json
+import re
 from collections import Counter
 from functools import lru_cache
 from pathlib import Path
@@ -15,6 +17,7 @@ from pathlib import Path
 SYNTAXES = ("json-ld", "microdata", "rdfa", "opengraph", "microformat")
 _CONTAINERS = ("mainEntity", "itemListElement", "item", "hasPart", "about", "subjectOf", "containsPlace", "subOrganization", "department", "makesOffer", "itemOffered")
 _MAPPINGS_PATH = Path(__file__).with_name("data") / "schemaorg_mappings.json"
+_CLOSING_TAGS = re.compile(r"</(?:body|html)\s*>", re.I)
 
 
 @lru_cache(maxsize=1)
@@ -49,6 +52,9 @@ def _walk(node: object, syntax: str, out: list[dict]) -> None:
 def extract_entities(html: str, url: str, syntaxes: tuple[str, ...] = SYNTAXES) -> list[dict]:
     import extruct
 
+    # Markup injected after </html> (common with tag managers and concatenated templates) is dropped by lxml, so the
+    # closing tags go and the parser closes the document at the real end instead.
+    html = _CLOSING_TAGS.sub("", html)
     try:
         data = extruct.extract(html, base_url=url, syntaxes=[s for s in syntaxes if s != "rdfa"] + (["rdfa"] if "rdfa" in syntaxes else []), uniform=True, errors="ignore")
     except Exception:  # noqa: BLE001 - malformed markup must not fail the page
@@ -98,20 +104,81 @@ def _path(data: object, path: str) -> object:
             return None
     if isinstance(value, list):
         value = value[0] if value else None
-    if isinstance(value, dict):  # e.g. image objects, brand without name
-        value = value.get("url") or value.get("name") or value.get("@value") or value.get("@id")
+    return _scalar(value)
+
+
+def _scalar(value: object) -> object:
+    if isinstance(value, dict):  # e.g. image objects, brand without name, QuantitativeValue
+        value = value.get("url") or value.get("name") or value.get("@value") or value.get("value") or value.get("@id")
     return value
 
 
-def _field_value(data: dict, field: str, path: str) -> object:
-    value = _path(data, path)
-    if value is None and "." in path:
-        head = _path(data, path.split(".", 1)[0])
-        if isinstance(head, str) and field in ("address", "author", "brand", "publisher", "name", "venue"):
-            value = head  # schema.org allows plain text where an object is expected
+def _path_all(data: object, path: str, limit: int = 30) -> list:
+    """Every value at `path`, following each list element (all authors, all opening hours, all ingredients)."""
+    values = data if isinstance(data, list) else [data]
+    for part in path.split("."):
+        found = []
+        for value in values:
+            items = value if isinstance(value, list) else [value]
+            found.extend(item.get(part) for item in items if isinstance(item, dict) and item.get(part) not in (None, "", []))
+        values = found
+    flat: list = []
+    for value in values:
+        flat.extend(value if isinstance(value, list) else [value])
+    return [v for v in (_scalar(v) for v in flat) if isinstance(v, (str, int, float)) and str(v).strip()][:limit]
+
+
+# Plain text allowed where schema.org expects an object ("address": "1 Main St", "author": "Jo").
+_TEXT_FOR_OBJECT = ("address", "author", "brand", "publisher", "name", "venue", "manufacturer", "seller", "organizer", "hiring_organization",
+                    "works_for", "provider", "creator", "director", "performer", "item_reviewed", "affiliation", "founder", "actors")
+_LONG_TEXT = ("description", "article_body", "review_body", "answer", "responsibilities", "qualifications", "job_benefits", "transcript", "release_notes")
+_ENUM_URL = re.compile(r"^https?://schema\.org/([A-Za-z]+)$")
+MAX_TEXT = 100_000
+
+
+def _paths(spec: object) -> tuple[list[str], bool, str]:
+    if isinstance(spec, dict):
+        return list(spec.get("paths") or []), bool(spec.get("join")), str(spec.get("separator", ", "))
+    return ([spec] if isinstance(spec, str) else list(spec)), False, ", "
+
+
+def _clean(field: str, value: object) -> object:
+    if isinstance(value, bool):
+        return str(value).lower()
     if isinstance(value, (int, float)):
         return value
-    return str(value).strip() if value not in (None, "") else None
+    if value in (None, ""):
+        return None
+    text = str(value).strip()
+    if match := _ENUM_URL.match(text):
+        return match.group(1)  # https://schema.org/InStock -> InStock
+    if field in _LONG_TEXT and "<" in text and ">" in text:
+        text = re.sub(r"\s+([.,;:!?])", r"\1", " ".join(html_lib.unescape(re.sub(r"<[^>]+>", " ", text)).split()))
+    return text[:MAX_TEXT] or None
+
+
+def _field_value(data: dict, field: str, spec: object) -> object:
+    paths, joined, separator = _paths(spec)
+    if joined:
+        values: list = []
+        for path in paths:
+            values.extend(v for v in (_clean(field, v) for v in _path_all(data, path)) if v not in (None, "") and v not in values)
+            if values:
+                break
+        if not values and field in _TEXT_FOR_OBJECT and paths and "." in paths[0]:
+            head = data.get(paths[0].split(".", 1)[0])
+            values = [_clean(field, v) for v in (head if isinstance(head, list) else [head]) if isinstance(v, str) and v.strip()]
+        return separator.join(str(v) for v in values) if values else None
+    for path in paths:
+        value = _path(data, path)
+        if value is None and "." in path:
+            head = _path(data, path.split(".", 1)[0])
+            if isinstance(head, str) and field in _TEXT_FOR_OBJECT:
+                value = head  # schema.org allows plain text where an object is expected
+        value = _clean(field, value)
+        if value not in (None, ""):
+            return value
+    return None
 
 
 def entity_records(entities: list[dict], wanted_types: list[str] | None = None) -> list[dict]:
@@ -125,8 +192,8 @@ def entity_records(entities: list[dict], wanted_types: list[str] | None = None) 
         if not mapped:
             continue
         record: dict[str, object] = {"schema_type": entity["types"][0], "structured_syntax": entity["syntax"]}
-        for field, path in table[mapped]["fields"].items():
-            value = _field_value(entity["data"], field, path)
+        for field, spec in table[mapped]["fields"].items():
+            value = _field_value(entity["data"], field, spec)
             if value is not None:
                 record[field] = value
         if len(record) > 2:

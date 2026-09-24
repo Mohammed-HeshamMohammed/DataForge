@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Callable
 from urllib.parse import urlparse
 
+from .. import details
 from ..errors import PolicyViolation
 from ..extraction import ScrapeResult, strategy_rationale, validate_candidates, validate_url
 from ..fetch import make_client, user_agent
@@ -90,6 +91,9 @@ def collect_with_scrapy(
 
     creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     env = {**os.environ, "PYTHONIOENCODING": "utf-8", "SCRAPY_SETTINGS_MODULE": ""}
+    if not getattr(sys, "frozen", False):  # running from source: the child imports this same package
+        package_root = str(Path(__file__).resolve().parents[2])
+        env["PYTHONPATH"] = os.pathsep.join(p for p in (package_root, os.environ.get("PYTHONPATH", "")) if p)
     process = subprocess.Popen(engine_command(job_path), stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL,
                                env=env, creationflags=creationflags, text=True, encoding="utf-8", errors="replace")
     lines: queue.Queue = queue.Queue()
@@ -179,9 +183,27 @@ def collect_with_scrapy(
     valid, rejected, more = validate_candidates(records, preset)
     valid = valid[:max_records]
     duplicates = len(records) - len(valid) - len(rejected)
+    follow_stats, follow_signals = None, []
+    reason = str(done.get("reason", "completed"))
+    if details.at_least(preset, "full") and valid and reason != "cancelled" and (preset.get("pagination") or {}).get("type") != "detail_links":
+        # Detail pages are few (one per record) and need no crawl frontier, so the parent reads them with the
+        # httpx policy client: same scope, signals, politeness, and cache as the rest of the job.
+        follow_stats, follow_signals = details.follow_with_policy_client(
+            valid, preset, contact=contact, cache_dir=cache_dir, purpose=purpose, include_local_signals=include_local_signals, limit=max_records,
+            should_stop=should_stop, on_page=lambda event: on_page(event | {"engine": "scrapy"}), warnings=warnings,
+        )
+        if follow_stats["stop_reason"] == "cancelled":
+            reason = "cancelled"
     return ScrapeResult(
         tuple(valid), start_url, datetime.now(timezone.utc).isoformat(), "http", int(done.get("pages", 0)), len(rejected), max(0, duplicates),
         tuple(dict.fromkeys(warnings + done.get("warnings", []) + more + [w for s in checker.summary() for w in s["warnings"]])),
-        str(done.get("reason", "completed")), strategy_rationale(preset) + " Ran on the Scrapy engine for a large discovery job.",
-        engine="scrapy", signals=tuple(checker.summary()), cached_responses=int(done.get("cached", 0)), discovered_urls=int(done.get("discovered", 0)),
+        reason, strategy_rationale(preset) + " Ran on the Scrapy engine for a large discovery job.",
+        engine="scrapy", signals=tuple(_merge_signals(checker.summary(), follow_signals)), cached_responses=int(done.get("cached", 0)),
+        discovered_urls=int(done.get("discovered", 0)), details=follow_stats,
     )
+
+
+def _merge_signals(first: list[dict], second: list[dict]) -> list[dict]:
+    """One entry per host; the follow pass may add hosts the crawl did not visit."""
+    seen = {entry.get("host") for entry in first}
+    return list(first) + [entry for entry in second if entry.get("host") not in seen]

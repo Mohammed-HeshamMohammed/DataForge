@@ -12,7 +12,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 from uuid import uuid4
 
-from dataforge_scraping import archives, structured
+from dataforge_scraping import archives, details, structured
 from dataforge_scraping.diff import diff_records
 from dataforge_scraping.errors import PolicyViolation
 from dataforge_scraping.extraction import TEST_MODE_MAX_RECORDS, extract_page, validate_candidates
@@ -228,12 +228,17 @@ def make_archive_kind(presets_resolver) -> JobKind:
         if params.get("compare") and not (preset.get("validation") or {}).get("unique_by"):
             raise JobValidationError("Comparing captures needs a preset with validation.unique_by, so records can be matched across versions")
         run_mode = params.get("run_mode", "test")
+        # Archive jobs never fetch live pages, so "full" (which follows live detail pages) reads as "standard".
+        detail_level = params.get("detail_level") or ((preset.get("details") or {}).get("level") if isinstance(preset.get("details"), dict) else None) or details.DEFAULT_LEVEL
+        if detail_level not in details.LEVELS:
+            raise JobValidationError(f"detail_level must be one of {', '.join(details.LEVELS)}")
+        detail_level = "standard" if detail_level == "full" else detail_level
         limit = min(int(params.get("max_captures") or 50), 500)
         if run_mode == "test":
             # Tests read at most 10 captures; a comparison needs enough history to find two versions of a page.
             limit = min(limit, 50 if params.get("compare") else TEST_MODE_MAX_RECORDS)
-        return {**params, "url_pattern": pattern, "purpose": purpose, "run_mode": run_mode, "max_captures": limit,
-                "resolved_preset": {k: v for k, v in preset.items() if k not in ("errors", "health_status")}}
+        return {**params, "url_pattern": pattern, "purpose": purpose, "run_mode": run_mode, "max_captures": limit, "detail_level": detail_level,
+                "resolved_preset": details.with_level({k: v for k, v in preset.items() if k not in ("errors", "health_status")}, detail_level)}
 
     def run(context: JobContext) -> dict:
         params, store = context.params, context.store
@@ -330,7 +335,8 @@ def make_archive_kind(presets_resolver) -> JobKind:
         record_signals(store, run_id, signals)
         return {"run_mode": params["run_mode"], "archive": params["archive"], "captures_read": captures_read, "records_extracted": len(records),
                 "records_rejected": len(rejected), "warnings": list(dict.fromkeys(warnings + more))[:50], "sample_records": records[:TEST_MODE_MAX_RECORDS],
-                "dataset_id": dataset_id, "signals": signals, "stop_reason": "completed", "engine": "httpx", "archive_diff": archive_diff}
+                "dataset_id": dataset_id, "signals": signals, "stop_reason": "completed", "engine": "httpx", "archive_diff": archive_diff,
+                "details": details.summarize(records, details.level_of(preset))}
 
     return JobKind(run=run, validate=validate)
 
@@ -351,8 +357,13 @@ def make_bulk_kind() -> JobKind:
         types = params.get("schema_types") or []
         if not types or not all(isinstance(t, str) for t in types):
             raise JobValidationError("Choose at least one schema.org type, for example LocalBusiness")
+        detail_level = params.get("detail_level") or "basic"
+        if detail_level not in details.LEVELS:
+            raise JobValidationError(f"detail_level must be one of {', '.join(details.LEVELS)}")
         return {**params, "path": str(path.resolve()), "max_records": min(int(params.get("max_records") or 100_000), 1_000_000),
-                "domain_suffix": str(params.get("domain_suffix") or "").lower().strip(), "run_mode": params.get("run_mode", "test")}
+                "domain_suffix": str(params.get("domain_suffix") or "").lower().strip(), "run_mode": params.get("run_mode", "test"),
+                # Corpus pages carry only their structured data, so value details are the most there is to add.
+                "detail_level": "none" if detail_level == "none" else "basic"}
 
     def run(context: JobContext) -> dict:
         params, store = context.params, context.store
@@ -368,6 +379,8 @@ def make_bulk_kind() -> JobKind:
             if params["domain_suffix"] and not host.endswith(params["domain_suffix"]):
                 continue
             for record in structured.entity_records(entities, params["schema_types"]):
+                if params.get("detail_level", "basic") != "none":
+                    record.update(details.value_details(record, page_url, _region_for_host(host)))
                 record.update(source_url=page_url, source_kind="web_data_commons", source_file=Path(params["path"]).name)
                 records.append(record)
             if len(records) >= limit:
@@ -377,9 +390,19 @@ def make_bulk_kind() -> JobKind:
         if params["run_mode"] == "full" and records:
             dataset_id = register_staged_rows(store, store.job(context.job_id)["project_id"], records, f"wdc-{context.job_id[:8]}.json",
                                               params.get("dataset_name") or f"Web Data Commons {', '.join(params['schema_types'])}").dataset_id
-        return {"run_mode": params["run_mode"], "pages_read": pages, "records_extracted": len(records), "sample_records": records[:TEST_MODE_MAX_RECORDS], "dataset_id": dataset_id}
+        return {"run_mode": params["run_mode"], "pages_read": pages, "records_extracted": len(records), "sample_records": records[:TEST_MODE_MAX_RECORDS], "dataset_id": dataset_id,
+                "details": details.summarize(records, params.get("detail_level", "basic"))}
 
     return JobKind(run=run, validate=validate)
+
+
+_TLD_REGIONS = {"uk": "GB", "com": "US", "org": "US", "net": "US", "edu": "US", "gov": "US", "us": "US"}
+
+
+def _region_for_host(host: str) -> str:
+    """Phone-number region for a corpus page: its country-code TLD (example.de -> DE), else US."""
+    tld = host.rsplit(".", 1)[-1].lower() if "." in host else ""
+    return _TLD_REGIONS.get(tld) or (tld.upper() if len(tld) == 2 and tld.isalpha() else "US")
 
 
 # --- watches and diffs (Track I) -----------------------------------------------------------------

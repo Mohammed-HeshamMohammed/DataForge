@@ -54,7 +54,7 @@ describe("scraping tab", () => {
     fireEvent.click(start);
     await waitFor(() => expect(calls.some((c) => c.command === "scrape.create_job")).toBe(true));
     const job = calls.find((c) => c.command === "scrape.create_job")!.payload;
-    expect(job).toMatchObject({ preset_id: "gdelt.doc_search", purpose: "research", run_mode: "test", variables: { query: "flood", limit: 75 }, engine: "httpx", start_url: "" });
+    expect(job).toMatchObject({ preset_id: "gdelt.doc_search", purpose: "research", run_mode: "test", variables: { query: "flood", limit: 75 }, engine: "httpx", start_url: "", detail_level: "full" });
     expect(await accessibilityViolations(container)).toEqual([]);
   });
 
@@ -72,5 +72,47 @@ describe("scraping tab", () => {
     await screen.findByText(/2 scripts, 1 contact details/);
     expect(calls.find((c) => c.command === "preset.fixture_from_capture")?.payload).toEqual({ job_id: "job-9" });
     expect(await accessibilityViolations(container)).toEqual([]);
+  });
+  it("summarizes record details and opens every value of a record, grouped", async () => {
+    const { ScrapeResult } = await import("../features/scraping/Scraping.tsx");
+    const record = {
+      title: "Widget 1", link: "https://shop.test/item/SKU-1", "link.domain": "shop.test", "item.price": "$19.99", "item.price.amount": 19.99, "item.price_original": "$25.00",
+      "page.title": "Catalog", "detail.sku": "SKU-1", "detail.spec.weight": "1.5 kg", "detail.text": "x".repeat(900),
+      source_url: "https://shop.test/c", source_retrieved_at: "2026-09-24T08:00:00Z", preset_id: "generic.html_list", preset_version: "1.1.0", strategy_used: "http",
+    };
+    const result = {
+      strategy_used: "http", engine: "httpx", pages_fetched: 1, records_extracted: 1, records_rejected: 0, records_duplicate: 0, stop_reason: "completed", sample_records: [record],
+      details: { level: "full", records_enriched: 1, fields_added: 7, groups: { value: 1, item: 3, page: 1, detail: 3 }, coverage: {},
+        detail_pages: { candidates: 1, fetched: 1, reused: 0, failed: 0, skipped_scope: 0, skipped_robots: 0, stop_reason: "completed" } },
+    };
+    const { container } = render(<ScrapeResult result={result} jobId="job-2" onOpenDataset={() => {}} />);
+    expect(screen.getByText(/Full: 7 detail fields on 1 record · 1 value, 3 element, 1 page, 3 detail · 1 detail page read/)).toBeTruthy();
+    expect(screen.queryByRole("columnheader", { name: "item.price" })).toBeNull(); // details stay out of the compact table
+    fireEvent.click(screen.getByRole("button", { name: "Inspect record 1" }));
+    const inspector = screen.getByRole("region", { name: "Record 1 of 1" });
+    for (const group of ["Fields", "Value details", "From the record's element", "From the detail page", "From the page", "Provenance"]) {
+      expect(inspector.textContent).toContain(group);
+    }
+    expect(screen.getByTitle("detail.spec.weight").textContent).toBe("spec.weight");
+    fireEvent.click(screen.getByRole("button", { name: "Show all 900 characters" }));
+    expect(screen.getByRole("button", { name: "Show less" })).toBeTruthy();
+    expect(await accessibilityViolations(container)).toEqual([]);
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    expect(screen.queryByRole("region", { name: "Record 1 of 1" })).toBeNull();
+  });
+
+  it("sends the chosen record detail level with the job", async () => {
+    const { Scraping } = await import("../features/scraping/Scraping.tsx");
+    render(<Scraping navigate={() => {}} />);
+    await screen.findByText(/Structured data \(schema.org\) —/);
+    const level = screen.getByLabelText("Record detail") as HTMLSelectElement;
+    expect(level.value).toBe("full");
+    fireEvent.change(level, { target: { value: "basic" } });
+    expect(screen.getByText(/Adds value details/)).toBeTruthy();
+    fireEvent.change(screen.getByLabelText("Start URL"), { target: { value: "https://shop.test/p" } });
+    fireEvent.click(screen.getByLabelText(/I am authorized/));
+    fireEvent.click(screen.getByRole("button", { name: "Test 10 records" }));
+    await waitFor(() => expect(calls.some((c) => c.command === "scrape.create_job")).toBe(true));
+    expect(calls.find((c) => c.command === "scrape.create_job")!.payload).toMatchObject({ preset_id: "generic.structured_data", detail_level: "basic" });
   });
 });

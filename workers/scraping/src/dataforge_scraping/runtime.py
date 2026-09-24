@@ -23,6 +23,7 @@ from urllib.parse import quote, urljoin, urlparse
 import httpx
 from bs4 import BeautifulSoup
 
+from . import details
 from .errors import PolicyViolation
 from .extraction import (
     ScrapeResult, _detail_urls, _minimum_coverage, _next_api_url, _next_html_url, _unique_fields, _validate_record, _with_query,
@@ -214,6 +215,7 @@ def collect(
     unique_by = _unique_fields(preset)
 
     state = {"cached": 0, "discovered": 0}
+    follow_stats: dict | None = None
     records: list[dict] = []
     files: list[dict] = []
     warnings: list[str] = []
@@ -482,6 +484,13 @@ def collect(
             pages_fetched = counter["pages"]
         else:
             raise ValueError(f"Unknown discovery mode {mode!r}")
+        # Details level "full": follow each record's own detail page through the same policy-checked `get`.
+        # Records collected from detail pages (detail_links pagination) already are detail pages.
+        if details.at_least(preset, "full") and records and stop_reason != "cancelled" and pagination.get("type") != "detail_links":
+            follow_stats = details.follow_detail_pages(records, preset, lambda target: get(target), limit=record_limit, should_stop=should_stop,
+                                                       on_page=on_page, warnings=warnings)
+            if follow_stats["stop_reason"] == "cancelled":
+                stop_reason = "cancelled"
     finally:
         if owns_client:
             client.close()
@@ -498,6 +507,7 @@ def collect(
         tuple(records[:record_limit]), url, datetime.now(timezone.utc).isoformat(), strategy, pages_fetched,
         rejected, duplicates, tuple(dict.fromkeys(warnings)), stop_reason, strategy_rationale(preset),
         engine="httpx", signals=tuple(signals.summary()), cached_responses=state["cached"], discovered_urls=state["discovered"], files=tuple(files),
+        details=follow_stats,
     )
 
 

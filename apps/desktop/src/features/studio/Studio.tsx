@@ -5,6 +5,8 @@ import { getZoom, studioHost, type Bounds } from "../../lib/desktop.ts";
 import { useJob, useService } from "../../lib/hooks.ts";
 import { isActive } from "../../lib/format.ts";
 import { ErrorNote, JobProgress } from "../../components/ui.tsx";
+import { DetailLevelField } from "../../components/RecordInspector.tsx";
+import type { DetailLevel } from "../../lib/details.ts";
 import { ScrapeResult } from "../scraping/Scraping.tsx";
 import { PURPOSES } from "../scraping/sources.ts";
 
@@ -12,7 +14,8 @@ type Selector = { css?: string; xpath?: string; attribute?: string };
 type Field = { key: string; type: "string" | "url" | "decimal" | "integer"; required: boolean; selectors: Selector[]; transforms: string[] };
 type Preset = Record<string, any> & { id: string; version: string; display_name: string; strategy: { preferred: string; allowed: string[] }; request_limits: Record<string, number> };
 type Pick = { fallback_xpaths?: string[]; mode: string; tag: string; text: string; attributes: Record<string, string>; suggested_attribute: string | null; selector: string; relative_selector?: string | null; inside_record_root?: boolean; repeated?: { selector: string; count: number } | null };
-type Extracted = { url: string; candidates: number; records: Record<string, string>[]; next_url: string | null; error: string | null };
+type Extracted = { url: string; candidates: number; records: Record<string, string>[]; next_url: string | null; head_html?: string | null; error: string | null };
+type StagedPage = { url: string; records: Record<string, string>[]; head_html?: string | null; retrieved_at: string };
 type PageInfo = { url: string; title: string; ready_state: string; challenge_detected: boolean; password_fields: number; inaccessible_frames: number };
 
 const TRANSFORM_DEFAULTS: Record<Field["type"], string[]> = {
@@ -62,6 +65,8 @@ export function Studio({ navigate }: { navigate: Navigate }) {
   const [acknowledged, setAcknowledged] = useState(false);
   const settings = useService<{ default_purpose: string }>("settings.get");
   const [purpose, setPurpose] = useState("");
+  // Studio presets render pages rather than fetch them, so detail pages are read only when a preset also allows HTTP.
+  const [detailLevel, setDetailLevel] = useState<DetailLevel>("standard");
   useEffect(() => {
     if (!purpose && settings.data) setPurpose(settings.data.default_purpose);
   }, [settings.data, purpose]);
@@ -138,7 +143,7 @@ export function Studio({ navigate }: { navigate: Navigate }) {
       const snapshot = await studioHost.call<{ url: string; html: string }>("html");
       const { source: _s, errors: _e, health_status: _h, declared_status: _d, package: _p, ...clean } = structuredPreset;
       const result = await call<{ job_id: string }>("scrape.stage_rendered", {
-        preset: clean, pages: [{ url: snapshot.url, html: snapshot.html, retrieved_at: new Date().toISOString() }], run_mode: "test", policy_acknowledgement: acknowledged, purpose,
+        preset: clean, pages: [{ url: snapshot.url, html: snapshot.html, retrieved_at: new Date().toISOString() }], run_mode: "test", policy_acknowledgement: acknowledged, purpose, detail_level: detailLevel,
       });
       setJobId(result.job_id);
     } catch (err) {
@@ -301,18 +306,23 @@ export function Studio({ navigate }: { navigate: Navigate }) {
     }
   };
 
-  const extractCurrent = async (limit: number): Promise<{ page: Extracted; info: PageInfo }> => {
+  /** `details` asks the WebView for sanitized element and page-head copies so staged records get item and page details. */
+  const extractCurrent = async (limit: number, details = true): Promise<{ page: Extracted; info: PageInfo }> => {
     const info = await studioHost.call<PageInfo>("pageInfo");
     setPageInfo(info);
     if (info.challenge_detected) throw new Error("The page shows an access challenge (CAPTCHA or bot check). Collection stopped; DataForge never bypasses these.");
     if (info.password_fields > 0) throw new Error("The page asks for a login. Collection stopped; DataForge does not collect behind logins.");
-    const page = await studioHost.call<Extracted>("extract", [{ record_root: recordRoot, fields, next_css: pageMode === "next_link" ? nextCss || null : null, limit }]);
+    const page = await studioHost.call<Extracted>("extract", [
+      { record_root: recordRoot, fields, next_css: pageMode === "next_link" ? nextCss || null : null, limit, element_html: details, page_metadata: details },
+    ]);
     if (page.error) throw new Error(page.error);
     return { page, info };
   };
 
-  const stage = async (runMode: "test" | "full", pages: { url: string; records: Record<string, string>[]; retrieved_at: string }[]) => {
-    const result = await call<{ job_id: string }>("scrape.stage_rendered", { preset: draftPreset(), pages, run_mode: runMode, policy_acknowledgement: acknowledged, purpose, dataset_name: `${name} (Scrape Studio)` });
+  const stage = async (runMode: "test" | "full", pages: StagedPage[]) => {
+    const result = await call<{ job_id: string }>("scrape.stage_rendered", {
+      preset: draftPreset(), pages, run_mode: runMode, policy_acknowledgement: acknowledged, purpose, detail_level: detailLevel, dataset_name: `${name} (Scrape Studio)`,
+    });
     setJobId(result.job_id);
   };
 
@@ -345,7 +355,7 @@ export function Studio({ navigate }: { navigate: Navigate }) {
     stopRequested.current = false;
     setRunning(runMode);
     setError(null);
-    const pages: { url: string; records: Record<string, string>[]; retrieved_at: string }[] = [];
+    const pages: StagedPage[] = [];
     const delay = Math.max(Number(base.request_limits.min_delay_ms) || 0, 1000);
     const recordLimit = runMode === "test" ? 10 : base.request_limits.max_records_default;
     const scrollLimit = runMode === "test" ? 0 : maxScrolls;
@@ -356,7 +366,7 @@ export function Studio({ navigate }: { navigate: Navigate }) {
         let last = -1;
         let idle = 0;
         for (let round = 0; round < scrollLimit && !stopRequested.current; round++) {
-          const { page } = await extractCurrent(recordLimit);
+          const { page } = await extractCurrent(recordLimit, false);
           setNotice(`Scroll ${round}: ${page.records.length} items`);
           if (page.records.length >= recordLimit) break;
           idle = page.records.length === last ? idle + 1 : 0;
@@ -366,7 +376,7 @@ export function Studio({ navigate }: { navigate: Navigate }) {
           await sleep(delay);
         }
         const { page } = await extractCurrent(recordLimit);
-        pages.push({ url: page.url, records: page.records, retrieved_at: new Date().toISOString() });
+        pages.push({ url: page.url, records: page.records, head_html: page.head_html, retrieved_at: new Date().toISOString() });
       } else if (pageMode === "detail_links") {
         const found = await studioHost.call<{ urls: string[]; error: string | null }>("links", [detailCss]);
         if (found.error) throw new Error(found.error);
@@ -381,7 +391,7 @@ export function Studio({ navigate }: { navigate: Navigate }) {
           await waitForPage(current);
           current = url;
           const { page } = await extractCurrent(1);
-          pages.push({ url: page.url, records: page.records.slice(0, 1), retrieved_at: new Date().toISOString() });
+          pages.push({ url: page.url, records: page.records.slice(0, 1), head_html: page.head_html, retrieved_at: new Date().toISOString() });
           setNotice(`Detail page ${pages.length} of ${Math.min(found.urls.length, recordLimit)}`);
         }
       } else {
@@ -391,7 +401,7 @@ export function Studio({ navigate }: { navigate: Navigate }) {
           const { page } = await extractCurrent(recordLimit);
           if (seen.has(page.url)) break;
           seen.add(page.url);
-          pages.push({ url: page.url, records: page.records, retrieved_at: new Date().toISOString() });
+          pages.push({ url: page.url, records: page.records, head_html: page.head_html, retrieved_at: new Date().toISOString() });
           setNotice(`Page ${pages.length}: ${page.records.length} records`);
           if (pageMode !== "next_link" || page.records.length === 0 || !page.next_url || index + 1 >= pageLimit) break;
           await checkUrl(page.next_url, scopeUrl, true);
@@ -614,6 +624,7 @@ export function Studio({ navigate }: { navigate: Navigate }) {
             ))}
           </select>
         </label>
+        <DetailLevelField id="studio-detail-level" value={detailLevel} onChange={setDetailLevel} />
         <div className="row-actions">
           <button type="button" className="btn btn-primary" disabled={!canExtract} onClick={() => void collect("test")}>
             Test 10 records

@@ -77,6 +77,17 @@ Studio bridge actions also include `scrollStep` and `links(css)` for infinite sc
 | `settings.get` / `settings.update` | — / `changes` (`contact_identity`, `default_purpose`, `http_cache`, `warc_capture`, `ai_suggestions`) | project settings |
 | `cache.purge` | — | `{bytes_removed}` |
 
+### Record details (schema_version 1, additive)
+
+| Command | Payload | Result |
+| --- | --- | --- |
+| `scrape.create_job` | adds `detail_level?` (`none`\|`basic`\|`standard`\|`full`; default: the preset's `details.level`, else `standard`) | result adds `details` ([`record-details.schema.json`](../packages/contracts/record-details.schema.json)). Records carry `<field>.<detail>`, `item.*`, `page.*`, and at `full` `detail.*` keys. |
+| `scrape.stage_rendered` | adds `detail_level?`; `pages[].head_html?` (sanitized page head); `pages[].records[].__element?` (sanitized element copy, dropped after extraction) | result adds `details` |
+| `archive.create_job` | adds `detail_level?` (`full` reads as `standard`: archives never fetch live pages) | result adds `details` |
+| `bulk.create_job` | adds `detail_level?` (`none` or `basic`; default `basic`, phone region from the page's country TLD) | result adds `details` |
+
+The stage `detail_page_extracted` (`{detail_page, url, fields}`) reports each detail page read. The Studio bridge's `extract` accepts `element_html` and `page_metadata` flags; with them it returns `records[].__element` and `head_html`. Presets may declare `details: {level, follow: {field, max_pages, max_duration_seconds}}`.
+
 Studio bridge picks add `fallback_xpaths` (label-anchored when a repeated caption exists, then structural); `extract` evaluates `{xpath, attribute?}` selectors. Presets may set `extraction.output: "text"` with `ocr: true` for document presets. Job kinds add `archive_query` and `bulk_import`. Contracts: `host-signals`, `scrape-result`, `record-diff`, `watch`, and `collection-settings` schemas in `packages/contracts/`. Stage names add `finding_captures`. Scrapy engine page events carry `engine: "scrapy"`.
 
 `scrape.create_job` and `job.retry` accept `credential_ref`. Only the desktop host may add `credential_secret`; the host rejects UI payloads that contain it, and the service keeps it in memory only.

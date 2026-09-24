@@ -199,6 +199,26 @@ def validate_preset(preset: dict) -> list[str]:
                         errors.append("a host variable in request.url_template must be an enum of url_scope.allowed_hosts")
                 elif urlparse(_example_url(template)).hostname not in allowed_hosts:
                     errors.append("request.url_template host must be in url_scope.allowed_hosts")
+    record_details = preset.get("details")
+    if record_details is not None:
+        from .details import LEVELS
+
+        if not isinstance(record_details, dict):
+            errors.append("details must be an object")
+        else:
+            if record_details.get("level", "standard") not in LEVELS:
+                errors.append(f"details.level must be one of {LEVELS}")
+            follow = record_details.get("follow")
+            if follow is not None and not isinstance(follow, dict):
+                errors.append("details.follow must be an object")
+            elif isinstance(follow, dict):
+                if "field" in follow and (not isinstance(follow["field"], str) or not follow["field"]):
+                    errors.append("details.follow.field must name the record field holding the detail-page URL")
+                for key, maximum in (("max_pages", 10_000), ("max_duration_seconds", 7_200)):
+                    if key in follow and (not isinstance(follow[key], int) or isinstance(follow[key], bool) or not 0 <= follow[key] <= maximum):
+                        errors.append(f"details.follow.{key} must be an integer between 0 and {maximum}")
+            if record_details.get("level") == "full" and "http" not in allowed and "api" not in allowed:
+                errors.append("details.level full follows detail pages over HTTP, which this preset's strategies do not allow")
     region = (preset.get("normalization") or {}).get("default_region")
     if region is not None and not re.fullmatch(r"[A-Z]{2}", str(region)):
         errors.append("normalization.default_region must be a two-letter region code")

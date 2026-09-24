@@ -13,6 +13,7 @@ from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlunparse
 
 from bs4 import BeautifulSoup, Tag
 
+from . import details
 from .errors import PolicyViolation
 from .fetch import APP_USER_AGENT as USER_AGENT  # noqa: F401 - public alias
 from .fetch import LOCAL_HOSTS as _LOCAL_HOSTS
@@ -38,6 +39,7 @@ class ScrapeResult:
     cached_responses: int = 0
     discovered_urls: int = 0
     files: tuple[dict, ...] = ()
+    details: dict | None = None  # detail-page follow statistics (details level "full")
 
 
 def extract_html(url: str, preset: dict[str, object], max_records: int | None = None, **kwargs) -> ScrapeResult:
@@ -102,7 +104,18 @@ def extraction_mode(preset: dict[str, object]) -> str:
 
 def extract_page(body: str, content: bytes, content_type: str, url: str, preset: dict[str, object], warnings: list[str]) -> list[dict[str, object]]:
     """Candidate records from one fetched page in the preset's extraction mode. Shared by both engines,
-    health checks, and archive replays, so every path produces identical records."""
+    health checks, and archive replays, so every path produces identical records. At the `standard` details
+    level and above, each record from an HTML page also carries the page's metadata (`page.*`)."""
+    records = _extract_page_records(body, content, content_type, url, preset, warnings)
+    if records and details.at_least(preset, "standard") and extraction_mode(preset) in ("selectors", "structured_data", "article") and body.lstrip()[:1] == "<":
+        metadata = details.page_details(body, url)
+        for record in records:
+            for key, value in metadata.items():
+                record.setdefault(key, value)
+    return records
+
+
+def _extract_page_records(body: str, content: bytes, content_type: str, url: str, preset: dict[str, object], warnings: list[str]) -> list[dict[str, object]]:
     extraction = preset.get("extraction", {}) if isinstance(preset.get("extraction"), dict) else {}
     fields = extraction.get("fields", []) or []
     mode = extraction_mode(preset)
@@ -257,7 +270,7 @@ def _extract_records(soup: BeautifulSoup, source_url: str, root_css: str, fields
                 if isinstance(selector, dict) and (value := _select_value(root, selector, source_url)) is not None:
                     record[field["key"]] = apply_field(value, field, source_url, preset)
                     break
-        records.append(_with_provenance(record, source_url, preset))
+        records.append(_with_provenance(_with_element(record, str(root), source_url, preset), source_url, preset))
     return records
 
 
@@ -275,7 +288,7 @@ def _extract_records_parsel(text: str, source_url: str, root_css: str | None, ro
                 if value is not None:
                     record[field["key"]] = apply_field(value, field, source_url, preset)
                     break
-        records.append(_with_provenance(record, source_url, preset))
+        records.append(_with_provenance(_with_element(record, root.get(), source_url, preset), source_url, preset))
     return records
 
 
@@ -326,7 +339,7 @@ def _extract_records_selectolax(text: str, source_url: str, root_css: str, field
                 if value:
                     record[field["key"]] = apply_field(value, field, source_url, preset)
                     break
-        records.append(_with_provenance(record, source_url, preset))
+        records.append(_with_provenance(_with_element(record, root.html or "", source_url, preset), source_url, preset))
     return records
 
 
@@ -379,7 +392,17 @@ def _flatten(item: dict, prefix: str = "", depth: int = 0) -> dict[str, object]:
     return flat
 
 
+def _with_element(record: dict[str, object], element_html: str, source_url: str, preset: dict[str, object]) -> dict[str, object]:
+    """At the `standard` details level and above, add everything inside the record's element (`item.*`)."""
+    if details.at_least(preset, "standard"):
+        for key, value in details.element_details(element_html, source_url, details.region_of(preset)).items():
+            record.setdefault(key, value)
+    return record
+
+
 def _with_provenance(record: dict[str, object], source_url: str, preset: dict[str, object]) -> dict[str, object]:
+    if details.at_least(preset, "basic"):
+        record.update(details.value_details(record, source_url, details.region_of(preset)))
     record["source_url"] = source_url
     record["source_retrieved_at"] = datetime.now(timezone.utc).isoformat()
     record["preset_id"] = preset.get("id")

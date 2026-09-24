@@ -32,6 +32,44 @@ ARTICLE = ("<html><head><title>Rivers of Texas</title><meta name='author' conten
            "<footer>Copyright notice and unrelated links</footer></body></html>")
 
 
+CATALOG_HEAD = (
+    "<head><title>Catalog</title><meta name='description' content='All widgets in stock'><link rel='canonical' href='/catalog'>"
+    "<meta property='og:site_name' content='Widget Shop'><meta property='og:type' content='website'>"
+    "<meta name='twitter:label1' content='Delivery'><meta name='twitter:data1' content='2 days'>"
+    "<meta name='csrf-token' content='secret-value'><link rel='alternate' type='application/rss+xml' href='/feed.xml'>"
+    '<script type="application/ld+json">{"@type": "BreadcrumbList", "itemListElement": ['
+    '{"@type": "ListItem", "position": 2, "name": "Widgets"}, {"@type": "ListItem", "position": 1, "name": "Home"}]}</script></head>'
+)
+
+
+def catalog_card(href: str, title: str, extra: str = "") -> str:
+    return f"<article class='card' data-product-id='{title[-1]}'><h2><a href='{href}' title='{title} (full name)'>{title}</a></h2>{extra}</article>"
+
+
+def catalog_page(links: list[tuple[str, str]]) -> str:
+    first = ("<img data-src='/img/1.jpg' alt='Widget photo'><p class='price'><del>$25.00</del> <span>$19.99</span></p>"
+             "<p class='star-rating Four'></p><p class='availability'>In stock</p><time datetime='2026-09-01'>Sept 1</time>"
+             "<a href='tel:+1 512 555 0142'>Call</a>")
+    cards = "".join(catalog_card(href, title, first if index == 0 else "") for index, (href, title) in enumerate(links))
+    return f"<html lang='en'>{CATALOG_HEAD}<body><h1>All widgets</h1><main>{cards}</main></body></html>"
+
+
+def item_page(product: dict) -> str:
+    jsonld = {"@context": "https://schema.org", "@type": "Product", "name": product["name"], "sku": product["sku"], "gtin13": f"0000000000{int(product['sku'].split('-')[1]):03d}",
+              "brand": {"@type": "Brand", "name": "Acme"}, "description": "<p>A <b>sturdy</b> widget.</p>",
+              "offers": {"@type": "Offer", "price": product["price"], "priceCurrency": "USD", "availability": "https://schema.org/InStock"},
+              "aggregateRating": {"@type": "AggregateRating", "ratingValue": 4.4, "reviewCount": 89}}
+    body = ("<p>" + f"The {product['name']} is a sturdy steel widget built in Texas for workshops and kitchens alike. " * 6 + "</p>")
+    return (f"<html lang='en'><head><title>{product['name']} | Widget Shop</title><meta name='description' content='Buy {product['name']}'>"
+            f"<meta property='og:image' content='/img/big-{product['sku']}.jpg'><script type='application/ld+json'>{json.dumps(jsonld)}</script></head>"
+            f"<body><main><h1>{product['name']}</h1>{body}<img src='/img/big-{product['sku']}.jpg' alt='{product['name']}'>"
+            "<table class='specs'><tr><th>Weight</th><td>1.5 kg</td></tr><tr><th>Color</th><td>Blue</td></tr>"
+            "<tr><th>Price (incl. tax)</th><td>$21.99</td></tr><tr><th>Availability</th><td>In stock (7 available)</td></tr></table>"
+            "<dl><dt>Warranty</dt><dd>2 years</dd></dl><ul><li>Material: steel</li><li>Origin: Texas</li></ul></main>"
+            "<footer><a href='mailto:Sales@Shop.test'>Email us</a> <a href='tel:+15125550100'>Call</a> "
+            "<a href='https://twitter.com/widgetshop'>Twitter</a> <a href='https://www.linkedin.com/company/widgetshop'>LinkedIn</a></footer></body></html>")
+
+
 class SiteState:
     def __init__(self) -> None:
         self.requests: list[str] = []
@@ -96,6 +134,15 @@ def make_handler(state: SiteState):
                     return self._send(404, "missing")
                 headers = {"Content-Usage": state.content_usage_header} if state.content_usage_header else {}
                 return self._send(200, product_page(product, "conflict" if sku == "SKU-3" and query.get("conflict") else "jsonld"), headers=headers)
+            if path == "/catalog":
+                links = [("/item/SKU-1", "Widget 1"), ("/item/SKU-2", "Widget 2"), ("/item/SKU-1", "Widget 1 again"), ("/private/secret", "Secret 4"),
+                         ("https://elsewhere.example/item", "Elsewhere 5"), ("/item/NOPE", "Missing 6")]
+                return self._send(200, catalog_page(links))
+            if path == "/catalog-challenge":
+                return self._send(200, catalog_page([("/item/SKU-1", "Widget 1"), ("/challenge", "Blocked 2"), ("/item/SKU-3", "Widget 3")]))
+            if path.startswith("/item/"):
+                product = next((p for p in PRODUCTS if p["sku"] == path.rsplit("/", 1)[1]), None)
+                return self._send(200, item_page(product)) if product else self._send(404, "missing")
             if path == "/article":
                 etag = '"article-v1"'
                 if self.headers.get("If-None-Match") == etag:

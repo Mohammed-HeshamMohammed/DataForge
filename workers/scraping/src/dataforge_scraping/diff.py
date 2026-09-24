@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-_PROVENANCE = {"source_retrieved_at", "source_url", "preset_version", "strategy_used", "extraction_mode", "structured_syntax"}
+_PROVENANCE = {"source_retrieved_at", "source_url", "preset_version", "strategy_used", "extraction_mode", "structured_syntax", "detail.retrieved_at"}
+# Page-level metadata is shared by every record on a page (and often carries timestamps), so it is not a record change.
+_PAGE_LEVEL = ("page.", "detail.page.")
 
 
 def record_key(record: dict, unique_by: list[str]) -> tuple | None:
@@ -20,7 +22,7 @@ def diff_records(previous: list[dict], current: list[dict], unique_by: list[str]
     removed = [before[k] for k in before.keys() - after.keys()]
     changed = []
     for key in before.keys() & after.keys():
-        fields = sorted(f for f in set(before[key]) | set(after[key]) if f not in ignore and before[key].get(f) != after[key].get(f))
+        fields = sorted(f for f in set(before[key]) | set(after[key]) if f not in ignore and not f.startswith(_PAGE_LEVEL) and before[key].get(f) != after[key].get(f))
         if fields:
             changed.append({"key": dict(zip(unique_by, key)), "changes": {f: {"before": before[key].get(f), "after": after[key].get(f)} for f in fields}})
     unkeyed = sum(1 for r in previous + current if record_key(r, unique_by) is None)

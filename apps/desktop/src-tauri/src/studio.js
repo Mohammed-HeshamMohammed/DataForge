@@ -13,6 +13,41 @@
   let overlay = null;
   let hovered = null;
 
+  // Record details: a sanitized copy of each record's element and of the page head. Scripts, styles, frames,
+  // form controls, and editable regions are removed, and only descriptive attributes are kept (never values
+  // that look like tokens or credentials), so the copy carries what the page shows, not what it hides.
+  const DETAIL_ATTRIBUTES = new Set(["href", "src", "srcset", "alt", "title", "datetime", "aria-label", "class", "itemprop", "itemtype", "itemscope", "content", "rel", "role", "lang", "property", "name", "type"]);
+  const SECRET_META = /(csrf|xsrf|token|nonce|session|secret|auth|key|cookie|verification|refresh)/i;
+  const DETAIL_DROP = "script:not([type='application/ld+json']), style, noscript, template, iframe, object, embed, canvas, input, textarea, select, option, form [type=hidden], [contenteditable], [type=password]";
+
+  function sanitizedCopy(el, maxLength) {
+    const copy = el.cloneNode(true);
+    copy.querySelectorAll(DETAIL_DROP).forEach((node) => node.remove());
+    copy.querySelectorAll("meta").forEach((meta) => {
+      const label = meta.getAttribute("name") || meta.getAttribute("property") || meta.getAttribute("itemprop") || meta.getAttribute("http-equiv") || "";
+      if (SECRET_META.test(label)) meta.remove();
+    });
+    for (const node of [copy, ...copy.querySelectorAll("*")]) {
+      for (const attribute of [...node.attributes]) {
+        const name = attribute.name.toLowerCase();
+        const kept = DETAIL_ATTRIBUTES.has(name) || (name.startsWith("data-") && name.length <= 40);
+        if (!kept || attribute.value.length > 500 || SECRET_VALUE.test(attribute.value) || /^\s*javascript:/i.test(attribute.value)) node.removeAttribute(attribute.name);
+      }
+    }
+    return copy.outerHTML.slice(0, maxLength);
+  }
+
+  function headSnapshot() {
+    const head = document.head ? sanitizedCopy(document.head, 400000) : "<head></head>";
+    const parts = [head, "<body>"];
+    const h1 = document.querySelector("h1");
+    if (h1 && !isSensitive(h1)) parts.push(sanitizedCopy(h1, 2000));
+    const trail = document.querySelector("[aria-label*='breadcrumb' i], .breadcrumb, .breadcrumbs");
+    if (trail) parts.push(sanitizedCopy(trail, 10000));
+    const lang = (document.documentElement.getAttribute("lang") || "").replace(/[^A-Za-z0-9-]/g, "").slice(0, 20);
+    return `<html lang="${lang}">${parts.join("")}</body></html>`;
+  }
+
   const isSensitive = (el) => !!el.closest("input, textarea, select, option, [contenteditable=''], [contenteditable='true'], [type=password]");
 
   const stableClasses = (el) =>
@@ -289,6 +324,7 @@
             }
           }
         }
+        if (config.element_html) record.__element = sanitizedCopy(root, 8000);
         return record;
       });
       let nextUrl = null;
@@ -301,7 +337,7 @@
           nextUrl = null;
         }
       }
-      return { url: location.href, candidates: roots.length, records, next_url: nextUrl, error: null };
+      return { url: location.href, candidates: roots.length, records, next_url: nextUrl, head_html: config.page_metadata ? headSnapshot() : null, error: null };
     },
   });
 })();

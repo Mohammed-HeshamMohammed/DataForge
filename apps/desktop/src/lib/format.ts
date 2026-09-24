@@ -15,6 +15,7 @@ const STAGE_LABELS: Record<string, string> = {
   creating_review_queue: "Creating review queue",
   fetching: "Fetching pages",
   page_extracted: "Extracting records",
+  detail_page_extracted: "Reading detail pages",
   reading_file: "Reading file",
   working: "Working",
 };

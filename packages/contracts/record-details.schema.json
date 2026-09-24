@@ -1,0 +1,117 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dataforge.local/contracts/record-details.schema.json",
+  "title": "RecordDetailsSummary",
+  "description": "What the record-details pass added to a result. Keys: value details are <field>.<detail>; element details item.*; page metadata page.*; detail-page data detail.*.",
+  "type": "object",
+  "required": [
+    "level",
+    "records_enriched",
+    "fields_added",
+    "groups",
+    "coverage"
+  ],
+  "properties": {
+    "level": {
+      "enum": [
+        "none",
+        "basic",
+        "standard",
+        "full"
+      ]
+    },
+    "records_enriched": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "fields_added": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "groups": {
+      "type": "object",
+      "required": [
+        "value",
+        "item",
+        "page",
+        "detail"
+      ],
+      "properties": {
+        "value": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "item": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "page": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "detail": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "coverage": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "number",
+        "minimum": 0,
+        "maximum": 1
+      }
+    },
+    "detail_pages": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "object",
+          "required": [
+            "candidates",
+            "fetched",
+            "reused",
+            "failed",
+            "skipped_scope",
+            "skipped_robots",
+            "stop_reason"
+          ],
+          "properties": {
+            "candidates": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "fetched": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "reused": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "failed": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "skipped_scope": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "skipped_robots": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "stop_reason": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      ]
+    }
+  }
+}

@@ -37,6 +37,7 @@ Child WebView      Polars + RapidFuzz
 | --- | --- |
 | [Platform architecture plan](docs/architecture.md) | Master architecture decision: layers, services, workers, data flow, versioning, migrations, and secure GitHub release updates. |
 | [Scraping engine upgrade](docs/Scrapper/Scrapper.md) | Job-based scraping engine, embedded WebView design, Scrape Studio, policy limits, implementation phases, and preset catalog scope. |
+| [Record details](docs/Scrapper/Record%20Details.md) | Detailed data on every scraped record: value details, element contents, page metadata, and each record's detail page, with levels, policy, and UI. |
 | [Website preset specification](docs/Scrapper/Website Preset Specification.md) | Versioned page-type preset contract: URL scope, strategies, extraction fields, pagination, validation, health, and custom presets. |
 | [Matching and deduplication backend](docs/Matching and Deduplication/Matching and Deduplication.md) | Import, role mapping, normalization, candidate generation, scoring, safe clustering, review, canonicalization, APIs, and operations. |
 | [Matching & Deduplication UI/UX](docs/Matching%20and%20Deduplication/Matching%20%26%20Deduplication%20Tab.md) | Dedicated tab’s user journey, layouts, components, review experience, accessibility, and backend integration rules. |
