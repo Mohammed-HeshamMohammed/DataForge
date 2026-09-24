@@ -576,6 +576,28 @@ def test_detail(payload: dict, store: ProjectStore, validate) -> dict:
             "missing": [key for key in own if f"detail.{key}" not in found]}
 
 
+def detect_fields(payload: dict) -> dict:
+    """Every field DataForge reads from each card of a grid, before a run: Scrape Studio sends sanitized card copies
+    (`elements`), or a page's `html` with the `record_root` selector."""
+    url = str(payload.get("url") or "")
+    elements = payload.get("elements")
+    if not isinstance(elements, list):
+        html, root = str(payload.get("html") or ""), str(payload.get("record_root") or "")
+        if not html or not root:
+            raise ValueError("Send card copies (elements) or page html with a record_root selector")
+        from bs4 import BeautifulSoup
+
+        try:
+            elements = [str(node) for node in BeautifulSoup(html[:5_000_000], "html.parser").select(root)]
+        except Exception as error:  # noqa: BLE001 - an invalid selector is the user's to fix
+            raise ValueError(f"Record root selector is invalid: {error}") from error
+    elements = [str(e)[:200_000] for e in elements[:60]]
+    if not elements:
+        return {"cards": 0, "fields": []}
+    region = str(payload.get("region") or "US")
+    return {"cards": len(elements), "fields": details.describe_grid(elements, url, region)}
+
+
 def detect_structured(html: str, url: str) -> dict:
     return structured.detect(html, url)
 

@@ -20,6 +20,11 @@ type ItemPage = { url: string; fields: Record<string, string>; html?: string; re
 type StagedRecord = Record<string, string | ItemPage>;
 type StagedPage = { url: string; records: StagedRecord[]; head_html?: string | null; retrieved_at: string };
 type PageInfo = { url: string; title: string; ready_state: string; challenge_detected: boolean; password_fields: number; inaccessible_frames: number };
+/** A value DataForge reads from every card automatically (no selector needed), with how many cards carry it. */
+type DetectedField = { key: string; coverage: number; examples: string[] };
+type ItemMark = "pending" | "working" | "done" | "failed" | "skipped";
+/** One item page the service read in the background (a `detail_page_extracted` job event). */
+type ItemPageEvent = { url: string; status: "done" | "reused" | "failed" | "skipped" | "stopped"; fields?: number; fetch_ms?: number; parse_ms?: number; reason?: string };
 
 const TRANSFORM_DEFAULTS: Record<Field["type"], string[]> = {
   string: ["trim", "collapse_whitespace"],
@@ -41,6 +46,38 @@ function slug(value: string): string {
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const withoutHash = (url: string) => url.split("#")[0];
+
+/** Background item pages are never requested closer together than this; a robots.txt Crawl-delay still wins. */
+export const MIN_ITEM_DELAY_MS = 250;
+/** Sanitized card copies are cut at this length; large retail cards need room for prices, ratings, and badges. */
+const CARD_COPY_MAX = 40000;
+
+/** Card outlines and the status line for item pages read in the background, from the job's events. */
+export function itemPageMarks(links: string[], events: ItemPageEvent[], active: boolean): { marks: Record<string, ItemMark>; status: string } {
+  const results = new Map<string, ItemPageEvent>();
+  for (const event of events) results.set(withoutHash(event.url), event);
+  const marks: Record<string, ItemMark> = {};
+  let working = false;
+  for (const link of links) {
+    const result = results.get(withoutHash(link));
+    if (result) marks[link] = result.status === "done" || result.status === "reused" ? "done" : result.status === "failed" ? "failed" : "skipped";
+    else if (active) {
+      marks[link] = working ? "pending" : "working";
+      working = true;
+    }
+  }
+  const all = [...results.values()];
+  const read = all.filter((r) => r.status === "done" || r.status === "reused").length;
+  const failed = all.filter((r) => r.status === "failed").length;
+  const skipped = all.length - read - failed;
+  const last = all.filter((r) => r.status === "done").pop();
+  const timing = last ? ` · last page: ${last.fields ?? 0} fields, ${last.fetch_ms ?? 0} ms download + ${last.parse_ms ?? 0} ms reading` : "";
+  const status = active
+    ? `Reading item pages in the background: ${all.length} of ${links.length}${timing}`
+    : `Item pages read: ${read} of ${links.length}${failed ? ` · ${failed} failed` : ""}${skipped ? ` · ${skipped} skipped` : ""}${timing}`;
+  return { marks, status };
+}
 
 export function Studio({ navigate }: { navigate: Navigate }) {
   const presets = useService<Preset[]>("preset.list");
@@ -75,6 +112,12 @@ export function Studio({ navigate }: { navigate: Navigate }) {
   const [linkField, setLinkField] = useState("");
   const [listingUrl, setListingUrl] = useState<string | null>(null);
   const pickingItemField = useRef(false);
+  // Background: the list stays on screen while the service reads each item's page over HTTP (policy-checked, cached,
+  // one delay apart) and every card lights up as its data arrives. WebView: Studio opens each page visibly instead.
+  const [itemMode, setItemMode] = useState<"background" | "webview">("background");
+  const [itemDelay, setItemDelay] = useState<number | null>(null);
+  const background = useRef<{ links: string[]; link: { css: string; attribute?: string }; root: string } | null>(null);
+  const [detected, setDetected] = useState<{ cards: number; fields: DetectedField[] } | null>(null);
   useEffect(() => {
     if (!purpose && settings.data) setPurpose(settings.data.default_purpose);
   }, [settings.data, purpose]);
@@ -162,6 +205,9 @@ export function Studio({ navigate }: { navigate: Navigate }) {
   const linkFields = fields.filter((f) => f.type === "url" || (f.selectors[0]?.attribute ?? "") === "href");
   const itemLink = linkFields.some((f) => f.key === linkField) ? linkField : linkFields[0]?.key ?? "";
   const itemPagesOn = detailLevel === "full" && pageMode !== "detail_links";
+  const baseAllowsHttp = !!base?.strategy.allowed.includes("http");
+  const inBackground = itemPagesOn && itemMode === "background" && baseAllowsHttp;
+  const itemDelayMs = Math.max(MIN_ITEM_DELAY_MS, Math.round(itemDelay ?? Number(base?.request_limits.min_delay_ms ?? 1000)));
 
   const draftPreset = useCallback((): Preset | null => {
     if (!base) return null;
@@ -174,7 +220,9 @@ export function Studio({ navigate }: { navigate: Navigate }) {
       status: "active",
       parent_preset_id: base.id,
       parent_preset_version: base.version,
-      strategy: { preferred: "webview", allowed: ["webview"] },
+      // Rendering stays in the WebView; HTTP is allowed only so the service can read item pages in the background.
+      strategy: { preferred: "webview", allowed: inBackground ? ["webview", "http"] : ["webview"] },
+      request_limits: inBackground ? { ...clean.request_limits, min_delay_ms: itemDelayMs } : clean.request_limits,
       extraction: { ...clean.extraction, record_root: { css: recordRoot }, fields },
       pagination:
         pageMode === "next_link" && nextCss
@@ -187,7 +235,7 @@ export function Studio({ navigate }: { navigate: Navigate }) {
       validation: { ...clean.validation, unique_by: fields.some((f) => f.type === "url") ? [fields.find((f) => f.type === "url")!.key] : [] },
       details: { level: detailLevel, ...(itemLink || itemFields.length ? { follow: { ...(itemLink ? { field: itemLink } : {}), fields: itemFields } } : {}) },
     };
-  }, [base, name, version, recordRoot, fields, nextCss, pageMode, detailCss, maxScrolls, detailLevel, itemLink, itemFields]);
+  }, [base, name, version, recordRoot, fields, nextCss, pageMode, detailCss, maxScrolls, detailLevel, itemLink, itemFields, inBackground, itemDelayMs]);
 
   const fail = (err: unknown) => setError(err instanceof Error ? err.message : String(err));
 
@@ -248,6 +296,7 @@ export function Studio({ navigate }: { navigate: Navigate }) {
     try {
       setError(null);
       pickingItemField.current = itemPage;
+      await clearMarks();
       await studioHost.call("setMode", [next, next === "element" && !itemPage ? recordRoot : null]);
       setMode(next);
       setNotice(
@@ -285,6 +334,7 @@ export function Studio({ navigate }: { navigate: Navigate }) {
       }
       setRecordRoot(pick.repeated.selector);
       setRootCount(pick.repeated.count);
+      void detectFields(pick.repeated.selector);
     } else if (pick.mode === "next") {
       if (pick.tag !== "a" && !pick.attributes.href) {
         setError("Pick the link element for the next page.");
@@ -340,6 +390,30 @@ export function Studio({ navigate }: { navigate: Navigate }) {
     }
   };
 
+  /** Every value DataForge reads from the cards on its own (no selector needed), previewed on up to 40 cards. */
+  const detectFields = async (root: string) => {
+    try {
+      const page = await studioHost.call<Extracted>("extract", [{ record_root: root, fields: [], limit: 40, element_html: true, element_max: CARD_COPY_MAX }]);
+      const elements = page.records.map((record) => record.__element).filter(Boolean);
+      setDetected(elements.length ? await call<{ cards: number; fields: DetectedField[] }>("scrape.detect_fields", { elements, url: page.url }) : null);
+    } catch {
+      setDetected(null);
+    }
+  };
+
+  const clearMarks = () => studioHost.call("markItems", [{ clear: true }]).catch(() => {});
+
+  // Light up each card as the service reads its item page in the background.
+  useEffect(() => {
+    const run = background.current;
+    if (!desktop || !run || !job) return;
+    const events = (job.events ?? [])
+      .filter((event) => event.event_type === "job.stage_changed" && event.payload.stage === "detail_page_extracted" && typeof event.payload.url === "string")
+      .map((event) => event.payload as unknown as ItemPageEvent);
+    const { marks, status } = itemPageMarks(run.links, events, isActive(job.state));
+    void studioHost.call("markItems", [{ record_root: run.root, link: run.link, marks, status }]).catch(() => {});
+  }, [desktop, job]);
+
   /** `details` asks the WebView for sanitized element and page-head copies so staged records get item and page details. */
   const extractCurrent = async (limit: number, details = true): Promise<{ page: Extracted; info: PageInfo }> => {
     const info = await studioHost.call<PageInfo>("pageInfo");
@@ -347,7 +421,7 @@ export function Studio({ navigate }: { navigate: Navigate }) {
     if (info.challenge_detected) throw new Error("The page shows an access challenge (CAPTCHA or bot check). Collection stopped; DataForge never bypasses these.");
     if (info.password_fields > 0) throw new Error("The page asks for a login. Collection stopped; DataForge does not collect behind logins.");
     const page = await studioHost.call<Extracted>("extract", [
-      { record_root: recordRoot, fields, next_css: pageMode === "next_link" ? nextCss || null : null, limit, element_html: details, page_metadata: details },
+      { record_root: recordRoot, fields, next_css: pageMode === "next_link" ? nextCss || null : null, limit, element_html: details, element_max: CARD_COPY_MAX, page_metadata: details },
     ]);
     if (page.error) throw new Error(page.error);
     return { page, info };
@@ -428,6 +502,18 @@ export function Studio({ navigate }: { navigate: Navigate }) {
     }
   };
 
+  /** Outline every collected card as pending; the job's events then mark each one as its item page is read. */
+  const markPending = async (pages: StagedPage[]) => {
+    const field = fields.find((f) => f.key === itemLink);
+    const selector = field?.selectors.find((s) => s.css !== undefined);
+    const links = [...new Set(pages.flatMap((page) => page.records).map((record) => record[itemLink]).filter((link): link is string => typeof link === "string" && !!link))];
+    if (!selector || !links.length) return;
+    const link = { css: selector.css ?? "", ...(selector.attribute ? { attribute: selector.attribute } : {}) };
+    background.current = { links, link, root: recordRoot };
+    const { marks, status } = itemPageMarks(links, [], true);
+    await studioHost.call("markItems", [{ record_root: recordRoot, link, marks, status }]).catch(() => {});
+  };
+
   const stage = async (runMode: "test" | "full", pages: StagedPage[]) => {
     const result = await call<{ job_id: string }>("scrape.stage_rendered", {
       preset: draftPreset(), pages, run_mode: runMode, policy_acknowledgement: acknowledged, purpose, detail_level: detailLevel, dataset_name: `${name} (Scrape Studio)`,
@@ -441,7 +527,7 @@ export function Studio({ navigate }: { navigate: Navigate }) {
       const preset = draftPreset();
       const { errors } = await call<{ errors: string[] }>("preset.validate", { preset });
       if (errors.length) throw new Error(errors.join("; "));
-      await call("preset.save_custom", { preset: { ...preset, strategy: { preferred: "webview", allowed: ["webview"] } } });
+      await call("preset.save_custom", { preset });
       setNotice(`Saved custom.local.${slug(name)}@${version}. Run a test with it before a full run.`);
       void presets.reload();
     } catch (err) {
@@ -462,6 +548,8 @@ export function Studio({ navigate }: { navigate: Navigate }) {
   const collect = async (runMode: "test" | "full") => {
     if (!base || !scopeUrl) return;
     stopRequested.current = false;
+    background.current = null;
+    await clearMarks();
     setRunning(runMode);
     setError(null);
     const pages: StagedPage[] = [];
@@ -521,7 +609,10 @@ export function Studio({ navigate }: { navigate: Navigate }) {
         }
       }
       if (runMode === "test") pages.forEach((page, index) => (page.records = page.records.slice(0, Math.max(0, recordLimit - pages.slice(0, index).reduce((n, p) => n + p.records.length, 0)))));
-      if (itemPagesOn && itemLink && pages.length) await openItemPages(pages, delay);
+      if (itemPagesOn && itemLink && pages.length) {
+        if (inBackground) await markPending(pages);
+        else await openItemPages(pages, delay);
+      }
       if (pages.length) await stage(runMode, pages);
       setNotice(stopRequested.current ? "Stopped. Pages collected so far were staged." : `Collected ${pages.length} page(s).`);
     } catch (err) {
@@ -614,6 +705,25 @@ export function Studio({ navigate }: { navigate: Navigate }) {
           <span>Record root {rootCount !== null && <span className="muted">· matches {rootCount}</span>}</span>
           <input className="code" value={recordRoot} onChange={(e) => setRecordRoot(e.target.value)} onBlur={(e) => void countRoot(e.target.value)} spellCheck={false} />
         </label>
+        {detected && detected.fields.length > 0 && (
+          <details className="field-card detected-fields">
+            <summary className="small">
+              <strong>{detected.fields.length} values read from every card automatically</strong> <span className="muted">· previewed on {detected.cards} cards, no selectors needed</span>
+            </summary>
+            <ul className="detected-list">
+              {detected.fields.map((field) => (
+                <li key={field.key}>
+                  <code>{field.key}</code>
+                  <span className="muted small">{Math.round(field.coverage * 100)}%</span>
+                  <span className="small detected-example" title={field.examples.join(" · ")}>
+                    {field.examples[0] ?? ""}
+                  </span>
+                </li>
+              ))}
+            </ul>
+            <p className="muted small">Pick an element below only to name a value yourself or to make it required.</p>
+          </details>
+        )}
 
         <h3 className="section-label">2. Fields</h3>
         <button type="button" className="btn btn-small" disabled={!scopeUrl || !recordRoot || mode !== "none"} onClick={() => void startPick("element")}>
@@ -716,9 +826,29 @@ export function Studio({ navigate }: { navigate: Navigate }) {
           <div className="field-card">
             <strong className="small">Item pages</strong>
             <p className="muted small">
-              Studio opens each item's own page, adds the values you pick there, and reads its structured data, specifications, text, contacts, and images. Every page is
-              checked against the site's robots.txt and signals, one delay apart, and collection stops at any bot check or login.
+              Each item's own page is read too: the values you pick there plus its structured data, specifications, text, contacts, and images. Every page is checked
+              against the site's robots.txt and signals, one delay apart, and reading stops at any bot check or login.
             </p>
+            <label className="field">
+              <span>Read item pages</span>
+              <select value={inBackground ? "background" : "webview"} disabled={!baseAllowsHttp} onChange={(e) => setItemMode(e.target.value as typeof itemMode)}>
+                <option value="background">In the background (list stays on screen, cards light up)</option>
+                <option value="webview">In the WebView (for item pages that need JavaScript)</option>
+              </select>
+            </label>
+            {!baseAllowsHttp && <p className="muted small">This base preset allows rendering only, so item pages open in the WebView.</p>}
+            {inBackground && (
+              <>
+                <label className="field inline small">
+                  <span>Delay between item pages (ms)</span>
+                  <input type="number" min={MIN_ITEM_DELAY_MS} step={50} value={itemDelayMs} onChange={(e) => setItemDelay(Number(e.target.value) || MIN_ITEM_DELAY_MS)} />
+                </label>
+                <p className="muted small">
+                  Reading a page takes a few milliseconds; the download and this delay set the pace. A site's robots.txt Crawl-delay still applies, and pages already read are
+                  reused from the cache. Cards turn green when read, amber when skipped, and red when the page failed.
+                </p>
+              </>
+            )}
             {linkFields.length === 0 ? (
               <p className="note small">Pick the item's link as a field (Extract: href) so Studio knows which page to open.</p>
             ) : (

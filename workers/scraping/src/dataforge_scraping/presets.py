@@ -217,6 +217,8 @@ def validate_preset(preset: dict) -> list[str]:
                 for key, maximum in (("max_pages", 10_000), ("max_duration_seconds", 7_200)):
                     if key in follow and (not isinstance(follow[key], int) or isinstance(follow[key], bool) or not 0 <= follow[key] <= maximum):
                         errors.append(f"details.follow.{key} must be an integer between 0 and {maximum}")
+                if follow.get("text", "fast") not in ("fast", "precise"):
+                    errors.append("details.follow.text must be fast (the page's main text) or precise (also trafilatura's metadata, slower)")
                 detail_fields = follow.get("fields", [])
                 if not isinstance(detail_fields, list):
                     errors.append("details.follow.fields must be a list of fields")

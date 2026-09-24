@@ -32,7 +32,10 @@ from urllib.parse import urljoin, urlparse
 from .errors import PolicyViolation
 
 LEVELS = ("none", "basic", "standard", "full")
+# Library calls (health checks, archive replays, extract_document) make no requests, so they default to standard.
 DEFAULT_LEVEL = "standard"
+# Collection jobs read every record's own page unless a job or preset chooses a lower level.
+JOB_DEFAULT_LEVEL = "full"
 GROUP_PREFIXES = {"item.": "item", "page.": "page", "detail.": "detail"}
 PROVENANCE = frozenset({
     "source_url", "source_retrieved_at", "preset_id", "preset_version", "strategy_used", "extraction_mode", "structured_syntax",
@@ -118,8 +121,8 @@ _PRICE_HINTS = {"price", "prices", "cost", "amount", "fee", "fees", "salary", "t
 _PHONE_HINTS = {"phone", "phones", "tel", "telephone", "mobile", "cell", "fax", "whatsapp"}
 _DATE_HINTS = {"date", "time", "datetime", "published", "updated", "modified", "created", "posted", "expires", "expiry", "deadline", "start", "end",
                "since", "until", "through", "released", "release", "founded", "timestamp", "pubdate"}
-_RATING_HINTS = {"rating", "ratings", "stars", "star", "score", "grade"}
-_NUMBER_HINTS = {"count", "reviews", "votes", "views", "quantity", "qty", "stock", "number", "num", "bedrooms", "bathrooms", "beds", "baths", "rooms",
+_RATING_HINTS = {"rating", "stars", "star", "score", "grade"}  # "ratings" and "reviews" are counts, not a rating
+_NUMBER_HINTS = {"count", "reviews", "ratings", "sales", "votes", "views", "quantity", "qty", "stock", "number", "num", "bedrooms", "bathrooms", "beds", "baths", "rooms",
                  "area", "size", "sqft", "floor", "year", "mileage", "weight", "length", "width", "height", "depth", "pages", "followers", "likes",
                  "comments", "downloads", "installs", "capacity", "seats", "doors", "age", "population", "employees", "distance", "duration"}
 _AVAILABILITY_HINTS = {"availability", "available", "stock", "inventory", "instock"}
@@ -137,7 +140,7 @@ _OUT_OF = re.compile(r"(\d+(?:[.,]\d+)?)\s*(?:out of|/|of)\s*(\d+(?:[.,]\d+)?)",
 _RATING_WORD = re.compile(r"\b(zero|one|two|three|four|five)\b", re.I)
 _RATING_WORDS = {"zero": 0, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5}
 _PLAIN_NUMBER = re.compile(r"(\d+(?:[.,]\d+)?)")
-_COMPACT_NUMBER = re.compile(r"^\s*([+-]?\d{1,3}(?:[,  ]\d{3})+|[+-]?\d+)(?:\.(\d+))?\s*([kKmMbB]\b|%|[A-Za-z][A-Za-z .²]{0,20})?\s*$")
+_COMPACT_NUMBER = re.compile(r"^\s*\(?([+-]?\d{1,3}(?:[,  ]\d{3})+|[+-]?\d+)(?:\.(\d+))?\)?\s*([kKmMbB]\b|\+|%|[A-Za-z][A-Za-z .²]{0,24})?(?:\s*([A-Za-z][A-Za-z .]{0,24}))?\s*$")
 _ISO_DATE = re.compile(r"^\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?)?$")
 _DATE_LIKE = re.compile(
     r"\b\d{4}-\d{2}-\d{2}(?:[T ]\d{2}:\d{2}(?::\d{2})?(?:\.\d+)?(?:Z|[+-]\d{2}:?\d{2})?)?\b"
@@ -227,6 +230,8 @@ def _compact_number(text: str, hinted: bool) -> dict | None:
     if not match:
         return None
     whole, fraction, suffix = match.group(1), match.group(2), (match.group(3) or "").strip()
+    if suffix == "+":  # "50+ bought in past month": at least 50, the words after it are the unit
+        suffix = (match.group(4) or "").strip()
     formatted = bool(re.search(r"[,  ]", whole)) or bool(suffix)
     if not (hinted or formatted):
         return None
@@ -244,7 +249,7 @@ def _derive(key: str, text: str, base_url: str | None, region: str, element: boo
     """Details for one string value. The first kind that fits wins, so a value is never read two ways."""
     hints = _hints(key)
     if _URL_VALUE.match(text):
-        if element:
+        if element or hints & {"image", "images", "logo", "photo", "thumbnail", "icon", "picture", "screenshot"}:
             return {}
         from .normalize import registrable_domain
 
@@ -350,7 +355,7 @@ _ORIGINAL_PRICE_CLASS = re.compile(r"(?:^|[-_])(?:old|was|original|regular|strik
 _RATING_CLASS = re.compile(r"(?:^|[\s_-])(?:star-?rating|rating|ratings|stars?|review-?score|score)(?:$|[\s_-])", re.I)
 _RATING_NOISE = re.compile(r"^(?:star|stars|rating|ratings|star-rating|review|reviews|score|icon|fa|fas|far|average|avg|value|small|large)$", re.I)
 # Framework bookkeeping, tracking hooks, and lazy-loading image sources (already read as images) are not details.
-_NOISY_DATA = re.compile(r"react|^v-|gtm|analytics|track|^ga-|^event|^testid$|^test-?id$|^qa|^nosnippet$|^(?:lazy-)?src(?:set)?$|^original$|^lazy", re.I)
+_NOISY_DATA = re.compile(r"react|^v-|gtm|analytics|track|^ga-|^event|^testid$|^test-?id$|^qa|^nosnippet$|^(?:lazy-)?src(?:set)?$|^original$|^lazy|^dataforge", re.I)
 _SKIP_HREF = re.compile(r"^(?:javascript:|#|data:)", re.I)
 
 
@@ -401,7 +406,13 @@ def _image_src(img, base_url: str) -> str | None:
     return None
 
 
+# Something shaped like a phone number (+49 30..., (512) 555..., 512-555-0100); prices and counts never are.
+_PHONE_SHAPE = re.compile(r"(?<![\w$€£¥.,])(?:\+\d[\d\s().-]{6,}\d|\(\d{2,5}\)\s?\d{3,4}[\s.-]?\d{3,4}|\d{2,5}[\s.-]\d{3,4}[\s.-]\d{3,5})(?![\d.,]*\d%)")
+
+
 def _phones_in(text: str, region: str, limit: int = 5) -> list[str]:
+    if not _PHONE_SHAPE.search(text[:MAX_TEXT]):
+        return []  # the matcher costs about a millisecond per card; skip it when nothing looks like a phone number
     import phonenumbers
 
     found = []
@@ -470,15 +481,24 @@ def _rating_text(root) -> str | None:
     return None
 
 
+def _card_root(html: str):
+    root = _fragment(html)
+    _drop_scripts(root)
+    _space_blocks(root)
+    return root
+
+
 def element_details(html: str, base_url: str, region: str = "US", prefix: str = "item.") -> dict[str, object]:
     """Everything inside one record's element: heading, text, links, images, prices, rating, availability, dates,
     contacts, data attributes, and microdata properties."""
     try:
-        root = _fragment(html)
+        root = _card_root(html)
     except Exception:  # noqa: BLE001 - unparseable fragments get no element details
         return {}
-    _drop_scripts(root)
-    _space_blocks(root)
+    return _element_details(root, base_url, region, prefix)
+
+
+def _element_details(root, base_url: str, region: str = "US", prefix: str = "item.") -> dict[str, object]:
     out: dict[str, object] = {}
     text = _text(root)
     heading = next((_text(h) for h in root.xpath(".//h1|.//h2|.//h3|.//h4|.//h5|.//h6") if _text(h)), None)
@@ -516,9 +536,10 @@ def element_details(html: str, base_url: str, region: str = "US", prefix: str = 
     if rating:
         out[prefix + "rating"] = rating[:MAX_VALUE]
     availability = next((_text(n) for n in root.xpath(".//*[contains(translate(@class,'AVILBESTOCK','avilbestock'),'avail') or contains(translate(@class,'AVILBESTOCK','avilbestock'),'stock')]") if _text(n)), None)
-    if availability is None and text:
-        stock = _OUT_OF_STOCK.search(text) or re.search(r"\bin stock\b", text, re.I)
-        availability = stock.group(0) if stock else None
+    if availability is None and text:  # the smallest element that says so, not just the matched words
+        stock_nodes = [n for n in root.iter() if isinstance(n.tag, str) and len(_text(n)) <= 120
+                       and (_OUT_OF_STOCK.search(_text(n)) or re.search(r"\bin stock\b", _text(n), re.I))]
+        availability = min((_text(n) for n in stock_nodes), key=len) if stock_nodes else None
     if availability:
         out[prefix + "availability"] = availability[:MAX_VALUE]
     times = [t.get("datetime") or _text(t) for t in root.xpath(".//time")]
@@ -555,6 +576,253 @@ def element_details(html: str, base_url: str, region: str = "US", prefix: str = 
             props[key] = (urljoin(base_url, value) if node.get("href") or node.get("src") else _collapse(value))[:MAX_VALUE]
     out.update({f"{prefix}prop.{k}": v for k, v in props.items()})
     return out
+
+
+# --- grid fields: every value the cards of one page share --------------------------------------------
+
+MAX_GRID_FIELDS = 40
+_STABLE_CLASS = re.compile(r"^[a-zA-Z][\w-]{1,40}$")
+_UNSTABLE_CLASS = re.compile(r"\d{3,}|^(?:is|has)-|(?:^|-)(?:active|hover|focus|selected|visible|hidden|open|closed|loaded|loading)(?:$|-)|^js-|^css-|^sc-|^jsx-", re.I)
+_NAME_WORDS = (
+    "title", "name", "brand", "price", "rating", "reviews", "review", "badge", "label", "tag", "delivery", "shipping", "seller", "vendor", "store",
+    "availability", "stock", "discount", "sale", "saving", "offer", "coupon", "color", "colour", "size", "variant", "category", "location", "address",
+    "date", "time", "author", "description", "summary", "subtitle", "count", "sold", "points", "unit", "weight", "sku", "model", "status",
+    "condition", "origin", "deal", "promo", "tax", "fee", "eta", "distance", "duration", "level", "score", "votes", "views", "likes", "comments",
+    "year", "mileage", "beds", "baths", "area", "company", "employer", "salary", "city", "country", "phone", "email", "website", "specs", "feature",
+)
+_KIND_NAMES = {"price": "price", "rating": "rating", "percent": "discount", "date": "date", "number": "count", "link": "link", "image": "image",
+               "availability": "availability"}
+# Utility classes ("a-size-base", "a-color-price", "text-bold") describe looks, not meaning, so they never name a field.
+_PRESENTATION_WORDS = {"size", "color", "colour", "text", "font", "bg", "background", "border", "row", "col", "grid", "flex", "spacing", "margin",
+                       "padding", "align", "weight", "width", "height", "display", "icon"}
+# Phrases in the values themselves name a field better than any class ("FREE delivery Thu", "50+ bought in past month").
+_VALUE_NAMES = (("delivery", "delivery"), ("shipping", "shipping"), ("coupon", "coupon"), ("bought", "sales"), ("sold", "sales"), ("ratings", "ratings"),
+                ("reviews", "reviews"), ("review", "reviews"), ("in stock", "availability"), ("left in stock", "availability"), ("out of stock", "availability"),
+                ("save", "savings"), ("% off", "discount"), ("sponsored", "sponsored"), ("best seller", "badge"), ("deal", "deal"), ("new arrival", "badge"),
+                ("prime", "prime"), ("pickup", "pickup"), ("returns", "returns"), ("warranty", "warranty"), ("verified", "verified"), ("miles", "distance"),
+                ("km", "distance"), ("bed", "beds"), ("bath", "baths"), ("sq ft", "area"), ("sqft", "area"))
+
+
+def _stable_class(node) -> str | None:
+    return next((c for c in (node.get("class") or "").split() if _STABLE_CLASS.match(c) and not _UNSTABLE_CLASS.search(c)), None)
+
+
+def _step(node) -> str:
+    cls = _stable_class(node)
+    if cls:
+        return f"{node.tag}.{cls}"
+    parent = node.getparent()
+    same = [c for c in parent if isinstance(c.tag, str) and c.tag == node.tag] if parent is not None else [node]
+    return node.tag if len(same) <= 1 else f"{node.tag}:{same.index(node) + 1}"
+
+
+def _presentational(token: str) -> bool:
+    parts = [p for p in re.split(r"[-_]", token.lower()) if p]
+    return any(part in _PRESENTATION_WORDS and index < len(parts) - 1 for index, part in enumerate(parts))
+
+
+def _name_hint(node) -> str:
+    for attribute in ("itemprop", "data-testid", "data-test", "data-cy", "data-qa", "name"):
+        if node.get(attribute):
+            return str(node.get(attribute))
+    return " ".join(c for c in (node.get("class") or "").split() if not _UNSTABLE_CLASS.search(c) and not _presentational(c)) or node.tag
+
+
+def _card_values(root, base_url: str) -> dict[str, tuple[str, str, bool]]:
+    """signature -> (value, name hint, inside a heading) for every text, link, image, and descriptive attribute of
+    one card. A signature is the element's structural path (tag and stable class per step), so the same field has
+    the same signature in every card of a grid."""
+    values: dict[str, tuple[str, str, bool]] = {}
+
+    def walk(node, path: str, heading: bool) -> None:
+        for child in node:
+            if not isinstance(child.tag, str) or child.get("aria-hidden") == "true":
+                continue  # aria-hidden parts repeat, in pieces, what an accessible copy already says (split prices)
+            signature = f"{path}/{_step(child)}" if path else _step(child)
+            in_heading = heading or child.tag in ("h1", "h2", "h3", "h4", "h5", "h6")
+            direct = (child.text or "").strip() or any((c.tail or "").strip() for c in child)
+            if direct or len(child) == 0:
+                text = _text(child)
+                if text and len(text) <= 300:
+                    values.setdefault(signature, (text, _name_hint(child), in_heading))
+            for attribute in ("title", "aria-label", "datetime", "content", "alt", "value"):
+                value = child.get(attribute)
+                if value and value.strip() and len(value) <= 300 and not (attribute == "value" and child.tag not in ("data", "meter", "progress")):
+                    values.setdefault(f"{signature}@{attribute}", (_collapse(value), f"{_name_hint(child)} {attribute}", in_heading))
+            href = (child.get("href") or "").strip() if child.tag == "a" else ""
+            if href and not _SKIP_HREF.match(href) and not href.lower().startswith(("mailto:", "tel:")):
+                values.setdefault(f"{signature}@href", (urljoin(base_url, href), f"{_name_hint(child)} link", in_heading))
+            if child.tag == "img":
+                source = _image_src(child, base_url)
+                if source:
+                    values.setdefault(f"{signature}@src", (source, "image", in_heading))
+            walk(child, signature, in_heading)
+
+    walk(root, "", False)
+    return values
+
+
+def _value_kind(signature: str, values: list[str]) -> str:
+    if signature.endswith("@href"):
+        return "link"
+    if signature.endswith("@src"):
+        return "image"
+    votes: dict[str, int] = {}
+    for value in values[:20]:
+        if _CURRENCY_MARK.search(value) and re.search(r"\d", value) and len(value) <= 40:
+            kind = "price"
+        elif re.search(r"out of \d|\bstars?\b", value, re.I) and re.search(r"\d", value):
+            kind = "rating"
+        elif re.fullmatch(r"-?\d+(?:[.,]\d+)?\s?%(?:\s?off)?", value.strip(), re.I):
+            kind = "percent"
+        elif _DATE_LIKE.search(value) and len(value) <= 40:
+            kind = "date"
+        elif re.fullmatch(r"[(\[]?\s*[\d.,]+\s*[kKmM+]?\s*[)\]]?", value.strip()):
+            kind = "number"
+        elif len(value) <= 80 and (_OUT_OF_STOCK.search(value) or re.search(r"\bin stock\b|\bleft in stock\b", value, re.I)):
+            kind = "availability"
+        else:
+            kind = "text"
+        votes[kind] = votes.get(kind, 0) + 1
+    return max(votes, key=votes.get) if votes else "text"
+
+
+def _value_name(values: list[str]) -> str | None:
+    votes: dict[str, int] = {}
+    for value in values[:20]:
+        lowered = value.lower()
+        for phrase, name in _VALUE_NAMES:
+            if re.search(rf"(?<![a-z]){re.escape(phrase)}(?![a-z])", lowered):
+                votes[name] = votes.get(name, 0) + 1
+                break
+    best = max(votes, key=votes.get) if votes else None
+    return best if best and votes[best] * 2 >= min(len(values), 20) else None
+
+
+def _auto_name(signature: str, hint: str, kind: str, in_heading: bool, values: list[str] | None = None) -> str:
+    words = re.findall(r"[a-z]+", hint.lower().replace("-", " ").replace("_", " "))
+    attribute = signature.rsplit("@", 1)[1] if "@" in signature.rsplit("/", 1)[-1] else None
+    phrase = _value_name(values or []) if kind not in ("link", "image") else None
+    if phrase and kind not in ("price",):
+        return phrase
+    word = next((w for w in _NAME_WORDS if w in words), None) or next((w for w in _NAME_WORDS for token in words if token.startswith(w) and len(w) >= 4), None)
+    if kind in ("link", "image"):
+        return f"{word}_{kind}" if word and word not in (kind, "title", "name") else kind
+    if kind in ("price", "rating", "availability") and word not in ("price", "rating", "discount", "saving", "deal", "offer", "sale", "availability", "stock"):
+        word = None
+    if word:
+        base = word
+    elif in_heading:
+        base = "title"
+    elif kind in _KIND_NAMES:
+        base = _KIND_NAMES[kind]
+    elif attribute in ("title", "aria-label", "alt"):
+        base = {"alt": "image_alt", "title": "title_text", "aria-label": "label"}[attribute]
+    elif attribute == "datetime":
+        base = "date"
+    else:
+        base = "text"
+    if attribute in ("title", "aria-label") and base not in ("title", "rating", "label", "title_text"):
+        base = f"{base}_label"
+    return base
+
+
+def _norm(value: object) -> str:
+    return re.sub(r"[^0-9a-z]+", "", str(value).lower())
+
+
+def _same_value(a: str, b: str) -> bool:
+    """Equal text, one inside the other, or the same number written two ways ("(1,000)" and "1,000 ratings")."""
+    if _norm(a) == _norm(b) or (len(a) < len(b) and a in b):
+        return True
+    digits_a, digits_b = re.sub(r"\D", "", a), re.sub(r"\D", "", b)
+    return bool(digits_a) and digits_a == digits_b and len(_norm(a)) <= len(digits_a) + 2
+
+
+def _grid_schema(cards: list[dict[str, tuple[str, str, bool]]], known: list[dict[str, object]], sample: int = 40) -> list[tuple[str, str]]:
+    """Which card signatures become fields, and their keys. A field must appear in enough cards, vary between
+    them (constant labels such as "Add to cart" carry nothing), and add something the element details lack."""
+    sampled = cards[:sample]
+    count = len(sampled)
+    if not count:
+        return []
+    appearances: dict[str, int] = {}
+    order: list[str] = []
+    for card in sampled:
+        for signature in card:
+            if signature not in appearances:
+                order.append(signature)
+            appearances[signature] = appearances.get(signature, 0) + 1
+    minimum = 1 if count <= 2 else max(2, -(-count * 15 // 100))
+    kept: list[tuple[str, str]] = []
+    used: set[str] = set()
+    seen_values: list[list[str | None]] = []
+    for signature in order:
+        present = appearances[signature]
+        if present < minimum:
+            continue
+        values = [card[signature][0] if signature in card else None for card in sampled]
+        real = [v for v in values if v is not None]
+        # The same text on (nearly) every card is boilerplate such as "Add to cart"; on only some cards it is a flag
+        # such as "Best Seller" or "Sponsored", which is worth keeping.
+        if count >= 3 and len(set(real)) <= 1 and present * 10 >= count * 9:
+            continue
+        # skip what the element details already hold, and what another kept field repeats or contains
+        enough = max(1, present * 4 // 5)
+        known_hits = sum(1 for v, extra in zip(values, known[:sample]) if v is not None and _norm(v) in {_norm(x) for x in extra.values()})
+        if known_hits >= enough:
+            continue
+        if any(sum(1 for a, b in zip(values, other) if a is not None and b is not None and (_same_value(a, b) or _same_value(b, a))) >= enough
+               for other in seen_values):
+            continue
+        hint, in_heading = next(card[signature][1:] for card in sampled if signature in card)
+        base = _auto_name(signature, hint, _value_kind(signature, real), in_heading, real)
+        key, suffix = f"item.{base}", 2
+        while key in used or any(key in extra for extra in known[:sample]):
+            key, suffix = f"item.{base}_{suffix}", suffix + 1
+        used.add(key)
+        kept.append((signature, key))
+        seen_values.append(values)
+        if len(kept) >= MAX_GRID_FIELDS:
+            break
+    return kept
+
+
+def grid_details(htmls: list[str], base_url: str, region: str = "US") -> list[dict[str, object]]:
+    """Element details for every card of one page, plus the fields the cards share, detected from the grid itself:
+    one consistent set of `item.<name>` keys (prices, ratings, review counts, badges, delivery notes, sellers,
+    links, images, labels) for every record, as many as the cards carry."""
+    roots = []
+    for html in htmls:
+        try:
+            roots.append(_card_root(html))
+        except Exception:  # noqa: BLE001 - an unparseable card gets no details
+            roots.append(None)
+    known = [_element_details(root, base_url, region) if root is not None else {} for root in roots]
+    cards = [_card_values(root, base_url) if root is not None else {} for root in roots]
+    schema = _grid_schema(cards, known)
+    if len(known) >= 3:  # a data attribute with one value on every card (a component name, a tracking id) is not a field
+        for key in {k for extra in known for k in extra if k.startswith("item.data.")}:
+            if len({str(extra.get(key)) for extra in known}) == 1:
+                for extra in known:
+                    extra.pop(key, None)
+    out = []
+    for extra, values in zip(known, cards):
+        record = dict(extra)
+        for signature, key in schema:
+            if signature in values and key not in record:
+                record[key] = values[signature][0][:MAX_VALUE]
+        out.append(record)
+    return out
+
+
+def describe_grid(htmls: list[str], base_url: str, region: str = "US") -> list[dict[str, object]]:
+    """What DataForge reads from each card of a grid (for Scrape Studio): key, coverage, and example values."""
+    records = grid_details(htmls, base_url, region)
+    keys = list(dict.fromkeys(key for record in records for key in record))
+    total = len(records) or 1
+    return [{"key": key, "coverage": round(sum(1 for r in records if r.get(key) not in (None, "")) / total, 3),
+             "examples": list(dict.fromkeys(str(r[key])[:80] for r in records if r.get(key) not in (None, "")))[:3]} for key in keys]
 
 
 # --- page details (the document a record came from) -----------------------------------------------
@@ -617,13 +885,14 @@ def _breadcrumbs(doc, nodes: list[dict]) -> str | None:
     return None
 
 
-def page_details(html: str, url: str, prefix: str = "page.") -> dict[str, object]:
+def page_details(html: str, url: str, prefix: str = "page.", doc=None) -> dict[str, object]:
     """Document-level metadata: title, description, canonical URL, language, dates, Open Graph, Twitter cards,
     breadcrumbs, feeds, and the structured-data types the page declares."""
-    try:
-        doc = _document(html)
-    except Exception:  # noqa: BLE001
-        return {}
+    if doc is None:
+        try:
+            doc = _document(html)
+        except Exception:  # noqa: BLE001
+            return {}
     metas = _meta(doc)
     out: dict[str, object] = {}
 
@@ -717,6 +986,8 @@ def _specs(doc) -> dict[str, str]:
 def _social(doc, base_url: str) -> dict[str, str]:
     found: dict[str, str] = {}
     for href in doc.xpath("//a/@href"):
+        if not any(domain in href for domain in _SOCIAL):  # cheap text test before parsing every link
+            continue
         absolute = urljoin(base_url, href.strip())
         host = (urlparse(absolute).hostname or "").lower().removeprefix("www.").removeprefix("m.")
         network = _SOCIAL.get(host) or next((name for domain, name in _SOCIAL.items() if host.endswith("." + domain)), None)
@@ -766,15 +1037,21 @@ def detail_fields(html: str, url: str, preset: dict) -> dict[str, object]:
         document = Selector(text=html)
     except Exception:  # noqa: BLE001 - an unparseable page yields no custom fields
         return {}
+    body = next(iter(document.xpath("//body")), document)
     out: dict[str, object] = {}
     for field in fields:
         for selector in field.get("selectors", []):
             if not isinstance(selector, dict) or not (selector.get("css") or selector.get("xpath")):
                 continue
-            try:
-                value = _parsel_value(document, selector)
-            except Exception:  # noqa: BLE001 - a selector that fails on one page is simply unmatched
-                value = None
+            value = None
+            for attempt in _selector_variants(selector):
+                try:
+                    # Scrape Studio's structural fallbacks are relative to <body>; other XPath and CSS use the document.
+                    value = _parsel_value(body if str(attempt.get("xpath") or "").startswith("./") else document, attempt)
+                except Exception:  # noqa: BLE001 - a selector that fails on one page is simply unmatched
+                    value = None
+                if value is not None:
+                    break
             if value is not None:
                 converted = apply_field(value[:MAX_DETAIL_TEXT], field, url, preset)
                 if converted not in (None, ""):
@@ -783,10 +1060,89 @@ def detail_fields(html: str, url: str, preset: dict) -> dict[str, object]:
     return out
 
 
+def _selector_variants(selector: dict) -> list[dict]:
+    """The selector, then (when it names tbody) the same path without it: browsers insert <tbody> into tables, so a
+    path picked in the WebView says "table > tbody > tr" while the page's own HTML may have no tbody at all."""
+    variants = [selector]
+    css, xpath = str(selector.get("css") or ""), str(selector.get("xpath") or "")
+    if "tbody" in css:
+        variants.append({**selector, "css": re.sub(r"\s*>\s*tbody(?::nth-of-type\(1\))?(?=\s*>)", "", css)})
+    if "tbody" in xpath:
+        variants.append({**selector, "xpath": re.sub(r"/tbody(?:\[1\])?(?=/)", "", xpath)})
+    return variants
+
+
 def follow_fields(preset: dict | None) -> list[dict]:
     follow = ((preset or {}).get("details") or {}).get("follow") if isinstance((preset or {}).get("details"), dict) else None
     fields = follow.get("fields") if isinstance(follow, dict) else None
     return [f for f in fields if isinstance(f, dict) and isinstance(f.get("key"), str)] if isinstance(fields, list) else []
+
+
+def _detail_entities(html: str, url: str) -> tuple[list[dict], list[dict]]:
+    """Structured data on a detail page, cheapest syntax first: JSON-LD (about a millisecond) usually names the
+    product; Microdata and Microformats come next, and RDFa (the slowest) only when nothing else maps."""
+    from .structured import entity_records, extract_entities
+
+    seen: list[dict] = []
+    for syntaxes in (("json-ld",), ("microdata", "microformat"), ("rdfa",)):
+        try:
+            entities = extract_entities(html, url, syntaxes)
+            records = entity_records(entities)
+        except Exception:  # noqa: BLE001 - structured data is optional on a detail page
+            continue
+        seen.extend(entities)
+        if records:
+            return seen, records
+    return seen, []
+
+
+def _main_text(html: str, url: str, precise: bool = False) -> str:
+    """The page's main text (boilerplate removed) via trafilatura. Its metadata pass costs ten times the text itself,
+    so it runs only for `details.follow.text: precise`; author and dates come from the page's own metadata."""
+    try:
+        import trafilatura
+
+        article = trafilatura.bare_extraction(html, url=url, with_metadata=precise, include_comments=False, include_tables=False)
+        article = (article.as_dict() if hasattr(article, "as_dict") else dict(article)) if article is not None else {}
+    except Exception:  # noqa: BLE001 - main-text extraction is best effort
+        return ""
+    return _collapse(article.get("text") or "")
+
+
+def _visible_facts(doc, url: str) -> dict[str, object]:
+    """What the page shows about its subject even without markup: the main heading, visible current and original
+    price, rating, availability, and the feature bullet list."""
+    scope = next(iter(doc.xpath("//main|//*[@role='main']|//article")), None)
+    if scope is None:
+        body = doc.find(".//body")
+        scope = body if body is not None else doc
+    out: dict[str, object] = {}
+    heading = next((_text(h) for h in doc.iter("h1") if _text(h)), None)
+    if heading:
+        out["detail.heading"] = heading[:MAX_VALUE]
+    current, original = _prices(scope)
+    if current or original:
+        out["detail.price_shown"] = (current or original)[0]
+        if current and original:
+            out["detail.price_original"] = original[0]
+    rating = _rating_text(scope)
+    if rating:
+        out["detail.rating_shown"] = rating[:MAX_VALUE]
+    availability = next((_text(n) for n in scope.xpath(".//*[@id='availability' or contains(translate(@class,'AVILBESTOCK','avilbestock'),'availability') or contains(translate(@class,'AVILBESTOCK','avilbestock'),'stock')]") if _text(n) and len(_text(n)) <= 120), None)
+    if availability:
+        out["detail.availability_shown"] = availability
+    best: list[str] = []
+    for listing in scope.xpath(".//ul|.//ol"):
+        if any(isinstance(a.tag, str) and a.tag in ("nav", "header", "footer", "aside") for a in listing.iterancestors()):
+            continue
+        items = [_text(li) for li in listing if isinstance(li.tag, str) and li.tag == "li"]
+        items = [i for i in items if 15 <= len(i) <= 400]
+        if 3 <= len(items) <= 30 and len(items) > len(best) and not any(":" in i[:40] for i in items[:2]):
+            best = items
+    if best:
+        out["detail.bullets"] = _join(best[:20])
+        out["detail.bullet_count"] = len(best)
+    return out
 
 
 def detail_page_details(html: str, url: str, region: str = "US", prefer_type: str | None = None, preset: dict | None = None,
@@ -796,13 +1152,7 @@ def detail_page_details(html: str, url: str, region: str = "US", prefer_type: st
     own = dict(custom) if custom is not None else (detail_fields(html, url, preset) if preset else {})
     out: dict[str, object] = dict(own)
     data_keys: list[str] = list(own)
-    try:
-        from .structured import entity_records, extract_entities
-
-        entities = extract_entities(html, url)
-        records = entity_records(entities)
-    except Exception:  # noqa: BLE001 - structured data is optional on a detail page
-        entities, records = [], []
+    entities, records = _detail_entities(html, url)
     entity = primary_entity(records, prefer_type)
     if entity:
         for key, value in entity.items():
@@ -816,31 +1166,26 @@ def detail_page_details(html: str, url: str, region: str = "US", prefer_type: st
         out["detail.structured_types"] = ", ".join(types[:20])
     if len(records) > 1:
         out["detail.entity_count"] = len(records)
-    for key, value in page_details(html, url, prefix="detail.page.").items():
-        out.setdefault(key, value)
     try:
         doc = _document(html)
     except Exception:  # noqa: BLE001
         return out
+    for key, value in page_details(html, url, prefix="detail.page.", doc=doc).items():
+        out.setdefault(key, value)
+    for source, target in (("detail.page.author", "detail.author"), ("detail.page.published", "detail.date_published")):
+        if source in out and target not in out:
+            out[target] = out[source]
     _drop_scripts(doc)
     _space_blocks(doc)
-    try:
-        import trafilatura
-
-        article = trafilatura.bare_extraction(html, url=url, with_metadata=True, include_comments=False, include_tables=False)
-        article = (article.as_dict() if hasattr(article, "as_dict") else dict(article)) if article is not None else {}
-    except Exception:  # noqa: BLE001 - main-text extraction is best effort
-        article = {}
-    text = _collapse(article.get("text") or "")
+    precise = ((preset or {}).get("details") or {}).get("follow", {}).get("text") == "precise" if isinstance((preset or {}).get("details"), dict) else False
+    text = _main_text(html, url, precise)
     if text:
         out["detail.text"] = text[:MAX_DETAIL_TEXT]
         out["detail.word_count"] = len(text.split())
-    for source, target in (("author", "detail.author"), ("date", "detail.date_published"), ("categories", "detail.categories"), ("tags", "detail.tags")):
-        value = article.get(source)
-        if isinstance(value, list):
-            value = ", ".join(str(v) for v in value if v)
-        if value and target not in out:
-            out[target] = _collapse(value)[:MAX_VALUE]
+    for key, value in _visible_facts(doc, url).items():
+        if key not in out:
+            out[key] = value
+            data_keys.append(key)
     for key, value in _specs(doc).items():
         name = f"detail.spec.{key}"
         if name not in out:
@@ -855,10 +1200,10 @@ def detail_page_details(html: str, url: str, region: str = "US", prefer_type: st
     for network, link in _social(doc, url).items():
         out[f"detail.social.{network}"] = link
     images = _main_images(doc, url)
-    if images:
+    if images:  # the structured-data gallery, when present, stays first
         out.setdefault("detail.image", images[0])
         if len(images) > 1:
-            out["detail.images"] = _join(images)
+            out.setdefault("detail.images", _join(images))
     out.update({k: v for k, v in value_details(out, url, region, data_keys).items() if k not in out})
     return out
 
@@ -932,9 +1277,17 @@ def follow_detail_pages(
     deadline = deadline if deadline is not None else time.monotonic() + int(config.get("max_duration_seconds", 600))
     region = region_of(preset)
     warnings = warnings if warnings is not None else []
-    stats = {"candidates": 0, "fetched": 0, "reused": 0, "failed": 0, "skipped_scope": 0, "skipped_robots": 0, "stop_reason": "completed"}
+    stats = {"candidates": 0, "fetched": 0, "reused": 0, "failed": 0, "skipped_scope": 0, "skipped_robots": 0, "stop_reason": "completed",
+             "fetch_ms": 0, "parse_ms": 0}
     cache: dict[str, dict] = {}
     consecutive_errors = 0
+    processed = {"n": 0}
+
+    def report(url: str, status: str, **extra) -> None:
+        """One event per record link, so the UI can mark that record's card: done, reused, failed, skipped, stopped."""
+        processed["n"] += 1
+        on_page({"detail_page": processed["n"], "url": url, "status": status, **extra})
+
     for record in records:
         if any(key.startswith("detail.") for key in record):
             continue
@@ -946,6 +1299,7 @@ def follow_detail_pages(
         if canonical in cache:
             record.update({k: v for k, v in cache[canonical].items() if k not in record})
             stats["reused"] += 1
+            report(target, "reused" if cache[canonical] else "skipped", fields=len(cache[canonical]))
             continue
         if stats["fetched"] + stats["failed"] >= limit:
             stats["stop_reason"] = "max_detail_pages"
@@ -961,7 +1315,9 @@ def follow_detail_pages(
         except PolicyViolation:
             stats["skipped_scope"] += 1
             cache[canonical] = {}
+            report(target, "skipped", reason="outside the preset scope")
             continue
+        started = time.perf_counter()
         try:
             response = get(target)
         except PolicyViolation as error:
@@ -969,42 +1325,52 @@ def follow_detail_pages(
             if "robots.txt disallows" in message:
                 stats["skipped_robots"] += 1
                 cache[canonical] = {}
+                report(target, "skipped", reason="robots.txt disallows it")
                 continue
             if "outside" in message:  # a redirect left the preset's scope
                 stats["skipped_scope"] += 1
                 cache[canonical] = {}
+                report(target, "skipped", reason="redirected outside the preset scope")
                 continue
             stats["stop_reason"] = message.removeprefix("Collection stopped: ")
             warnings.append(f"Stopped following detail pages: {stats['stop_reason']}")
+            report(target, "stopped", reason=stats["stop_reason"])
             break
         except httpx.HTTPStatusError as error:
             stats["failed"] += 1
             cache[canonical] = {"detail.url": target, "detail.status": error.response.status_code}
             record.update({k: v for k, v in cache[canonical].items() if k not in record})
+            report(target, "failed", reason=f"HTTP {error.response.status_code}")
             continue
-        except httpx.HTTPError:
+        except httpx.HTTPError as error:
             stats["failed"] += 1
             consecutive_errors += 1
+            report(target, "failed", reason=type(error).__name__)
             if consecutive_errors >= 5:
                 stats["stop_reason"] = "network_errors"
                 warnings.append("Stopped following detail pages after 5 network errors in a row")
                 break
             continue
+        fetch_ms = round((time.perf_counter() - started) * 1000)
         consecutive_errors = 0
         content_type = response.headers.get("content-type", "")
         found: dict[str, object] = {"detail.url": target, "detail.status": response.status_code}
         final = str(response.url)
         if final and final != target:
             found["detail.final_url"] = final
+        parse_started = time.perf_counter()
         if "html" in content_type or not content_type:
             found.update(detail_page_details(response.text, final or target, region, str(record.get("schema_type") or "") or None, preset=preset))
         else:
             found["detail.content_type"] = content_type.split(";")[0].strip()
+        parse_ms = round((time.perf_counter() - parse_started) * 1000)
         found["detail.retrieved_at"] = datetime.now(timezone.utc).isoformat()
         cache[canonical] = found
         record.update({k: v for k, v in found.items() if k not in record})
         stats["fetched"] += 1
-        on_page({"detail_page": stats["fetched"], "url": canonical, "fields": len(found)})
+        stats["fetch_ms"] += fetch_ms
+        stats["parse_ms"] += parse_ms
+        report(target, "done", fields=len(found), fetch_ms=fetch_ms, parse_ms=parse_ms)
     if stats["skipped_scope"]:
         warnings.append(f"{stats['skipped_scope']} detail link(s) are outside the preset scope and were not followed")
     if stats["skipped_robots"]:

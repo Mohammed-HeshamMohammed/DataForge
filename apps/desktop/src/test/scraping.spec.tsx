@@ -90,7 +90,12 @@ describe("scraping tab", () => {
     };
     const { container } = render(<ScrapeResult result={result} jobId="job-2" onOpenDataset={() => {}} />);
     expect(screen.getByText(/Full: 7 detail fields on 1 record · 1 value, 3 element, 1 page, 3 detail · 1 detail page read/)).toBeTruthy();
-    expect(screen.queryByRole("columnheader", { name: "item.price" })).toBeNull(); // details stay out of the compact table
+    // Detected values are columns by default; whole texts and page-level values stay in the inspector.
+    const headers = () => screen.getAllByRole("columnheader").map((th) => th.textContent);
+    expect(headers()).toEqual(["title", "link", "source_url", "item.price", "item.price_original", "item.price.amount", "detail.sku", "detail.spec.weight", "link.domain", "Details"]);
+    fireEvent.click(screen.getByRole("button", { name: "Preset fields (3)" }));
+    expect(headers()).toEqual(["title", "link", "source_url", "Details"]);
+    fireEvent.click(screen.getByRole("button", { name: "Detected values (9 columns)" }));
     fireEvent.click(screen.getByRole("button", { name: "Inspect record 1" }));
     const inspector = screen.getByRole("region", { name: "Record 1 of 1" });
     for (const group of ["Fields", "Value details", "From the record's element", "From the detail page", "From the page", "Provenance"]) {

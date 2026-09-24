@@ -30,7 +30,7 @@
     for (const node of [copy, ...copy.querySelectorAll("*")]) {
       for (const attribute of [...node.attributes]) {
         const name = attribute.name.toLowerCase();
-        const kept = DETAIL_ATTRIBUTES.has(name) || (name.startsWith("data-") && name.length <= 40);
+        const kept = DETAIL_ATTRIBUTES.has(name) || (name.startsWith("data-") && name.length <= 40 && !name.startsWith("data-dataforge"));
         if (!kept || attribute.value.length > 500 || SECRET_VALUE.test(attribute.value) || /^\s*javascript:/i.test(attribute.value)) node.removeAttribute(attribute.name);
       }
     }
@@ -234,7 +234,82 @@
     return text || null;
   }
 
+  // Progress marks while item pages are read in the background: an outline on each card (no layout change) and one
+  // status chip. Only DataForge's own attributes and elements are added, and `clear` removes all of them.
+  const MARK_STATES = ["pending", "working", "done", "failed", "skipped"];
+  const MARK_STYLE = `
+    [data-dataforge-item] { outline-offset: -2px !important; }
+    [data-dataforge-item="pending"] { outline: 2px dashed rgba(52, 211, 153, 0.45) !important; }
+    [data-dataforge-item="working"] { outline: 3px solid #34d399 !important; animation: dataforge-pulse 900ms ease-in-out infinite alternate; }
+    [data-dataforge-item="done"] { outline: 2px solid #2fa866 !important; box-shadow: inset 0 0 0 9999px rgba(52, 211, 153, 0.07) !important; }
+    [data-dataforge-item="failed"] { outline: 2px dashed #e5534b !important; }
+    [data-dataforge-item="skipped"] { outline: 2px dashed #e2b340 !important; }
+    @keyframes dataforge-pulse { from { outline-color: rgba(52, 211, 153, 0.35); } to { outline-color: #34d399; } }
+    @media (prefers-reduced-motion: reduce) { [data-dataforge-item="working"] { animation: none; } }`;
+
+  function clearMarks() {
+    document.querySelectorAll("[data-dataforge-item]").forEach((node) => node.removeAttribute("data-dataforge-item"));
+    document.querySelectorAll("[data-dataforge-marks], [data-dataforge-status]").forEach((node) => node.remove());
+  }
+
+  const withoutHash = (url) => String(url || "").split("#")[0];
+
   window.__dataforgeStudio = Object.freeze({
+    markItems(config) {
+      if (!config || config.clear) {
+        clearMarks();
+        return { marked: 0 };
+      }
+      let roots;
+      try {
+        roots = [...document.querySelectorAll(config.record_root)];
+      } catch (error) {
+        return { marked: 0, error: String(error) };
+      }
+      if (!document.querySelector("style[data-dataforge-marks]")) {
+        const style = document.createElement("style");
+        style.setAttribute("data-dataforge-marks", "");
+        style.textContent = MARK_STYLE;
+        document.documentElement.appendChild(style);
+      }
+      const marks = config.marks && typeof config.marks === "object" ? config.marks : {};
+      const byUrl = new Map(Object.entries(marks).map(([url, state]) => [withoutHash(url), state]));
+      const link = config.link && typeof config.link.css === "string" ? config.link : null;
+      let marked = 0;
+      for (const root of roots) {
+        let url = null;
+        try {
+          url = link ? valueFor(root, link.attribute ? `${link.css}::attr(${link.attribute})` : link.css) : null;
+        } catch {
+          url = null;
+        }
+        const state = url ? byUrl.get(withoutHash(url)) : null;
+        if (state && MARK_STATES.includes(state)) {
+          root.setAttribute("data-dataforge-item", state);
+          marked += 1;
+        } else {
+          root.removeAttribute("data-dataforge-item");
+        }
+      }
+      let chip = document.querySelector("[data-dataforge-status]");
+      if (config.status) {
+        if (!chip) {
+          chip = document.createElement("div");
+          chip.setAttribute("data-dataforge-status", "");
+          chip.setAttribute("data-dataforge-overlay", "");
+          Object.assign(chip.style, {
+            position: "fixed", right: "12px", bottom: "12px", zIndex: "2147483647", pointerEvents: "none", padding: "6px 10px",
+            borderRadius: "8px", background: "rgba(19, 24, 34, 0.92)", color: "#e6ebf2", font: "12px/1.4 system-ui, sans-serif",
+            border: "1px solid #2fa866", maxWidth: "60vw",
+          });
+          document.documentElement.appendChild(chip);
+        }
+        chip.textContent = String(config.status).slice(0, 200);
+      } else if (chip) {
+        chip.remove();
+      }
+      return { marked, roots: roots.length };
+    },
     setMode(next, root) {
       mode = ["none", "element", "repeated", "next", "detail"].includes(next) ? next : "none";
       recordRoot = typeof root === "string" && root ? root : null;

@@ -6,7 +6,7 @@ import { useJob, useService } from "../../lib/hooks.ts";
 import { formatCount, isActive } from "../../lib/format.ts";
 import { ErrorNote, JobProgress } from "../../components/ui.tsx";
 import { DetailLevelField, RecordInspector } from "../../components/RecordInspector.tsx";
-import { DEFAULT_DETAIL_LEVEL, describeDetails, detailCount, isDetailLevel, tableColumns, type DetailLevel, type DetailSummary } from "../../lib/details.ts";
+import { DEFAULT_DETAIL_LEVEL, describeDetails, detailCount, isDetailLevel, richColumns, tableColumns, type DetailLevel, type DetailSummary } from "../../lib/details.ts";
 import { ArchiveForm, BulkForm, CreateWatch, SignalsPanel, SignalsTable, WatchesPanel, type HostSignals } from "./panels.tsx";
 import {
   PURPOSES, SOURCES, defaultVariables, needsStartUrl, presetsFor, type RequestVariable, type SourceKind, type SourcePreset, variablePayload, variableProblems,
@@ -399,7 +399,11 @@ function FixtureFromCapture({ jobId }: { jobId: string }) {
 
 export function ScrapeResult({ result, onOpenDataset, jobId }: { result: Record<string, any>; onOpenDataset: (id: string) => void; jobId?: string }) {
   const samples: Record<string, unknown>[] = result.sample_records ?? [];
-  const columns = tableColumns(samples, { exclude: ["text", "markdown"], max: 16 });
+  // Every detected value by default (grid card fields, item-page fields, value details), or just the preset's fields.
+  const [allColumns, setAllColumns] = useState(true);
+  const mainColumns = tableColumns(samples, { exclude: ["text", "markdown"], max: 16 });
+  const detectedColumns = richColumns(samples, { exclude: ["text", "markdown"], max: 24 });
+  const columns = allColumns ? detectedColumns : mainColumns;
   const diff = result.watch_diff as { counts: Record<string, number> } | null | undefined;
   const details = result.details as DetailSummary | undefined;
   const [inspected, setInspected] = useState<number | null>(null);
@@ -480,6 +484,16 @@ export function ScrapeResult({ result, onOpenDataset, jobId }: { result: Record<
       <SignalsTable signals={(result.signals ?? []) as HostSignals[]} />
       {(result.archive_diff?.changed ?? result.watch_diff?.changed ?? []).length > 0 && <ChangeList changes={(result.archive_diff ?? result.watch_diff).changed} />}
       {result.warc_capture && jobId && <FixtureFromCapture jobId={jobId} />}
+      {detectedColumns.length > mainColumns.length && (
+        <div className="segmented" role="group" aria-label="Result columns">
+          <button type="button" aria-pressed={allColumns} onClick={() => setAllColumns(true)}>
+            Detected values ({detectedColumns.length} columns)
+          </button>
+          <button type="button" aria-pressed={!allColumns} onClick={() => setAllColumns(false)}>
+            Preset fields ({mainColumns.length})
+          </button>
+        </div>
+      )}
       {columns.length > 0 && (
         <div className="table-wrap">
           <table className="data-table compact">

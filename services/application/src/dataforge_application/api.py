@@ -88,6 +88,7 @@ class Service:
             "scrape.run_signals": lambda p: sources.run_signals(self._store(), self._scrape_run_id(p["job_id"])),
             "scrape.detect_structured": lambda p: sources.detect_structured(*sources.page_html(p, self._store(), scraping.validate_url)),
             "scrape.test_detail": lambda p: sources.test_detail(p, self._store(), scraping.validate_url),
+            "scrape.detect_fields": lambda p: sources.detect_fields(p),
             "scrape.suggest_selectors": lambda p: sources.suggest_selectors(*sources.page_html(p, self._store(), scraping.validate_url), p.get("examples") or {}),
             "scrape.propose_presets": lambda p: sources.propose_presets(self._store(), *sources.page_html(p, self._store(), scraping.validate_url), p.get("provider")),
             "preset.maintenance_report": self._maintenance_report,

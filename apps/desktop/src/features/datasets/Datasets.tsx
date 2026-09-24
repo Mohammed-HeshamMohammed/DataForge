@@ -7,7 +7,7 @@ import type { Dataset, Row } from "../../lib/types.ts";
 import { ConfirmButton, ErrorNote, JobProgress, PathInput } from "../../components/ui.tsx";
 import { MappingEditor } from "../../components/MappingEditor.tsx";
 import { RecordInspector } from "../../components/RecordInspector.tsx";
-import { detailCount, looksPersonal, tableColumns } from "../../lib/details.ts";
+import { detailCount, looksPersonal, richColumns, tableColumns } from "../../lib/details.ts";
 
 const IMPORT_FILTERS = [{ name: "Data files", extensions: ["csv", "xlsx", "json"] }];
 
@@ -142,11 +142,13 @@ function RowSample({ datasetId }: { datasetId: string }) {
   const [revealed, setRevealed] = useState(false);
   const rows = useService<Row[]>("dataset.rows", { dataset_id: datasetId, offset, limit: 25 });
   const mapping = useService<{ mapping: Record<string, string> } | null>("dataset.mapping", { dataset_id: datasetId });
-  const [showDetails, setShowDetails] = useState(false);
+  // Detected: the dataset's fields plus the detected values most rows carry; all: every column.
+  const [view, setView] = useState<"fields" | "detected" | "all">("detected");
   const [inspected, setInspected] = useState<string | null>(null);
   const sensitiveRoles = new Set(["phone", "email", "address", "mailing_address", "name", "first_name", "last_name"]);
   const records = (rows.data ?? []).map((row) => row.raw);
-  const columns = tableColumns(records, { includeDetails: showDetails, keepProvenance: true });
+  const columns =
+    view === "detected" ? richColumns(records, { keepProvenance: true, max: 30 }) : tableColumns(records, { includeDetails: view === "all", keepProvenance: true });
   const hasDetails = records.some((record) => detailCount(record) > 0);
   // Until a mapping exists every column is treated as potentially sensitive; unmapped detail columns that
   // look like contact data (phones, e-mails, addresses) stay masked too.
@@ -159,8 +161,13 @@ function RowSample({ datasetId }: { datasetId: string }) {
         <h3 id="rows-title">Source rows</h3>
         <div className="row-actions">
           {hasDetails && (
-            <label className="toggle">
-              <input type="checkbox" checked={showDetails} onChange={(e) => setShowDetails(e.target.checked)} /> Show detail columns
+            <label className="field inline small">
+              <span>Columns</span>
+              <select value={view} onChange={(e) => setView(e.target.value as typeof view)}>
+                <option value="detected">Fields and detected values</option>
+                <option value="fields">Fields only</option>
+                <option value="all">Every column</option>
+              </select>
             </label>
           )}
           <label className="toggle">

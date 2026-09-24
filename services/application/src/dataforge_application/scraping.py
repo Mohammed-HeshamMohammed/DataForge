@@ -22,6 +22,8 @@ from .storage import ProjectStore, utc_now
 
 
 CONSECUTIVE_FAILURES_TO_DISABLE = 3
+# Scrape Studio reads item pages in the background no faster than this, whatever delay the draft asks for.
+STUDIO_MIN_ITEM_DELAY_MS = 250
 
 
 def _active_packages(store: ProjectStore) -> list[dict]:
@@ -180,19 +182,25 @@ def resolve_preset(store: ProjectStore, presets_dir: Path, preset_id: str, versi
     raise JobValidationError(f"Unknown preset {preset_id}@{version}")
 
 
+def check_derived(store: ProjectStore, presets_dir: Path, preset: dict) -> None:
+    """A derived preset may narrow, never broaden, its parent's scope, policy, or strategy permissions."""
+    parent_id, parent_version = preset.get("parent_preset_id"), preset.get("parent_preset_version")
+    if not parent_id:
+        return
+    parent = resolve_preset(store, presets_dir, parent_id, parent_version)
+    if not parent["url_scope"].get("user_supplied_host") and not set((preset.get("url_scope") or {}).get("allowed_hosts", [])) <= set(parent["url_scope"]["allowed_hosts"]):
+        raise ValueError("A derived preset cannot broaden its parent's allowed hosts")
+    if not set((preset.get("strategy") or {}).get("allowed", [])) <= set(parent["strategy"].get("allowed", [])):
+        raise ValueError("A derived preset cannot broaden its parent's strategies")
+    if preset.get("policy") != parent.get("policy"):
+        raise ValueError("A derived preset cannot change its parent's policy")
+
+
 def save_custom_preset(store: ProjectStore, presets_dir: Path, preset: dict) -> dict:
     if not str(preset.get("id", "")).startswith("custom."):
         raise ValueError("Custom presets must use an id of the form custom.<owner>.<name>")
     parent_id, parent_version = preset.get("parent_preset_id"), preset.get("parent_preset_version")
-    if parent_id:
-        parent = resolve_preset(store, presets_dir, parent_id, parent_version)
-        # A derived preset may narrow, never broaden, its parent's scope, policy, or strategy permissions.
-        if not parent["url_scope"].get("user_supplied_host") and not set(preset["url_scope"].get("allowed_hosts", [])) <= set(parent["url_scope"]["allowed_hosts"]):
-            raise ValueError("A derived preset cannot broaden its parent's allowed hosts")
-        if not set(preset["strategy"].get("allowed", [])) <= set(parent["strategy"].get("allowed", [])):
-            raise ValueError("A derived preset cannot broaden its parent's strategies")
-        if preset.get("policy") != parent.get("policy"):
-            raise ValueError("A derived preset cannot change its parent's policy")
+    check_derived(store, presets_dir, preset)
     clean = {k: v for k, v in preset.items() if k not in ("source", "errors", "last_test", "health_status", "package", "declared_status")}
     errors = validate_preset(clean)
     if errors:
@@ -374,8 +382,8 @@ def make_scrape_kind(presets_dir: Path) -> JobKind:
 
 
 def _detail_level(params: dict, preset: dict) -> str:
-    """The job's detail level: the request's choice, else the preset's, else standard (no extra requests)."""
-    level = params.get("detail_level") or ((preset.get("details") or {}).get("level") if isinstance(preset.get("details"), dict) else None) or details.DEFAULT_LEVEL
+    """The job's detail level: the request's choice, else the preset's, else full (each record's own page is read)."""
+    level = params.get("detail_level") or ((preset.get("details") or {}).get("level") if isinstance(preset.get("details"), dict) else None) or details.JOB_DEFAULT_LEVEL
     if level not in details.LEVELS:
         raise JobValidationError(f"detail_level must be one of {', '.join(details.LEVELS)}")
     return level
@@ -417,6 +425,11 @@ def make_rendered_kind(presets_dir: Path) -> JobKind:
             stored = next((p for p in list_presets(store, presets_dir) if p["id"] == preset.get("id") and p["version"] == preset.get("version")), None)
         if stored is not None:
             preset = stored  # never trust a UI copy of a saved preset
+        else:
+            try:
+                check_derived(store, presets_dir, preset)  # an unsaved Studio draft gets no more than its base preset allows
+            except ValueError as error:
+                raise JobValidationError(str(error)) from error
         errors = validate_preset({k: v for k, v in preset.items() if k not in ("source", "errors", "health_status", "package", "declared_status")})
         if errors:
             raise JobValidationError("Preset is invalid: " + "; ".join(errors))
@@ -487,16 +500,18 @@ def make_rendered_kind(presets_dir: Path) -> JobKind:
             # The WebView sends a sanitized copy of each record's element and of the page head (no scripts, form
             # fields, or unsafe attributes), so rendered records get the same item and page details as HTTP ones.
             page_metadata = details.page_details(str(page.get("head_html") or "")[:1_000_000], page["url"]) if level_standard and page.get("head_html") else {}
-            for raw in page.get("records", [])[: preset["request_limits"]["max_records_default"]]:
+            raws = page.get("records", [])[: preset["request_limits"]["max_records_default"]]
+            copies = [str(raw.get("__element") or "")[:200_000] if isinstance(raw, dict) else "" for raw in raws]
+            # Same grid detection as the HTTP engines: every card's contents plus the fields the cards share.
+            cards = details.grid_details(copies, page["url"], region) if level_standard and any(copies) else [{} for _ in raws]
+            for raw, card in zip(raws, cards):
                 record = {}
                 for field in fields:
                     value = raw.get(field["key"]) if isinstance(raw, dict) else None
                     if value not in (None, ""):
                         record[field["key"]] = apply_field(str(value)[:10_000], field, page["url"], preset)
-                element = raw.get("__element") if isinstance(raw, dict) else None
-                if level_standard and isinstance(element, str) and element:
-                    for key, value in details.element_details(element[:200_000], page["url"], region).items():
-                        record.setdefault(key, value)
+                for key, value in card.items():
+                    record.setdefault(key, value)
                 detail = raw.get("__detail") if isinstance(raw, dict) else None
                 if level_full and isinstance(detail, dict) and detail.get("url"):
                     # An item page Studio opened in the WebView: re-check it like any other rendered page.
@@ -530,8 +545,12 @@ def make_rendered_kind(presets_dir: Path) -> JobKind:
                             "skipped_scope": skipped_detail_pages, "skipped_robots": 0, "stop_reason": "completed"}
         elif details.at_least(preset, "full") and records and (preset.get("pagination") or {}).get("type") != "detail_links":
             if "http" in preset["strategy"].get("allowed", []):
+                # Studio reads item pages in the background at the pace the user chose, never faster than the floor;
+                # a robots.txt Crawl-delay still applies on top.
+                limits = preset["request_limits"]
+                paced = {**preset, "request_limits": {**limits, "min_delay_ms": max(STUDIO_MIN_ITEM_DELAY_MS, int(limits.get("min_delay_ms", 0)))}}
                 follow_stats, _ = details.follow_with_policy_client(
-                    records, preset, contact=sources.get_settings(store)["contact_identity"], cache_dir=sources.cache_dir(store), purpose=params["purpose"],
+                    records, paced, contact=sources.get_settings(store)["contact_identity"], cache_dir=sources.cache_dir(store), purpose=params["purpose"],
                     limit=limit, should_stop=context.should_stop, on_page=lambda event: _page_event(context, event), warnings=warnings,
                 )
             elif details.detail_link(records[0], preset, ((preset.get("details") or {}).get("follow") or {}).get("field")):

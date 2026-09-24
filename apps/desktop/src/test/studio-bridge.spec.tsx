@@ -87,3 +87,36 @@ describe("item pages", () => {
     expect(record.__element).not.toContain("window.track");
   });
 });
+
+describe("background item pages", () => {
+  type Marks = { markItems(config: unknown): { marked: number; roots?: number } };
+  const cards = () => [...document.querySelectorAll("li.result")];
+
+  it("outlines each card by its item link and shows one status line, without touching the page's own markup", () => {
+    document.body.innerHTML = [1, 2, 3, 4].map((n) => `<li class="result"><a class="title" href="/dp/B0${n}#reviews">Item ${n}</a><span class="price">$${n}.99</span></li>`).join("");
+    const bridge = (window as unknown as { __dataforgeStudio: Marks & Bridge }).__dataforgeStudio;
+    const url = (n: number) => new URL(`/dp/B0${n}`, location.href).href;
+    const result = bridge.markItems({
+      record_root: "li.result",
+      link: { css: "a.title", attribute: "href" },
+      marks: { [url(1)]: "done", [url(2)]: "working", [url(3)]: "failed", [url(9)]: "done" },
+      status: "Reading item pages in the background: 1 of 4",
+    });
+    expect(result).toEqual({ marked: 3, roots: 4 });
+    expect(cards().map((card) => card.getAttribute("data-dataforge-item"))).toEqual(["done", "working", "failed", null]);
+    expect(document.querySelector("[data-dataforge-status]")?.textContent).toBe("Reading item pages in the background: 1 of 4");
+    // The marks never leak into the sanitized copies sent for record details.
+    const copy = bridge.extract({ record_root: "li.result", fields: [], limit: 1, element_html: true }).records[0].__element;
+    expect(copy).not.toContain("data-dataforge");
+    expect(bridge.markItems({ record_root: "li.result[", marks: {} })).toMatchObject({ marked: 0 });
+    bridge.markItems({ clear: true });
+    expect(document.querySelectorAll("[data-dataforge-item], [data-dataforge-status], style[data-dataforge-marks]")).toHaveLength(0);
+  });
+
+  it("ignores states it does not know", () => {
+    document.body.innerHTML = `<li class="result"><a class="title" href="/dp/X">X</a></li>`;
+    const bridge = (window as unknown as { __dataforgeStudio: Marks }).__dataforgeStudio;
+    expect(bridge.markItems({ record_root: "li.result", link: { css: "a.title", attribute: "href" }, marks: { [new URL("/dp/X", location.href).href]: "boom" } }).marked).toBe(0);
+    bridge.markItems({ clear: true });
+  });
+});

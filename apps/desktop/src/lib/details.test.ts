@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { describeDetails, detailCount, detailGroup, groupRecord, isDetailLevel, looksPersonal, shortKey, tableColumns, type DetailSummary } from "./details.ts";
+import { describeDetails, detailCount, detailGroup, groupRecord, isDetailLevel, looksPersonal, richColumns, shortKey, tableColumns, type DetailSummary } from "./details.ts";
 
 const record = {
   title: "Widget 1",
@@ -55,4 +55,19 @@ test("summaries describe levels, groups, and detail pages", () => {
   assert.equal(describeDetails(undefined), "");
   assert.ok(isDetailLevel("standard") && !isDetailLevel("everything"));
   assert.ok(looksPersonal("item.phone.e164") && looksPersonal("detail.emails") && !looksPersonal("detail.spec.weight"));
+});
+
+const card = (n: number) => ({
+  title: `Item ${n}`, link: `https://shop.test/dp/${n}`, source_url: "https://shop.test/s", preset_id: "custom.local.cards",
+  "item.price": `$${n}.99`, "item.rating": `${n % 5}.5 out of 5 stars`, "item.badge": n === 1 ? "Best Seller" : "", "item.delivery": "FREE delivery Thu, Oct 1",
+  "item.text": "long card text", "item.links": ["a", "b"], "detail.sku": `SKU-${n}`, "detail.spec.weight": `${n} kg`, "detail.text": "whole page", "page.title": "Results",
+});
+
+test("result columns: fields first, then detected values that vary, most common first", () => {
+  const records = [1, 2, 3, 4].map(card);
+  // Whole texts, lists, page-level values, and values identical on every record stay in the inspector.
+  assert.deepEqual(richColumns(records), ["title", "link", "source_url", "item.price", "item.rating", "detail.sku", "detail.spec.weight", "item.badge"]);
+  assert.equal(richColumns(records, { max: 5 }).length, 5);
+  assert.ok(richColumns(records, { keepProvenance: true }).includes("preset_id"));
+  assert.ok(richColumns([card(1)]).includes("item.delivery"), "too few records to call a value constant");
 });

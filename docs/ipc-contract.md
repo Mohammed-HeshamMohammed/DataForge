@@ -53,7 +53,7 @@ Command names match `^[a-z_]+\.[a-z_]+$` (enforced by the host). Unknown additiv
 
 `match.results` also returns `compare_dataset_id`, `review_turnaround`, and `mapping_flags`. Its metrics include `stage_seconds`, `rows_per_second`, `cluster_size_distribution`, `decisions_by_scope`, and `survivor_sources`. `match.clusters` items include `canonical_values`, `field_provenance`, and `conflicts`. Machine-checked JSON schemas for these responses live in `packages/contracts/`.
 
-Studio bridge actions also include `scrollStep` and `links(css)` for infinite scroll and detail links, and `html()` (read-only page snapshot, capped at 5 MB) for structured-data detection.
+Studio bridge actions also include `scrollStep` and `links(css)` for infinite scroll and detail links, `html()` (read-only page snapshot, capped at 5 MB) for structured-data detection, and `markItems(config)` for card progress marks while item pages are read in the background. `config` is `{clear: true}` (remove every mark and the status line) or `{record_root, link: {css, attribute?}, marks: {<item url>: "pending"|"working"|"done"|"failed"|"skipped"}, status?}`; it returns `{marked, roots}`. Marks are `data-dataforge-item` attributes plus one injected style and status element; sanitized copies never include them.
 
 ### Scraping expansion (schema_version 1, additive)
 
@@ -63,6 +63,7 @@ Studio bridge actions also include `scrollStep` and `links(css)` for infinite sc
 | `scrape.check_signals` | `url` (HTTPS), `purpose?` | `{url, purpose, allowed, reason, hosts: [signals]}` |
 | `scrape.run_signals` | `job_id` | per-host signals recorded for that run |
 | `scrape.detect_structured` | `html` + `url`, or `url` + `preset` (fetched with the policy client) | `{types, syntaxes, suggested_type, mapped_types}` |
+| `scrape.detect_fields` | `elements` (sanitized card copies, at most 60 read) + `url`, or `html` + `record_root` + `url`; `region?` | `{cards, fields: [{key, coverage, examples}]}`: every value read from each card without a selector |
 | `scrape.suggest_selectors` | page as above, `examples` `{field: visible value}` | `{record_root, fields, record_count, notes}` |
 | `scrape.propose_presets` | page as above, `provider?` | `{provider, proposals: [{source, preset, evaluation}], labels}` |
 | `scrape.check_url` | adds `purpose?`: when present (automated Studio navigation), robots.txt, TDMRep, and AIPREF are applied too | `{allowed, reason, skippable}`; `skippable` is true only for a robots.txt disallow on one URL |
@@ -91,7 +92,7 @@ Studio bridge actions also include `scrollStep` and `links(css)` for infinite sc
 
 `scrape.stage_rendered` records may carry `__detail: {url, fields, html, retrieved_at}` for an item page Scrape Studio opened in the WebView. The service re-checks the URL against scope and site signals, then merges the values as `detail.*`. `app.info` adds `version`.
 
-The stage `detail_page_extracted` (`{detail_page, url, fields}`) reports each detail page read. The Studio bridge's `extract` accepts `element_html` and `page_metadata` flags; with them it returns `records[].__element` and `head_html`. Presets may declare `details: {level, follow: {field, fields, max_pages, max_duration_seconds}}`. `fields` are item-page fields, with the same shape as extraction fields, read from each record's own page as `detail.<key>`. The bridge's `extract` also accepts `element_max`, up to 500,000 characters, for whole-page copies.
+The stage `detail_page_extracted` reports each record's item page: `{detail_page, url, status}` where `status` is `done`, `reused`, `failed`, `skipped`, or `stopped`, plus `fields`, `fetch_ms`, and `parse_ms` when read, or `reason` otherwise. `scrape.stage_rendered` follows item pages over HTTP when the draft's strategies allow `http` and records carry no `__detail`; an unsaved draft with `parent_preset_id` must not broaden that parent's hosts, strategies, or policy, and item pages are never requested closer than 250 ms apart. The Studio bridge's `extract` accepts `element_html` and `page_metadata` flags; with them it returns `records[].__element` and `head_html`. Presets may declare `details: {level, follow: {field, fields, max_pages, max_duration_seconds}}`. `fields` are item-page fields, with the same shape as extraction fields, read from each record's own page as `detail.<key>`. The bridge's `extract` also accepts `element_max`, up to 500,000 characters, for whole-page copies.
 
 Studio bridge picks add `fallback_xpaths` (label-anchored when a repeated caption exists, then structural); `extract` evaluates `{xpath, attribute?}` selectors. Presets may set `extraction.output: "text"` with `ocr: true` for document presets. Job kinds add `archive_query` and `bulk_import`. Contracts: `host-signals`, `scrape-result`, `record-diff`, `watch`, and `collection-settings` schemas in `packages/contracts/`. Stage names add `finding_captures`. Scrapy engine page events carry `engine: "scrapy"`.
 
@@ -105,7 +106,7 @@ Studio bridge picks add `fallback_xpaths` (label-anchored when a repeated captio
 | `credential_save` / `credential_delete` / `credential_list` | `name`, `secret` / `name` / — | OS credential store; values are never returned. |
 | `studio_open` | `url`, `allowedHosts`, `bounds` | Creates the incognito child WebView over `bounds` (CSS px). |
 | `studio_set_bounds` / `studio_navigate` / `studio_control` / `studio_close` | `bounds` / `url` / `reload\|stop\|back` / — | Navigation is re-checked against allowed hosts. |
-| `studio_call` | `action` (`setMode`, `takePicks`, `pageInfo`, `count`, `extract`, `scrollStep`, `links`), `args` array | Allow-listed bridge calls with JSON-encoded arguments. |
+| `studio_call` | `action` (`setMode`, `takePicks`, `pageInfo`, `count`, `extract`, `scrollStep`, `links`, `html`, `markItems`), `args` array | Allow-listed bridge calls with JSON-encoded arguments. |
 | `update_check` / `update_install` | `repository` (`owner/name`), `channel` / — | GitHub-pinned endpoint; install verifies the signature, needs approval, and is refused during active jobs. |
 
 Events: `studio-event` with `{type: "page_load", event: "started"|"finished", url}` or `{type: "navigation_blocked", url}`. URLs are origin and path only.

@@ -103,6 +103,41 @@ export function tableColumns(
   return [...fields, ...details].slice(0, options.max ?? 200);
 }
 
+/** Detail keys that read badly in a table cell (whole texts, lists, page-level values that repeat on every record);
+ *  the record inspector shows them. */
+const NOISY_COLUMN = /^(item\.(text|links|images|html)|detail\.(text|html|images|bullets|retrieved_at|status|final_url|content_type|url|page\..*)|page\..*)$/;
+const COLUMN_RANK: Partial<Record<DetailGroup, number>> = { item: 0, detail: 1, value: 2 };
+
+/** Columns for a results table: the preset's own fields, then the detected values (card, item-page, and value
+ *  details) that most records carry and that differ between records, up to `max` columns. */
+export function richColumns(
+  records: Record<string, unknown>[],
+  options: { keepProvenance?: boolean; exclude?: string[]; max?: number } = {},
+): string[] {
+  const exclude = new Set(options.exclude ?? []);
+  const fields = tableColumns(records, { keepProvenance: options.keepProvenance, exclude: [...exclude] });
+  const found = new Map<string, { count: number; values: Set<string>; rank: number }>();
+  for (const record of records) {
+    for (const [key, value] of Object.entries(record)) {
+      if (value === null || value === undefined || value === "" || typeof value === "object" || exclude.has(key) || NOISY_COLUMN.test(key)) continue;
+      const rank = COLUMN_RANK[detailGroup(key, record)];
+      if (rank === undefined) continue;
+      const entry = found.get(key) ?? { count: 0, values: new Set<string>(), rank };
+      entry.count += 1;
+      if (entry.values.size < 2) entry.values.add(String(value));
+      found.set(key, entry);
+    }
+  }
+  // A value identical on every record says nothing per record. Coverage first (in steps of a tenth, so near-equal
+  // keys keep their group order), then card, item page, value.
+  const bucket = (count: number) => Math.round((count / Math.max(1, records.length)) * 10);
+  const detected = [...found]
+    .filter(([, entry]) => records.length < 3 || entry.values.size > 1 || entry.count < records.length)
+    .sort(([a, x], [b, y]) => bucket(y.count) - bucket(x.count) || x.rank - y.rank || a.localeCompare(b))
+    .map(([key]) => key);
+  return [...fields, ...detected].slice(0, options.max ?? 24);
+}
+
 export function detailCount(record: Record<string, unknown>): number {
   return Object.entries(record).filter(([key, value]) => value !== null && value !== undefined && value !== "" && isDetailKey(key, record)).length;
 }

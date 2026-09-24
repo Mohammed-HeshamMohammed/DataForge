@@ -258,7 +258,7 @@ def _select_value(root: Tag, selector: dict[str, object], base_url: str) -> str 
 
 
 def _extract_records(soup: BeautifulSoup, source_url: str, root_css: str, fields: list[object], preset: dict[str, object]) -> list[dict[str, object]]:
-    records = []
+    records, elements = [], []
     if not isinstance(root_css, str):
         raise ValueError("XPath record roots need the parsel parser")
     for root in soup.select(root_css):
@@ -270,8 +270,9 @@ def _extract_records(soup: BeautifulSoup, source_url: str, root_css: str, fields
                 if isinstance(selector, dict) and (value := _select_value(root, selector, source_url)) is not None:
                     record[field["key"]] = apply_field(value, field, source_url, preset)
                     break
-        records.append(_with_provenance(_with_element(record, str(root), source_url, preset), source_url, preset))
-    return records
+        records.append(record)
+        elements.append(str(root))
+    return _finish_cards(records, elements, source_url, preset)
 
 
 def _extract_records_parsel(text: str, source_url: str, root_css: str | None, root_xpath: str | None, fields: list, preset: dict) -> list[dict[str, object]]:
@@ -279,7 +280,7 @@ def _extract_records_parsel(text: str, source_url: str, root_css: str | None, ro
 
     document = Selector(text=text)
     roots = document.xpath(root_xpath) if root_xpath else document.css(root_css)
-    records = []
+    records, elements = [], []
     for root in roots:
         record: dict[str, object] = {}
         for field in fields:
@@ -288,8 +289,9 @@ def _extract_records_parsel(text: str, source_url: str, root_css: str | None, ro
                 if value is not None:
                     record[field["key"]] = apply_field(value, field, source_url, preset)
                     break
-        records.append(_with_provenance(_with_element(record, root.get(), source_url, preset), source_url, preset))
-    return records
+        records.append(record)
+        elements.append(root.get())
+    return _finish_cards(records, elements, source_url, preset)
 
 
 def _parsel_value(root, selector: dict) -> str | None:
@@ -322,7 +324,7 @@ def _parsel_value(root, selector: dict) -> str | None:
 def _extract_records_selectolax(text: str, source_url: str, root_css: str, fields: list, preset: dict) -> list[dict[str, object]]:
     from selectolax.parser import HTMLParser
 
-    records = []
+    records, elements = [], []
     for root in HTMLParser(text).css(root_css):
         record: dict[str, object] = {}
         for field in fields:
@@ -339,8 +341,9 @@ def _extract_records_selectolax(text: str, source_url: str, root_css: str, field
                 if value:
                     record[field["key"]] = apply_field(value, field, source_url, preset)
                     break
-        records.append(_with_provenance(_with_element(record, root.html or "", source_url, preset), source_url, preset))
-    return records
+        records.append(record)
+        elements.append(root.html or "")
+    return _finish_cards(records, elements, source_url, preset)
 
 
 def _extract_json_records(document: object, source_url: str, extraction: dict, fields: list[object], preset: dict[str, object]) -> list[dict[str, object]]:
@@ -392,12 +395,14 @@ def _flatten(item: dict, prefix: str = "", depth: int = 0) -> dict[str, object]:
     return flat
 
 
-def _with_element(record: dict[str, object], element_html: str, source_url: str, preset: dict[str, object]) -> dict[str, object]:
-    """At the `standard` details level and above, add everything inside the record's element (`item.*`)."""
-    if details.at_least(preset, "standard"):
-        for key, value in details.element_details(element_html, source_url, details.region_of(preset)).items():
-            record.setdefault(key, value)
-    return record
+def _finish_cards(records: list[dict[str, object]], elements: list[str], source_url: str, preset: dict[str, object]) -> list[dict[str, object]]:
+    """At the `standard` details level and above, add everything inside each record's element (`item.*`), including
+    the fields all the page's cards share, detected from the grid itself; then value details and provenance."""
+    if details.at_least(preset, "standard") and records:
+        for record, extra in zip(records, details.grid_details(elements, source_url, details.region_of(preset))):
+            for key, value in extra.items():
+                record.setdefault(key, value)
+    return [_with_provenance(record, source_url, preset) for record in records]
 
 
 def _with_provenance(record: dict[str, object], source_url: str, preset: dict[str, object]) -> dict[str, object]:

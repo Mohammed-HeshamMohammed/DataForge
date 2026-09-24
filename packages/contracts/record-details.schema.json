@@ -108,6 +108,16 @@
             "stop_reason": {
               "type": "string",
               "minLength": 1
+            },
+            "fetch_ms": {
+              "description": "Total time spent downloading item pages, in milliseconds",
+              "type": "integer",
+              "minimum": 0
+            },
+            "parse_ms": {
+              "description": "Total time spent reading item pages, in milliseconds",
+              "type": "integer",
+              "minimum": 0
             }
           }
         }

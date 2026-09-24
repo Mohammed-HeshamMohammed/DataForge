@@ -154,10 +154,11 @@ def test_default_level_is_standard_and_structured_records_carry_page_metadata() 
 
 
 def test_preset_details_section_is_validated() -> None:
-    preset = catalog_preset("full", follow={"field": "link", "max_pages": 50})
+    preset = catalog_preset("full", follow={"field": "link", "max_pages": 50, "text": "precise"})
     assert validate_preset(preset) == []
     for bad, message in (({"level": "everything"}, "details.level"), ({"follow": {"max_pages": -1}}, "details.follow.max_pages"),
-                         ({"follow": {"field": ""}}, "details.follow.field"), ({"follow": "x"}, "details.follow must be")):
+                         ({"follow": {"field": ""}}, "details.follow.field"), ({"follow": "x"}, "details.follow must be"),
+                         ({"follow": {"text": "slow"}}, "details.follow.text")):
         broken = catalog_preset(None)
         broken["details"] = bad
         assert any(message in error for error in validate_preset(broken)), bad
@@ -187,10 +188,16 @@ def test_full_level_follows_detail_pages_under_policy(site) -> None:
     assert records["Widget 1 again"]["detail.sku"] == "SKU-1"  # the same detail page is read once
     assert records["Missing 6"]["detail.status"] == 404 and "detail.sku" not in records["Missing 6"]
     assert not any(k.startswith("detail.") for k in records["Secret 4"]) and not any(k.startswith("detail.") for k in records["Elsewhere 5"])
-    assert result.details == {"candidates": 6, "fetched": 2, "reused": 1, "failed": 1, "skipped_scope": 1, "skipped_robots": 1, "stop_reason": "completed"}
+    counts = {k: v for k, v in result.details.items() if not k.endswith("_ms")}
+    assert counts == {"candidates": 6, "fetched": 2, "reused": 1, "failed": 1, "skipped_scope": 1, "skipped_robots": 1, "stop_reason": "completed"}
+    assert result.details["fetch_ms"] >= 0 and result.details["parse_ms"] > 0
     assert any("outside the preset scope" in w for w in result.warnings) and any("robots.txt" in w for w in result.warnings)
     assert "/private/secret" not in state.requests and state.requests.count("/item/SKU-1") == 1
-    assert [e["detail_page"] for e in events if "detail_page" in e] == [1, 2]
+    outcomes = [(e["detail_page"], e["url"].removeprefix(base), e["status"]) for e in events if "detail_page" in e]
+    assert outcomes == [(1, "/item/SKU-1", "done"), (2, "/item/SKU-2", "done"), (3, "/item/SKU-1", "reused"), (4, "/private/secret", "skipped"),
+                        (5, "https://elsewhere.example/item", "skipped"), (6, "/item/NOPE", "failed")]
+    done = next(e for e in events if e.get("status") == "done")
+    assert done["fields"] > 30 and done["fetch_ms"] >= 0 and done["parse_ms"] > 0
     summary = details.summarize(list(result.records), "full", result.details)
     assert summary["records_enriched"] == 6 and summary["groups"]["detail"] > 30 and summary["coverage"]["item.link"] == 1.0
 
@@ -250,7 +257,8 @@ def test_scrapy_engine_adds_the_same_details(site) -> None:
         return sorted(({k: v for k, v in r.items() if k not in volatile} for r in result.records), key=lambda r: r["title"])
 
     assert comparable(httpx_result) == comparable(scrapy_result)
-    assert scrapy_result.details == httpx_result.details and scrapy_result.engine == "scrapy"
+    without_timings = lambda stats: {k: v for k, v in stats.items() if not k.endswith("_ms")}  # noqa: E731
+    assert without_timings(scrapy_result.details) == without_timings(httpx_result.details) and scrapy_result.engine == "scrapy"
 
 
 # --- structured data mappings ----------------------------------------------------------------------
@@ -359,3 +367,96 @@ def test_bot_checks_used_by_large_retailers_stop_collection() -> None:
     page = "<form method='get' action='/errors/validateCaptcha'><input name='amzn'></form>"
     assert any(marker in page.lower() for marker in CHALLENGE_MARKERS)
     assert all(marker not in item_page(PRODUCTS[0]).lower() for marker in CHALLENGE_MARKERS)
+
+
+# --- fields detected from the grid itself --------------------------------------------------------------
+
+def _retail_cards(count: int = 16) -> list[str]:
+    import re
+
+    from retail_grid import grid
+
+    return re.findall(r"<div data-component-type='s-search-result'.*?</div></div>", grid(count))
+
+
+def test_grid_fields_find_what_every_card_shares_with_readable_names() -> None:
+    cards = details.grid_details(_retail_cards(), "https://shop.test/s?k=widget")
+    first, fourth = cards[0], cards[3]
+    assert first["item.badge"] == "Best Seller" and "item.badge" not in fourth  # a flag on some cards, not boilerplate
+    assert (first["item.ratings"], first["item.sales"], first["item.delivery"]) == ("1,000 ratings", "50+ bought in past month", "FREE delivery Thu, Oct 1")
+    assert first["item.coupon"] == "Save 5% with coupon" and first["item.availability"] == "Only 1 left in stock - order soon."
+    assert first["item.price"] == "$19.99" and first["item.rating"] == "3.0 out of 5 stars" and first["item.data.asin"] == "B000000000"
+    keys = set().union(*cards)
+    assert not {"item.size", "item.color", "item.count"} & keys  # utility classes and repeated numbers never become fields
+    assert "item.data.component_type" not in keys and not any("add to cart" in str(v).lower() for card in cards for k, v in card.items() if k != "item.text")
+    assert not any(v == "19." for card in cards for v in card.values())  # split screen-reader price pieces are skipped
+
+
+def test_grid_fields_flow_through_extraction_with_value_details() -> None:
+    from retail_grid import grid
+
+    preset = catalog_preset("standard")
+    preset["extraction"]["record_root"] = {"css": "div[data-component-type=s-search-result]"}
+    preset["extraction"]["fields"] = [{"key": "title", "selectors": [{"css": "h2 a span"}]}]
+    for parser in ("bs4", "parsel", "selectolax"):
+        preset["extraction"]["parser"] = parser
+        records, _, _ = extract_document(grid(6), "https://shop.test/s", preset)
+        assert len(records) == 6, parser
+        first = records[0]
+        assert first["item.delivery"].startswith("FREE delivery") and first["item.price.amount"] == 19.99 and first["item.rating.value"] == 3.0, parser
+        assert first["item.availability.in_stock"] == "true" and first["item.ratings.number"] == 1000, parser
+    summary = details.describe_grid(_retail_cards(6), "https://shop.test/s")
+    by_key = {f["key"]: f for f in summary}
+    assert by_key["item.badge"]["coverage"] < 1 and by_key["item.delivery"]["examples"][0].startswith("FREE delivery")
+
+
+def test_single_record_roots_keep_every_value() -> None:
+    [record] = details.grid_details(["<div class='product'><h1>Solo</h1><span class='maker'>Acme</span><span class='weight'>2 kg</span></div>"], "https://x.test/")
+    assert record["item.heading"] == "Solo" and record["item.weight"] == "2 kg" and any(v == "Acme" for v in record.values())
+
+
+def test_grid_details_are_fast_enough_for_large_grids() -> None:
+    import time
+
+    cards = _retail_cards(16) * 10
+    details.grid_details(cards[:5], "https://shop.test/")
+    started = time.perf_counter()
+    details.grid_details(cards, "https://shop.test/")
+    per_card = (time.perf_counter() - started) * 1000 / len(cards)
+    assert per_card < 10, per_card  # about 1 ms on a developer machine; the bound only catches pathological regressions
+
+
+def test_item_pages_read_json_ld_first_and_skip_slow_syntaxes(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[tuple] = []
+    original = structured.extract_entities
+
+    def spy(html, url, syntaxes=structured.SYNTAXES):
+        calls.append(tuple(syntaxes))
+        return original(html, url, syntaxes)
+
+    monkeypatch.setattr(structured, "extract_entities", spy)
+    found = details.detail_page_details(item_page(PRODUCTS[0]), "https://shop.test/item/SKU-1")
+    assert calls == [("json-ld",)] and found["detail.sku"] == "SKU-1"
+    calls.clear()
+    microdata = "<div itemscope itemtype='https://schema.org/Product'><span itemprop='name'>Solo</span><meta itemprop='sku' content='S-1'></div>"
+    assert details.detail_page_details(microdata, "https://x.test/p")["detail.sku"] == "S-1" and calls == [("json-ld",), ("microdata", "microformat")]
+
+
+def test_item_pages_show_visible_facts_and_bullets() -> None:
+    page = ("<html><body><main><h1>Solo Widget</h1><span class='price'><del>$30.00</del> <b>$25.00</b></span><div id='availability'>In stock</div>"
+            "<span class='rating' aria-label='4.5 out of 5 stars'></span><ul><li>Made from brushed stainless steel for years of use</li>"
+            "<li>Fits every standard kitchen drawer and cupboard</li><li>Dishwasher safe and easy to clean after cooking</li></ul></main></body></html>")
+    found = details.detail_page_details(page, "https://x.test/p")
+    assert (found["detail.heading"], found["detail.price_shown"], found["detail.price_original"]) == ("Solo Widget", "$25.00", "$30.00")
+    assert found["detail.availability_shown"] == "In stock" and found["detail.rating_shown"] == "4.5 out of 5 stars"
+    assert found["detail.bullet_count"] == 3 and found["detail.bullets"].startswith("Made from brushed")
+    assert found["detail.price_shown.amount"] == 25.0 and found["detail.rating_shown.value"] == 4.5
+
+
+def test_item_fields_picked_in_the_webview_match_raw_html() -> None:
+    preset = catalog_preset("full", follow={"fields": [
+        {"key": "weight", "selectors": [{"css": "body > main > table.specs > tbody > tr:nth-of-type(1) > td"}]},
+        {"key": "color", "selectors": [{"css": "div.gone"}, {"xpath": "./main[1]/table[1]/tbody[1]/tr[2]/td[1]"}]},
+    ]})
+    found = details.detail_fields(item_page(PRODUCTS[0]), "https://shop.test/item/SKU-1", preset)
+    assert found == {"detail.weight": "1.5 kg", "detail.color": "Blue"}

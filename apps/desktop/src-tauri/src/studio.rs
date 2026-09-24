@@ -11,7 +11,7 @@ use tauri::{AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, Rect, Url
 
 const LABEL: &str = "scrape-studio";
 const BRIDGE_SCRIPT: &str = include_str!("studio.js");
-const BRIDGE_ACTIONS: &[&str] = &["setMode", "takePicks", "pageInfo", "count", "extract", "scrollStep", "links", "html"];
+const BRIDGE_ACTIONS: &[&str] = &["setMode", "takePicks", "pageInfo", "count", "extract", "scrollStep", "links", "html", "markItems"];
 
 #[derive(Default)]
 pub struct StudioState(Mutex<Vec<String>>);
@@ -172,6 +172,7 @@ mod tests {
         let script = bridge_script("count", &json!(["a'); alert(1); ('"])).unwrap();
         assert!(script.contains(r#"window.__dataforgeStudio.count("a'); alert(1); ('")"#));
         assert!(bridge_script("eval", &json!([])).is_err());
+        assert!(bridge_script("markItems", &json!([{"clear": true}])).unwrap().contains(r#"markItems({"clear":true})"#));
         assert!(bridge_script("count", &json!({"x": 1})).is_err());
     }
 
