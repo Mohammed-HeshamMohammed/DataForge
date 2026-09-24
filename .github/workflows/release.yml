@@ -1,20 +1,118 @@
 name: Release
 
-# Protected release tags only. Configure a "release" environment with required reviewers and store
-# TAURI_SIGNING_PRIVATE_KEY / TAURI_SIGNING_PRIVATE_KEY_PASSWORD as environment secrets (never repository secrets).
+# Two ways to publish a release:
+#
+# 1. Actions → Release → Run workflow (recommended). Choose which part of the version to raise (patch, minor, major)
+#    and the channel (stable, or beta for X.Y.Z-beta.N), or type an exact version. The "version" job bumps every
+#    manifest with scripts/bump-version.py, commits "Release vX.Y.Z" to the default branch, and tags it; the build
+#    job then tests, builds, signs, and publishes that exact commit. Each run produces a new, higher version.
+# 2. Push a tag vX.Y.Z whose version already matches tauri.conf.json (the build job alone runs).
+#
+# Setup: create a "release" environment (optionally with required reviewers) holding TAURI_SIGNING_PRIVATE_KEY and
+# TAURI_SIGNING_PRIVATE_KEY_PASSWORD as environment secrets. If the default branch is protected against pushes from
+# workflows, also add a RELEASE_PUSH_TOKEN secret (a fine-grained token with Contents: read and write) so the version
+# commit and tag can be pushed. Tags created with the default GITHUB_TOKEN do not start other workflows, which is
+# why the build runs in this same workflow instead of waiting for the tag.
 on:
   push:
     tags: ["v*.*.*"]
+  workflow_dispatch:
+    inputs:
+      part:
+        description: Part of the version to raise
+        type: choice
+        options: [patch, minor, major]
+        default: patch
+      channel:
+        description: "stable: a normal release. beta: a pre-release (X.Y.Z-beta.N) on the beta update channel"
+        type: choice
+        options: [stable, beta]
+        default: stable
+      version:
+        description: Exact version instead (optional, for example 1.0.0 or 1.0.0-beta.2)
+        type: string
+        required: false
 
 permissions:
   contents: write
 
+# One release at a time, so two runs can never compute the same next version.
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
-  windows:
-    runs-on: windows-latest
-    environment: release
+  version:
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.bump.outputs.tag }}
+      version: ${{ steps.bump.outputs.version }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          fetch-depth: 0
+          token: ${{ secrets.RELEASE_PUSH_TOKEN || github.token }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Version files agree before the bump
+        run: python scripts/bump-version.py check
+
+      - name: Bump the version in every manifest
+        id: bump
+        env:
+          PART: ${{ inputs.part }}
+          CHANNEL: ${{ inputs.channel }}
+          EXACT: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          previous=$(python scripts/bump-version.py current)
+          if [ -n "$EXACT" ]; then
+            version=$(python scripts/bump-version.py set "$EXACT")
+          else
+            version=$(python scripts/bump-version.py bump --part "$PART" --channel "$CHANNEL")
+          fi
+          python scripts/bump-version.py check
+          if [ "$version" = "$previous" ]; then
+            echo "::error::The version is already $version; choose a higher version"
+            exit 1
+          fi
+          if git rev-parse -q --verify "refs/tags/v$version" >/dev/null; then
+            echo "::error::Tag v$version already exists; choose a higher version"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+          echo "### DataForge $previous → $version" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Commit, tag, and push
+        env:
+          TAG: ${{ steps.bump.outputs.tag }}
+          BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # [skip ci]: with RELEASE_PUSH_TOKEN the tag push would otherwise start a second, duplicate build.
+          git commit -am "Release $TAG [skip ci]"
+          git tag -a "$TAG" -m "DataForge $TAG"
+          git push origin "HEAD:$BRANCH" "$TAG"
+
+  windows:
+    needs: version
+    # Runs after a successful bump, or on its own for a hand-pushed tag (not for the tag the version job pushed).
+    if: always() && (needs.version.result == 'success' || (github.event_name == 'push' && !contains(github.event.head_commit.message, '[skip ci]')))
+    runs-on: windows-latest
+    environment: release
+    env:
+      RELEASE_TAG: ${{ needs.version.outputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
@@ -25,11 +123,8 @@ jobs:
       - run: python -m pip install -r requirements-dev.txt
       - run: npm ci --prefix apps/desktop
 
-      - name: Verify tag matches app version
-        shell: pwsh
-        run: |
-          $version = (Get-Content apps/desktop/src-tauri/tauri.conf.json | ConvertFrom-Json).version
-          if ("v$version" -ne "${{ github.ref_name }}") { throw "Tag ${{ github.ref_name }} does not match app version $version" }
+      - name: Verify the tag matches every version file
+        run: python scripts/bump-version.py check --tag ${{ env.RELEASE_TAG }}
 
       - name: Tests
         run: |
@@ -50,12 +145,12 @@ jobs:
           $bundle = "apps/desktop/src-tauri/target/release/bundle/nsis"
           $installer = Get-ChildItem "$bundle/*-setup.exe" | Select-Object -First 1
           $signature = Get-Content "$($installer.FullName).sig" -Raw
-          $version = "${{ github.ref_name }}".TrimStart("v")
+          $version = "$env:RELEASE_TAG".TrimStart("v")
           @{
             version = $version
-            notes = "See https://github.com/${{ github.repository }}/releases/tag/${{ github.ref_name }}"
+            notes = "See https://github.com/${{ github.repository }}/releases/tag/$env:RELEASE_TAG"
             pub_date = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
-            platforms = @{ "windows-x86_64" = @{ signature = $signature.Trim(); url = "https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/$($installer.Name)" } }
+            platforms = @{ "windows-x86_64" = @{ signature = $signature.Trim(); url = "https://github.com/${{ github.repository }}/releases/download/$env:RELEASE_TAG/$($installer.Name)" } }
           } | ConvertTo-Json -Depth 5 | Set-Content "$bundle/latest.json"
 
       - name: SBOM
@@ -63,12 +158,14 @@ jobs:
         with:
           path: .
           format: spdx-json
-          output-file: apps/desktop/src-tauri/target/release/bundle/nsis/SBOM-${{ github.ref_name }}.spdx.json
+          output-file: apps/desktop/src-tauri/target/release/bundle/nsis/SBOM-${{ env.RELEASE_TAG }}.spdx.json
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          prerelease: ${{ contains(github.ref_name, '-') }}
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: DataForge ${{ env.RELEASE_TAG }}
+          prerelease: ${{ contains(env.RELEASE_TAG, '-') }}
           generate_release_notes: true
           files: |
             apps/desktop/src-tauri/target/release/bundle/nsis/*-setup.exe
@@ -79,7 +176,7 @@ jobs:
 
       # Beta channel clients read latest.json from a rolling "beta" release; stable reads releases/latest.
       - name: Update beta channel manifest
-        if: contains(github.ref_name, '-')
+        if: contains(env.RELEASE_TAG, '-')
         uses: softprops/action-gh-release@v2
         with:
           tag_name: beta

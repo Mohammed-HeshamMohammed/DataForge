@@ -13,8 +13,8 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Callable
 
-from . import SCHEMA_VERSION
-from . import datasets, matching, projects, scraping, sources
+from . import SCHEMA_VERSION, __version__
+from . import datasets, matching, overview, projects, scraping, sources
 from .contracts import health_check
 from .jobs import JobContext, JobKind, JobRunner, JobValidationError, fixture_job
 from .logs import log
@@ -55,6 +55,8 @@ class Service:
             "project.current": lambda p: self.project,
             "project.recent": lambda p: projects.recent_projects(),
             "project.summary": self._project_summary,
+            "project.overview": lambda p: overview.build(self._store(), self._require_project(), scraping.list_presets(self._store(), self.presets_dir),
+                                                         min(max(int(p.get("days", 14)), 7), 90), int(p.get("tz_offset_minutes", 0))),
             "dataset.import": self._dataset_import,
             "dataset.list": lambda p: datasets.list_datasets(self._store(), self._project_id()),
             "dataset.rows": lambda p: datasets.dataset_rows(self._store(), p["dataset_id"], int(p.get("offset", 0)), min(int(p.get("limit", 50)), 500)),
@@ -85,6 +87,7 @@ class Service:
             "scrape.check_signals": lambda p: sources.check_signals(self._store(), p["url"], p.get("purpose") or sources.get_settings(self._store())["default_purpose"]),
             "scrape.run_signals": lambda p: sources.run_signals(self._store(), self._scrape_run_id(p["job_id"])),
             "scrape.detect_structured": lambda p: sources.detect_structured(*sources.page_html(p, self._store(), scraping.validate_url)),
+            "scrape.test_detail": lambda p: sources.test_detail(p, self._store(), scraping.validate_url),
             "scrape.suggest_selectors": lambda p: sources.suggest_selectors(*sources.page_html(p, self._store(), scraping.validate_url), p.get("examples") or {}),
             "scrape.propose_presets": lambda p: sources.propose_presets(self._store(), *sources.page_html(p, self._store(), scraping.validate_url), p.get("provider")),
             "preset.maintenance_report": self._maintenance_report,
@@ -142,6 +145,11 @@ class Service:
             code, message = "internal_error", f"{type(error).__name__}: {error}"
         return {"schema_version": SCHEMA_VERSION, "ok": False, "error": {"code": code, "message": message}}
 
+    def _require_project(self) -> dict:
+        if self.project is None:
+            raise CommandError("no_project", "Open or create a project first")
+        return self.project
+
     def _store(self) -> ProjectStore:
         if self.store is None:
             raise CommandError("no_project", "Open or create a project first")
@@ -187,7 +195,7 @@ class Service:
         return {
             "app_data_dir": str(app_data), "logs_dir": str(app_data / "logs"), "docs_dir": str(docs) if docs.is_dir() else None,
             "plan_file": str(REPO_ROOT / "DATAFORGE_MASTER_PLAN.md") if (REPO_ROOT / "DATAFORGE_MASTER_PLAN.md").is_file() else None,
-            "project_root": self.project["root_path"] if self.project else None, "schema_version": SCHEMA_VERSION,
+            "project_root": self.project["root_path"] if self.project else None, "schema_version": SCHEMA_VERSION, "version": __version__,
         }
 
     def _scrape_run_id(self, job_id: str) -> str:

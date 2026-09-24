@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { version as tauriVersion } from "../../src-tauri/tauri.conf.json";
 import { call, isTauri, pickDirectory, pickFile } from "../lib/ipc.ts";
 import { useService } from "../lib/hooks.ts";
 import {
@@ -32,7 +33,8 @@ export const TABS: { id: Tab; label: string; title: string }[] = [
   { id: "settings", label: "Settings", title: "Settings" },
 ];
 
-export const APP_VERSION = "0.2.0";
+// The installed version comes from tauri.conf.json, which scripts/bump-version.py keeps in step with every manifest.
+export const APP_VERSION: string = tauriVersion;
 
 type Layout = { left: boolean; right: boolean; compact: boolean };
 type AppInfo = { app_data_dir: string; logs_dir: string; docs_dir: string | null; plan_file: string | null; project_root: string | null };

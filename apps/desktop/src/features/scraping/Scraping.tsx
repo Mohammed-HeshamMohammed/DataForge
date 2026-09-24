@@ -185,6 +185,8 @@ export function Scraping({ navigate }: { navigate: Navigate }) {
                     </dd>
                     <dt>Policy</dt>
                     <dd>Robots {String(preset.policy.robots_policy)}; honours TDMRep and AIPREF signals; stops on login, CAPTCHA, access denial, paywall, or rate limit</dd>
+                    <dt>Item pages</dt>
+                    <dd>{itemPagesLabel(preset)}</dd>
                   </dl>
                   </details>
                   {preset.errors.length > 0 && <ErrorNote message={`Preset is invalid: ${preset.errors.join("; ")}`} />}
@@ -272,6 +274,13 @@ const SCRAPING_VIEWS: { id: ScrapingView; label: string }[] = [
   { id: "watches", label: "Watches" },
   { id: "customize", label: "Customize preset" },
 ];
+
+function itemPagesLabel(preset: Preset): string {
+  const follow = (preset.details as { follow?: { field?: string; fields?: { key: string }[] } } | undefined)?.follow;
+  const own = follow?.fields?.map((f) => f.key) ?? [];
+  const link = follow?.field ? `from the "${follow.field}" link` : "from each record's link";
+  return `With Record detail: Full, opened ${link}${own.length ? `; also reads ${own.join(", ")}` : ""}. Add item-page fields under Customize preset.`;
+}
 
 function extractionLabel(preset: Preset): string {
   const mode = preset.strategy.preferred === "api" ? "api" : (preset.extraction.mode ?? "selectors");
@@ -526,8 +535,38 @@ export function ScrapeResult({ result, onOpenDataset, jobId }: { result: Record<
 
 type Proposal = { source: string; preset: Preset; evaluation: { records: number; field_coverage: Record<string, number> } };
 
+type ItemFieldRow = { key: string; css: string; attribute: string };
+const ITEM_ATTRIBUTES = ["text", "href", "src", "content", "datetime", "title", "alt", "aria-label"];
+
+/** Rows for the editor from a preset's `details.follow.fields` (first selector of each field). */
+function itemRows(preset: Preset): ItemFieldRow[] {
+  const follow = (preset.details as { follow?: { fields?: { key: string; selectors?: { css?: string; attribute?: string }[] }[] } } | undefined)?.follow;
+  return (follow?.fields ?? []).map((f) => ({ key: f.key, css: f.selectors?.[0]?.css ?? "", attribute: f.selectors?.[0]?.attribute ?? "text" }));
+}
+
+/** `details` for a draft preset: the item link field and item-page fields, read at Record detail "Full". */
+export function itemDetails(link: string, rows: ItemFieldRow[]): Record<string, unknown> | undefined {
+  const fields = rows
+    .filter((row) => row.key.trim() && row.css.trim())
+    .map((row) => {
+      const url = row.attribute === "href" || row.attribute === "src";
+      return {
+        key: row.key.trim().toLowerCase().replace(/[^a-z0-9_]+/g, "_").replace(/^_+|_+$/g, "") || "field",
+        type: url ? "url" : "string",
+        selectors: [{ css: row.css.trim(), ...(row.attribute === "text" ? {} : { attribute: row.attribute }) }],
+        transforms: url ? ["to_absolute_url"] : ["trim", "collapse_whitespace"],
+      };
+    });
+  if (!link && !fields.length) return undefined;
+  return { level: "full", follow: { ...(link ? { field: link } : {}), fields } };
+}
+
 function PresetEditor({ preset, url, purpose, onSaved }: { preset: Preset; url: string; purpose: string; onSaved: (key: string) => void }) {
   const [name, setName] = useState("");
+  const [itemLink, setItemLink] = useState("");
+  const [items, setItems] = useState<ItemFieldRow[]>([]);
+  const [sampleUrl, setSampleUrl] = useState("");
+  const [preview, setPreview] = useState<{ url: string; details: Record<string, unknown>; missing: string[] } | null>(null);
   const [version, setVersion] = useState("1.0.0");
   const [extraction, setExtraction] = useState("");
   const [pagination, setPagination] = useState("");
@@ -547,7 +586,37 @@ function PresetEditor({ preset, url, purpose, onSaved }: { preset: Preset; url: 
     setProposals(null);
     setNotice(null);
     setError(null);
+    setItemLink(((preset.details as { follow?: { field?: string } } | undefined)?.follow?.field as string) ?? "");
+    setItems(itemRows(preset));
+    setPreview(null);
   }, [preset]);
+
+  const linkChoices = useMemo(() => {
+    try {
+      const fields = (JSON.parse(extraction).fields ?? []) as { key: string; type?: string; selectors?: { css?: string; attribute?: string }[] }[];
+      return fields.filter((f) => f.type === "url" || (f.selectors ?? []).some((s) => s.attribute === "href" || /::attr\(href\)/.test(s.css ?? ""))).map((f) => f.key);
+    } catch {
+      return [];
+    }
+  }, [extraction]);
+
+  const testItem = async () => {
+    setBusy("item");
+    try {
+      const host = new URL(sampleUrl).hostname;
+      const scoped = { ...preset, url_scope: preset.url_scope.user_supplied_host ? { ...preset.url_scope, allowed_hosts: [host] } : preset.url_scope };
+      const result = await call<{ url: string; details: Record<string, unknown>; missing: string[] }>("scrape.test_detail", {
+        preset: { ...scoped, details: itemDetails(itemLink, items) ?? { level: "full" } }, url: sampleUrl, purpose,
+      });
+      setPreview(result);
+      setError(null);
+    } catch (err) {
+      setPreview(null);
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy(null);
+    }
+  };
 
   const fetchPreset = () => ({ ...preset, url_scope: preset.url_scope.user_supplied_host && url ? { ...preset.url_scope, allowed_hosts: [new URL(url).hostname] } : preset.url_scope });
 
@@ -600,6 +669,7 @@ function PresetEditor({ preset, url, purpose, onSaved }: { preset: Preset; url: 
         parent_preset_version: parent.version,
         extraction: JSON.parse(extraction),
         pagination: JSON.parse(pagination),
+        details: itemDetails(itemLink, items),
         ...(parsedDiscovery.mode && parsedDiscovery.mode !== "none" ? { discovery: parsedDiscovery } : preset.discovery ? { discovery: parsedDiscovery } : {}),
       };
       const { errors } = await call<{ errors: string[] }>("preset.validate", { preset: draft });
@@ -684,6 +754,65 @@ function PresetEditor({ preset, url, purpose, onSaved }: { preset: Preset; url: 
         <span>Pagination</span>
         <textarea className="code" rows={5} value={pagination} onChange={(e) => setPagination(e.target.value)} spellCheck={false} />
       </label>
+      {htmlPreset && (
+        <div className="field-card">
+          <h3 className="section-label">Item pages</h3>
+          <p className="muted small">
+            With Record detail set to Full, DataForge opens each record's own page (for example each product in a grid) and adds its structured data, specifications, text, contacts,
+            and images. Add the values you also want from that page. Item pages follow the same scope, robots.txt, signal, and delay rules as every other request.
+          </p>
+          <label className="field">
+            <span>Item link field</span>
+            <select value={itemLink} onChange={(e) => setItemLink(e.target.value)}>
+              <option value="">Automatic (a link field, else the first link in each record)</option>
+              {linkChoices.map((key) => (
+                <option key={key}>{key}</option>
+              ))}
+            </select>
+          </label>
+          {items.map((row, index) => (
+            <div key={index} className="field-card-row">
+              <input aria-label="Item-page field name" value={row.key} placeholder="description" onChange={(e) => setItems(items.map((r, i) => (i === index ? { ...r, key: e.target.value } : r)))} />
+              <input
+                className="code"
+                aria-label={`CSS selector for ${row.key || "the field"} on the item page`}
+                value={row.css}
+                placeholder="#productDescription"
+                onChange={(e) => setItems(items.map((r, i) => (i === index ? { ...r, css: e.target.value } : r)))}
+                spellCheck={false}
+              />
+              <select aria-label={`What to read for ${row.key || "the field"}`} value={row.attribute} onChange={(e) => setItems(items.map((r, i) => (i === index ? { ...r, attribute: e.target.value } : r)))}>
+                {ITEM_ATTRIBUTES.map((a) => (
+                  <option key={a}>{a}</option>
+                ))}
+              </select>
+              <button type="button" className="icon-btn-plain" aria-label={`Remove item-page field ${row.key || index + 1}`} onClick={() => setItems(items.filter((_, i) => i !== index))}>
+                ✕
+              </button>
+            </div>
+          ))}
+          <div className="row-actions">
+            <button type="button" className="btn btn-small" onClick={() => setItems([...items, { key: "", css: "", attribute: "text" }])}>
+              Add item-page field
+            </button>
+          </div>
+          <div className="path-input">
+            <label className="field">
+              <span>Sample item page URL</span>
+              <input value={sampleUrl} onChange={(e) => setSampleUrl(e.target.value)} placeholder="https://example.com/product/123" spellCheck={false} />
+            </label>
+            <button type="button" className="btn btn-small" disabled={!/^https?:\/\//.test(sampleUrl) || busy !== null} onClick={() => void testItem()}>
+              {busy === "item" ? "Reading…" : "Test item page"}
+            </button>
+          </div>
+          {preview && (
+            <>
+              {preview.missing.length > 0 && <p className="note note-warning small">Not found on this page: {preview.missing.join(", ")}. Check those selectors.</p>}
+              <RecordInspector record={preview.details} title={`What DataForge reads from ${preview.url}`} onClose={() => setPreview(null)} />
+            </>
+          )}
+        </div>
+      )}
       <button type="button" className="btn btn-primary" disabled={!name} onClick={() => void save()}>
         Validate and save custom preset
       </button>

@@ -96,3 +96,47 @@ export function mappingProblems(mapping: Record<string, string>): string[] {
   }
   return problems;
 }
+
+/** 1,284 / 12.9K / 4.2M: compact figures for stat tiles and chart labels. */
+export function compactNumber(value: number | null | undefined): string {
+  if (value === null || value === undefined || Number.isNaN(value)) return "—";
+  const abs = Math.abs(value);
+  if (abs < 10_000) return Math.round(value).toLocaleString("en-US");
+  const [divisor, suffix] = abs >= 1e9 ? [1e9, "B"] : abs >= 1e6 ? [1e6, "M"] : [1e3, "K"];
+  const scaled = value / divisor;
+  return `${scaled.toFixed(Math.abs(scaled) < 100 ? 1 : 0).replace(/\.0$/, "")}${suffix}`;
+}
+
+export function formatBytes(bytes: number | null | undefined): string {
+  if (!bytes) return "0 B";
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  const index = Math.min(units.length - 1, Math.floor(Math.log(bytes) / Math.log(1024)));
+  const value = bytes / 1024 ** index;
+  return `${value.toFixed(index === 0 || value >= 100 ? 0 : 1).replace(/\.0$/, "")} ${units[index]}`;
+}
+
+/** "just now", "5 min ago", "3 h ago", "2 days ago", then the date. */
+export function relativeTime(iso: string | null | undefined, now: number = Date.now()): string {
+  if (!iso) return "—";
+  const then = new Date(iso).getTime();
+  if (Number.isNaN(then)) return iso;
+  const seconds = Math.round((now - then) / 1000);
+  if (seconds < 0) {
+    const ahead = -seconds;
+    if (ahead < 3600) return `in ${Math.max(1, Math.round(ahead / 60))} min`;
+    if (ahead < 86_400) return `in ${Math.round(ahead / 3600)} h`;
+    return `in ${Math.round(ahead / 86_400)} days`;
+  }
+  if (seconds < 45) return "just now";
+  if (seconds < 3600) return `${Math.max(1, Math.round(seconds / 60))} min ago`;
+  if (seconds < 86_400) return `${Math.round(seconds / 3600)} h ago`;
+  if (seconds < 7 * 86_400) return `${Math.round(seconds / 86_400)} day${Math.round(seconds / 86_400) === 1 ? "" : "s"} ago`;
+  return new Date(iso).toLocaleDateString();
+}
+
+/** A clean axis maximum: 1, 2, 5 × 10^n at or above the data maximum. */
+export function niceMax(value: number): number {
+  if (value <= 0) return 1;
+  const magnitude = 10 ** Math.floor(Math.log10(value));
+  return ([1, 2, 5, 10].map((step) => step * magnitude).find((step) => step >= value) ?? 10 * magnitude);
+}

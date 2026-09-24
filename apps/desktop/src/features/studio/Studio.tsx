@@ -15,7 +15,10 @@ type Field = { key: string; type: "string" | "url" | "decimal" | "integer"; requ
 type Preset = Record<string, any> & { id: string; version: string; display_name: string; strategy: { preferred: string; allowed: string[] }; request_limits: Record<string, number> };
 type Pick = { fallback_xpaths?: string[]; mode: string; tag: string; text: string; attributes: Record<string, string>; suggested_attribute: string | null; selector: string; relative_selector?: string | null; inside_record_root?: boolean; repeated?: { selector: string; count: number } | null };
 type Extracted = { url: string; candidates: number; records: Record<string, string>[]; next_url: string | null; head_html?: string | null; error: string | null };
-type StagedPage = { url: string; records: Record<string, string>[]; head_html?: string | null; retrieved_at: string };
+/** An item page opened during collection: the item-page field values and a sanitized copy of the page. */
+type ItemPage = { url: string; fields: Record<string, string>; html?: string; retrieved_at: string };
+type StagedRecord = Record<string, string | ItemPage>;
+type StagedPage = { url: string; records: StagedRecord[]; head_html?: string | null; retrieved_at: string };
 type PageInfo = { url: string; title: string; ready_state: string; challenge_detected: boolean; password_fields: number; inaccessible_frames: number };
 
 const TRANSFORM_DEFAULTS: Record<Field["type"], string[]> = {
@@ -65,8 +68,13 @@ export function Studio({ navigate }: { navigate: Navigate }) {
   const [acknowledged, setAcknowledged] = useState(false);
   const settings = useService<{ default_purpose: string }>("settings.get");
   const [purpose, setPurpose] = useState("");
-  // Studio presets render pages rather than fetch them, so detail pages are read only when a preset also allows HTTP.
-  const [detailLevel, setDetailLevel] = useState<DetailLevel>("standard");
+  // Studio opens item pages in the WebView itself (Record detail: Full), one politeness delay apart.
+  const [detailLevel, setDetailLevel] = useState<DetailLevel>("full");
+  // Item pages: values picked on one item's own page, read from every item's page during collection.
+  const [itemFields, setItemFields] = useState<Field[]>([]);
+  const [linkField, setLinkField] = useState("");
+  const [listingUrl, setListingUrl] = useState<string | null>(null);
+  const pickingItemField = useRef(false);
   useEffect(() => {
     if (!purpose && settings.data) setPurpose(settings.data.default_purpose);
   }, [settings.data, purpose]);
@@ -151,6 +159,10 @@ export function Studio({ navigate }: { navigate: Navigate }) {
     }
   };
 
+  const linkFields = fields.filter((f) => f.type === "url" || (f.selectors[0]?.attribute ?? "") === "href");
+  const itemLink = linkFields.some((f) => f.key === linkField) ? linkField : linkFields[0]?.key ?? "";
+  const itemPagesOn = detailLevel === "full" && pageMode !== "detail_links";
+
   const draftPreset = useCallback((): Preset | null => {
     if (!base) return null;
     const { source: _s, errors: _e, health_status: _h, declared_status: _d, package: _p, ...clean } = base;
@@ -173,8 +185,9 @@ export function Studio({ navigate }: { navigate: Navigate }) {
               ? { type: "detail_links", links: { css: detailCss, attribute: "href" }, stop_conditions: ["max_records", "repeated_canonical_url"] }
               : { type: "none" },
       validation: { ...clean.validation, unique_by: fields.some((f) => f.type === "url") ? [fields.find((f) => f.type === "url")!.key] : [] },
+      details: { level: detailLevel, ...(itemLink || itemFields.length ? { follow: { ...(itemLink ? { field: itemLink } : {}), fields: itemFields } } : {}) },
     };
-  }, [base, name, version, recordRoot, fields, nextCss, pageMode, detailCss, maxScrolls]);
+  }, [base, name, version, recordRoot, fields, nextCss, pageMode, detailCss, maxScrolls, detailLevel, itemLink, itemFields]);
 
   const fail = (err: unknown) => setError(err instanceof Error ? err.message : String(err));
 
@@ -231,12 +244,16 @@ export function Studio({ navigate }: { navigate: Navigate }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode]);
 
-  const startPick = async (next: "element" | "repeated" | "next" | "detail") => {
+  const startPick = async (next: "element" | "repeated" | "next" | "detail", itemPage = false) => {
     try {
       setError(null);
-      await studioHost.call("setMode", [next, next === "element" ? recordRoot : null]);
+      pickingItemField.current = itemPage;
+      await studioHost.call("setMode", [next, next === "element" && !itemPage ? recordRoot : null]);
       setMode(next);
-      setNotice(next === "repeated" ? "Click one repeated card or row in the page." : next === "next" ? "Click the next-page link." : next === "detail" ? "Click one item link that opens a detail page." : "Click the value to extract inside a record.");
+      setNotice(
+        itemPage ? "Click a value on this item page (for example the full description or a specification)."
+          : next === "repeated" ? "Click one repeated card or row in the page." : next === "next" ? "Click the next-page link." : next === "detail" ? "Click one item link that opens a detail page." : "Click the value to extract inside a record.",
+      );
     } catch (err) {
       fail(err);
     }
@@ -282,6 +299,23 @@ export function Studio({ navigate }: { navigate: Navigate }) {
       }
       setDetailCss(pick.repeated.selector);
       setPageMode("detail_links");
+    } else if (pickingItemField.current) {
+      pickingItemField.current = false;
+      const type: Field["type"] = pick.suggested_attribute ? "url" : "string";
+      const base = slug(pick.text.split(/\s+/).slice(0, 3).join(" ") || pick.tag);
+      setItemFields((current) => [
+        ...current,
+        {
+          key: current.some((f) => f.key === base) ? `${base}_${current.length + 1}` : base,
+          type,
+          required: false,
+          selectors: [
+            { css: pick.selector, ...(pick.suggested_attribute ? { attribute: pick.suggested_attribute } : {}) },
+            ...(pick.fallback_xpaths ?? []).map((xpath) => ({ xpath, ...(pick.suggested_attribute ? { attribute: pick.suggested_attribute } : {}) })),
+          ],
+          transforms: TRANSFORM_DEFAULTS[type],
+        },
+      ]);
     } else {
       if (recordRoot && !pick.inside_record_root) {
         setError("That element is outside the selected repeated item. Pick a value inside a card.");
@@ -317,6 +351,81 @@ export function Studio({ navigate }: { navigate: Navigate }) {
     ]);
     if (page.error) throw new Error(page.error);
     return { page, info };
+  };
+
+  /** Open the first item's own page so values can be picked there. */
+  const openSampleItem = async () => {
+    try {
+      setError(null);
+      const { page } = await extractCurrent(1, false);
+      const link = page.records[0]?.[itemLink];
+      if (!link) throw new Error(`The first item has no value for "${itemLink}". Pick the item's link as a field (Extract: href) first.`);
+      await checkUrl(link, scopeUrl ?? link);
+      setListingUrl(page.url);
+      await studioHost.navigate(link);
+      await waitForPage(page.url);
+      setNotice("This is an item page. Pick the values you want from every item's page; automatic details are read too.");
+    } catch (err) {
+      fail(err);
+    }
+  };
+
+  const backToList = async () => {
+    if (!listingUrl) return;
+    try {
+      const current = (await studioHost.call<PageInfo>("pageInfo")).url;
+      await studioHost.navigate(listingUrl);
+      await waitForPage(current);
+      setNotice(null);
+    } catch (err) {
+      fail(err);
+    }
+  };
+
+  /** Visit each collected item's own page in the WebView (policy-checked, one delay apart) and attach what it shows. */
+  const openItemPages = async (pages: StagedPage[], delay: number) => {
+    const items = pages.flatMap((page) => page.records).filter((record) => typeof record[itemLink] === "string" && record[itemLink]);
+    const seen = new Map<string, ItemPage>();
+    let current = (await studioHost.call<PageInfo>("pageInfo")).url;
+    const listing = current;
+    let opened = 0;
+    for (const record of items) {
+      if (stopRequested.current) break;
+      const link = record[itemLink] as string;
+      const known = seen.get(link);
+      if (known) {
+        record.__detail = known;
+        continue;
+      }
+      const allowed = await call<{ allowed: boolean; reason: string | null; skippable: boolean }>("scrape.check_url", { preset: draftPreset(), url: link, scope_url: scopeUrl, purpose });
+      if (!allowed.allowed && !allowed.skippable) {
+        setNotice(`Stopped opening item pages: ${allowed.reason ?? "the site's signals do not allow it"}. Records collected so far are kept.`);
+        break;
+      }
+      if (!allowed.allowed) continue;
+      if (link !== current) {
+        await sleep(delay);
+        await studioHost.navigate(link);
+        await waitForPage(current);
+        current = link;
+      }
+      const info = await studioHost.call<PageInfo>("pageInfo");
+      if (info.challenge_detected || info.password_fields > 0) {
+        setNotice("Stopped opening item pages: the site showed a bot check or a login. DataForge never bypasses these; records collected so far are kept.");
+        break;
+      }
+      const extracted = await studioHost.call<Extracted>("extract", [{ record_root: "body", fields: itemFields, limit: 1, element_html: true, element_max: 400000 }]);
+      const { __element: html, ...values } = extracted.records[0] ?? {};
+      const item: ItemPage = { url: extracted.url, fields: values, html, retrieved_at: new Date().toISOString() };
+      seen.set(link, item);
+      record.__detail = item;
+      opened += 1;
+      setNotice(`Item page ${opened} of ${items.length}`);
+    }
+    if (current !== listing) {
+      await sleep(delay);
+      await studioHost.navigate(listing).catch(() => {});
+    }
   };
 
   const stage = async (runMode: "test" | "full", pages: StagedPage[]) => {
@@ -412,6 +521,7 @@ export function Studio({ navigate }: { navigate: Navigate }) {
         }
       }
       if (runMode === "test") pages.forEach((page, index) => (page.records = page.records.slice(0, Math.max(0, recordLimit - pages.slice(0, index).reduce((n, p) => n + p.records.length, 0)))));
+      if (itemPagesOn && itemLink && pages.length) await openItemPages(pages, delay);
       if (pages.length) await stage(runMode, pages);
       setNotice(stopRequested.current ? "Stopped. Pages collected so far were staged." : `Collected ${pages.length} page(s).`);
     } catch (err) {
@@ -600,7 +710,59 @@ export function Studio({ navigate }: { navigate: Navigate }) {
           </>
         )}
 
-        <h3 className="section-label">4. Test, save, run</h3>
+        <h3 className="section-label">4. Record detail</h3>
+        <DetailLevelField id="studio-detail-level" value={detailLevel} onChange={setDetailLevel} />
+        {itemPagesOn && (
+          <div className="field-card">
+            <strong className="small">Item pages</strong>
+            <p className="muted small">
+              Studio opens each item's own page, adds the values you pick there, and reads its structured data, specifications, text, contacts, and images. Every page is
+              checked against the site's robots.txt and signals, one delay apart, and collection stops at any bot check or login.
+            </p>
+            {linkFields.length === 0 ? (
+              <p className="note small">Pick the item's link as a field (Extract: href) so Studio knows which page to open.</p>
+            ) : (
+              <label className="field">
+                <span>Item link field</span>
+                <select value={itemLink} onChange={(e) => setLinkField(e.target.value)}>
+                  {linkFields.map((f) => (
+                    <option key={f.key}>{f.key}</option>
+                  ))}
+                </select>
+              </label>
+            )}
+            <div className="row-actions">
+              <button type="button" className="btn btn-small" disabled={!scopeUrl || !recordRoot || !itemLink || mode !== "none"} onClick={() => void openSampleItem()}>
+                Open a sample item page
+              </button>
+              <button type="button" className="btn btn-small" disabled={!scopeUrl || mode !== "none"} onClick={() => void startPick("element", true)}>
+                Pick item-page value
+              </button>
+              {listingUrl && (
+                <button type="button" className="btn btn-small" onClick={() => void backToList()}>
+                  Back to the list
+                </button>
+              )}
+            </div>
+            {itemFields.map((field, index) => (
+              <div key={index} className="field-card-row">
+                <input aria-label="Item-page field name" value={field.key} onChange={(e) => setItemFields(itemFields.map((f, i) => (i === index ? { ...f, key: slug(e.target.value) } : f)))} />
+                <input
+                  className="code"
+                  aria-label={`Selector for ${field.key} on the item page`}
+                  value={field.selectors[0].css ?? ""}
+                  onChange={(e) => setItemFields(itemFields.map((f, i) => (i === index ? { ...f, selectors: [{ ...f.selectors[0], css: e.target.value }, ...f.selectors.slice(1)] } : f)))}
+                  spellCheck={false}
+                />
+                <button type="button" className="icon-btn-plain" aria-label={`Remove item-page field ${field.key}`} onClick={() => setItemFields(itemFields.filter((_, i) => i !== index))}>
+                  ✕
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <h3 className="section-label">5. Test, save, run</h3>
         <div className="split tight">
           <label className="field">
             <span>Preset name</span>
@@ -624,7 +786,6 @@ export function Studio({ navigate }: { navigate: Navigate }) {
             ))}
           </select>
         </label>
-        <DetailLevelField id="studio-detail-level" value={detailLevel} onChange={setDetailLevel} />
         <div className="row-actions">
           <button type="button" className="btn btn-primary" disabled={!canExtract} onClick={() => void collect("test")}>
             Test 10 records

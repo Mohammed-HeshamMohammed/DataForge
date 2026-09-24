@@ -1,6 +1,6 @@
 [package]
 name = "dataforge-desktop"
-version = "0.1.0"
+version = "0.2.0"
 description = "DataForge local-first desktop application"
 authors = ["DataForge"]
 edition = "2021"

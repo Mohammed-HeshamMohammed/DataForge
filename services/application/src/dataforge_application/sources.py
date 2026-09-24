@@ -7,6 +7,8 @@ from __future__ import annotations
 import hashlib
 import json
 import threading
+
+import httpx
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import urlparse
@@ -17,6 +19,7 @@ from dataforge_scraping.diff import diff_records
 from dataforge_scraping.errors import PolicyViolation
 from dataforge_scraping.extraction import TEST_MODE_MAX_RECORDS, extract_page, validate_candidates
 from dataforge_scraping.fetch import fetch, make_client, scheduler_for
+from dataforge_scraping.presets import validate_preset
 from dataforge_scraping.resilience import coverage_drift, field_fingerprints, relocation_suggestions, suggest_from_examples
 from dataforge_scraping.runtime import FrontierStore
 from dataforge_scraping.signals import PURPOSES, SignalChecker
@@ -332,11 +335,13 @@ def make_archive_kind(presets_resolver) -> JobKind:
             dataset_id = register_staged_rows(store, store.job(context.job_id)["project_id"], records, f"archive-{params['archive']}-{context.job_id[:8]}.json",
                                               params.get("dataset_name") or f"{params['archive']} archive: {params['url_pattern'][:40]}").dataset_id
         store.complete_scrape_run(run_id, captures_read, len(records), len(rejected), len(candidates) - len(valid) - len(rejected))
+        detail_summary = details.summarize(records, details.level_of(preset))
+        store.record_scrape_details(run_id, detail_summary)
         record_signals(store, run_id, signals)
         return {"run_mode": params["run_mode"], "archive": params["archive"], "captures_read": captures_read, "records_extracted": len(records),
                 "records_rejected": len(rejected), "warnings": list(dict.fromkeys(warnings + more))[:50], "sample_records": records[:TEST_MODE_MAX_RECORDS],
                 "dataset_id": dataset_id, "signals": signals, "stop_reason": "completed", "engine": "httpx", "archive_diff": archive_diff,
-                "details": details.summarize(records, details.level_of(preset))}
+                "details": detail_summary}
 
     return JobKind(run=run, validate=validate)
 
@@ -547,6 +552,28 @@ def page_html(payload: dict, store: ProjectStore, validate) -> tuple[str, str]:
         response = fetch(client, url, preset, validate)
         checker.check_response(url, response, response.text[:100_000])
         return response.text, url
+
+
+def test_detail(payload: dict, store: ProjectStore, validate) -> dict:
+    """Preview what a preset collects from one item page: its own detail fields plus automatic details. The page
+    comes from Scrape Studio (already rendered) or is fetched once with the policy client, like suggestions."""
+    preset = payload.get("preset")
+    if not isinstance(preset, dict):
+        raise ValueError("A preset is required")
+    errors = [e for e in validate_preset({k: v for k, v in preset.items() if k not in ("source", "errors", "health_status", "package", "declared_status")})
+              if e.startswith("details")]
+    if errors:
+        raise ValueError("; ".join(errors))
+    try:
+        html, url = page_html(payload, store, validate)
+    except httpx.HTTPStatusError as error:
+        raise ValueError(f"The item page returned HTTP {error.response.status_code}") from error
+    except httpx.HTTPError as error:
+        raise ValueError(f"The item page could not be loaded: {type(error).__name__}") from error
+    found = details.detail_page_details(html, url, details.region_of(preset), preset=preset)
+    own = [f["key"] for f in details.follow_fields(preset)]
+    return {"url": url, "details": found, "fields": {key: found.get(f"detail.{key}") for key in own},
+            "missing": [key for key in own if f"detail.{key}" not in found]}
 
 
 def detect_structured(html: str, url: str) -> dict:

@@ -217,8 +217,32 @@ def validate_preset(preset: dict) -> list[str]:
                 for key, maximum in (("max_pages", 10_000), ("max_duration_seconds", 7_200)):
                     if key in follow and (not isinstance(follow[key], int) or isinstance(follow[key], bool) or not 0 <= follow[key] <= maximum):
                         errors.append(f"details.follow.{key} must be an integer between 0 and {maximum}")
-            if record_details.get("level") == "full" and "http" not in allowed and "api" not in allowed:
-                errors.append("details.level full follows detail pages over HTTP, which this preset's strategies do not allow")
+                detail_fields = follow.get("fields", [])
+                if not isinstance(detail_fields, list):
+                    errors.append("details.follow.fields must be a list of fields")
+                    detail_fields = []
+                detail_keys = [f.get("key") for f in detail_fields if isinstance(f, dict)]
+                if len(detail_keys) != len(detail_fields) or len(detail_keys) != len(set(detail_keys)) or any(
+                        not isinstance(k, str) or not re.fullmatch(r"[a-z][a-z0-9_]{0,59}", k) for k in detail_keys):
+                    errors.append("details.follow.fields keys must be unique lowercase names (letters, digits, underscores)")
+                for field in (f for f in detail_fields if isinstance(f, dict)):
+                    label = f"details.follow.fields.{field.get('key')}"
+                    if field.get("type", "string") not in FIELD_TYPES:
+                        errors.append(f"{label}: type must be one of {FIELD_TYPES}")
+                    unknown = [t for t in field.get("transforms", []) if t not in TRANSFORMS]
+                    if unknown:
+                        errors.append(f"{label}: unknown transforms {unknown}")
+                    selectors = [sel for sel in field.get("selectors", []) if isinstance(sel, dict) and (sel.get("css") or sel.get("xpath"))]
+                    if not selectors:
+                        errors.append(f"{label}: at least one CSS or XPath selector is required")
+                    for selector in selectors:
+                        if selector.get("xpath"):
+                            try:
+                                from lxml import etree
+
+                                etree.XPath(str(selector["xpath"]))
+                            except Exception:  # noqa: BLE001
+                                errors.append(f"{label}: invalid XPath {selector['xpath']!r}")
     region = (preset.get("normalization") or {}).get("default_region")
     if region is not None and not re.fullmatch(r"[A-Z]{2}", str(region)):
         errors.append("normalization.default_region must be a two-letter region code")

@@ -10,7 +10,7 @@ Code: `workers/scraping/src/dataforge_scraping/details.py`, called from `extract
 
 ## 1. Detail levels
 
-A job's level comes from its `detail_level` parameter, then the preset's `details.level`, then the default `standard`. The desktop Scraping tab defaults to **Full** and remembers the last choice. Scrape Studio defaults to **Standard**.
+A job's level comes from its `detail_level` parameter, then the preset's `details.level`, then the default `standard`. The desktop Scraping tab and Scrape Studio both default to **Full**; the Scraping tab remembers the last choice.
 
 | Level | Adds | Extra requests |
 | --- | --- | --- |
@@ -92,7 +92,37 @@ Links to files (images, PDFs, archives, media) and links back to the record's ow
 
 - records collected through `detail_links` pagination (they are detail pages already);
 - archive jobs (they never touch live sites, so `full` reads as `standard`);
-- Studio presets that allow only WebView rendering. Use detail-link pagination in Studio for those.
+- over HTTP, for Studio presets that allow only WebView rendering. Scrape Studio opens their item pages in the WebView instead (see *Item-page fields and Scrape Studio* above).
+
+### Item-page fields and Scrape Studio (the grid → product page case)
+
+Product grids (search results, category pages) usually hold a title, price, and link. The rest (description, specifications, seller, variants) is on each product's own page. At the `full` level every record's own page is opened. A preset can also name exact values to read there:
+
+```json
+"details": {
+  "level": "full",
+  "follow": {
+    "field": "link",
+    "fields": [
+      {"key": "description", "selectors": [{"css": "#productDescription"}], "transforms": ["trim", "collapse_whitespace"]},
+      {"key": "seller", "type": "url", "selectors": [{"css": "#seller a", "attribute": "href"}], "transforms": ["to_absolute_url"]}
+    ]
+  }
+}
+```
+
+- **Scraping tab → Customize preset → Item pages:**
+  - choose the link field;
+  - add item-page fields (a CSS selector, and text or an attribute);
+  - **Test item page** on a sample URL (`scrape.test_detail`) shows every value DataForge would read, and names the fields that matched nothing.
+- **Scrape Studio → 4. Record detail → Full:**
+  1. pick the grid and its fields, including the item link (Extract: href);
+  2. **Open a sample item page** and **Pick item-page value** for each extra value, then **Back to the list**;
+  3. during a test or full run, Studio opens each item's page in the WebView and staging merges what it read.
+
+Item-page fields are stored as `detail.<key>`, come first, and win over automatic values with the same key. Value details apply to them as well.
+
+**Sites that forbid automated collection stay off-limits.** DataForge does not evade robots.txt, terms, or bot checks. Amazon's robot check, HUMAN (PerimeterX), and Imperva challenges are detected and stop collection, as reCAPTCHA and Cloudflare challenges already did. For Amazon catalog data, use Amazon's own Product Advertising API.
 
 ## 4. Policy
 
@@ -176,7 +206,7 @@ The file was missing from the repository: `.gitignore`'s `Data/` rule also match
 
 ## 8. Tests
 
-- **`workers/scraping/tests/test_details.py`** (33 tests, offline) covers:
+- **`workers/scraping/tests/test_details.py`** (37 tests, offline) covers:
   - every value kind;
   - element, page, and detail-page extraction;
   - the level steps;
@@ -185,7 +215,8 @@ The file was missing from the repository: `.gitignore`'s `Data/` rule also match
   - detail-link pagination;
   - Scrapy parity;
   - the new mappings;
-  - watch diffs and summaries.
+  - watch diffs and summaries;
+  - item-page fields on both engines, Studio item pages, and retailer bot-check detection.
 - **`services/application/tests/test_details.py`** covers:
   - the job option and its validation;
   - the result contract;

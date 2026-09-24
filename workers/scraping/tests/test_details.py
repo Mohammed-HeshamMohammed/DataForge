@@ -161,9 +161,17 @@ def test_preset_details_section_is_validated() -> None:
         broken = catalog_preset(None)
         broken["details"] = bad
         assert any(message in error for error in validate_preset(broken)), bad
-    webview_only = catalog_preset("full")
+    webview_only = catalog_preset("full", follow={"fields": [{"key": "bullets", "selectors": [{"css": "#feature-bullets li"}]}]})
     webview_only["strategy"] = {"preferred": "webview", "allowed": ["webview"]}
-    assert any("HTTP" in error for error in validate_preset(webview_only))
+    assert validate_preset(webview_only) == []  # Scrape Studio opens item pages in the WebView
+    for fields, message in (([{"key": "Bad Key", "selectors": [{"css": "b"}]}], "keys must be unique"),
+                            ([{"key": "a", "selectors": []}], "at least one CSS or XPath"),
+                            ([{"key": "a", "selectors": [{"xpath": "//["}]}], "invalid XPath"),
+                            ([{"key": "a", "type": "money", "selectors": [{"css": "b"}]}], "type must be"),
+                            ([{"key": "a", "selectors": [{"css": "b"}], "transforms": ["nope"]}], "unknown transforms"),
+                            ([{"key": "a", "selectors": [{"css": "b"}]}, {"key": "a", "selectors": [{"css": "c"}]}], "keys must be unique")):
+        broken = catalog_preset("full", follow={"fields": fields})
+        assert any(message in error for error in validate_preset(broken)), fields
 
 
 # --- following detail pages ------------------------------------------------------------------------
@@ -296,3 +304,58 @@ def test_summarize_groups_and_coverage() -> None:
     summary = details.summarize(records, "full", None)
     assert summary["groups"] == {"value": 1, "item": 1, "page": 1, "detail": 1} and summary["records_enriched"] == 2
     assert summary["coverage"]["price.amount"] == 1.0 and summary["coverage"]["detail.sku"] == 0.5
+
+
+# --- custom item-page fields -------------------------------------------------------------------------
+
+ITEM_FIELDS = [
+    {"key": "weight", "selectors": [{"css": "table.specs tr:nth-of-type(1) td"}], "transforms": ["trim"]},
+    {"key": "headline", "selectors": [{"css": "h2.missing"}, {"xpath": "//main/h1"}]},
+    {"key": "photo", "type": "url", "selectors": [{"css": "main img::attr(src)"}], "transforms": ["to_absolute_url"]},
+    {"key": "price", "type": "decimal", "selectors": [{"css": "table.specs tr:nth-of-type(3) td"}], "transforms": ["parse_price"]},
+    {"key": "absent", "selectors": [{"css": ".nowhere"}]},
+]
+
+
+def test_custom_item_fields_come_first_and_win_over_automatic_values() -> None:
+    preset = catalog_preset("full", follow={"fields": ITEM_FIELDS})
+    found = details.detail_page_details(item_page(PRODUCTS[0]), "https://shop.test/item/SKU-1", preset=preset)
+    assert list(found)[:4] == ["detail.weight", "detail.headline", "detail.photo", "detail.price"]
+    assert (found["detail.weight"], found["detail.headline"], found["detail.photo"]) == ("1.5 kg", "Widget 1", "https://shop.test/img/big-SKU-1.jpg")
+    assert found["detail.price"] == 21.99  # the preset's own price field replaces the structured-data offer price
+    assert "detail.absent" not in found and found["detail.sku"] == "SKU-1" and found["detail.weight.number"] == 1.5
+
+
+def test_full_level_applies_custom_item_fields_on_both_engines(site) -> None:
+    from dataforge_scraping.engines.launcher import collect_with_scrapy
+
+    base, _ = site
+    preset = catalog_preset("full", follow={"field": "link", "fields": ITEM_FIELDS})
+    httpx_result = extract_html_pages(base + "/catalog", preset, include_local_signals=True)
+    first = next(r for r in httpx_result.records if r["title"] == "Widget 1")
+    assert first["detail.weight"] == "1.5 kg" and first["detail.headline"] == "Widget 1" and first["detail.price"] == 21.99
+    scrapy_result = collect_with_scrapy(base + "/catalog", preset, 20, 5, include_local_signals=True)
+    same = next(r for r in scrapy_result.records if r["title"] == "Widget 1")
+    assert {k: v for k, v in same.items() if k.startswith("detail.") and k != "detail.retrieved_at"} == {
+        k: v for k, v in first.items() if k.startswith("detail.") and k != "detail.retrieved_at"}
+
+
+def test_rendered_item_pages_use_the_webview_values_and_sanitized_copy() -> None:
+    preset = catalog_preset("full", follow={"fields": [{"key": "bullets", "selectors": [{"css": "#bullets"}]},
+                                                       {"key": "price", "type": "decimal", "selectors": [{"css": ".p"}], "transforms": ["parse_price"]}]})
+    detail = {"url": "https://shop.test/item/SKU-1", "fields": {"bullets": "Steel; Blue", "price": "$21.99", "ignored": "x"},
+              "html": item_page(PRODUCTS[0]), "retrieved_at": "2026-09-24T10:00:00Z"}
+    found = details.rendered_detail(detail, preset, {"title": "Widget 1"})
+    assert (found["detail.bullets"], found["detail.price"], found["detail.sku"]) == ("Steel; Blue", 21.99, "SKU-1")
+    assert found["detail.url"] == "https://shop.test/item/SKU-1" and found["detail.retrieved_at"] == "2026-09-24T10:00:00Z"
+    assert "detail.ignored" not in found
+    without_copy = details.rendered_detail({**detail, "html": ""}, preset, {})
+    assert without_copy["detail.bullets"] == "Steel; Blue" and "detail.sku" not in without_copy
+
+
+def test_bot_checks_used_by_large_retailers_stop_collection() -> None:
+    from dataforge_scraping.fetch import CHALLENGE_MARKERS
+
+    page = "<form method='get' action='/errors/validateCaptcha'><input name='amzn'></form>"
+    assert any(marker in page.lower() for marker in CHALLENGE_MARKERS)
+    assert all(marker not in item_page(PRODUCTS[0]).lower() for marker in CHALLENGE_MARKERS)

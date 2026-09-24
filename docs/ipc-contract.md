@@ -86,7 +86,12 @@ Studio bridge actions also include `scrollStep` and `links(css)` for infinite sc
 | `archive.create_job` | adds `detail_level?` (`full` reads as `standard`: archives never fetch live pages) | result adds `details` |
 | `bulk.create_job` | adds `detail_level?` (`none` or `basic`; default `basic`, phone region from the page's country TLD) | result adds `details` |
 
-The stage `detail_page_extracted` (`{detail_page, url, fields}`) reports each detail page read. The Studio bridge's `extract` accepts `element_html` and `page_metadata` flags; with them it returns `records[].__element` and `head_html`. Presets may declare `details: {level, follow: {field, max_pages, max_duration_seconds}}`.
+| `scrape.test_detail` | `preset` (with `details.follow.fields`), `url` (an item page), `purpose?`, or `html` + `url` from Studio | `{url, details, fields, missing}`: what DataForge reads from that item page; `missing` lists the preset's item-page fields that matched nothing |
+| `project.overview` | `days?` (7–90, default 14), `tz_offset_minutes?` (JavaScript `getTimezoneOffset()`) | [`project-overview.schema.json`](../packages/contracts/project-overview.schema.json): totals, daily activity, recent runs, sources, datasets and review, jobs, watches, preset health, site limits, storage, attention items, checklist |
+
+`scrape.stage_rendered` records may carry `__detail: {url, fields, html, retrieved_at}` for an item page Scrape Studio opened in the WebView. The service re-checks the URL against scope and site signals, then merges the values as `detail.*`. `app.info` adds `version`.
+
+The stage `detail_page_extracted` (`{detail_page, url, fields}`) reports each detail page read. The Studio bridge's `extract` accepts `element_html` and `page_metadata` flags; with them it returns `records[].__element` and `head_html`. Presets may declare `details: {level, follow: {field, fields, max_pages, max_duration_seconds}}`. `fields` are item-page fields, with the same shape as extraction fields, read from each record's own page as `detail.<key>`. The bridge's `extract` also accepts `element_max`, up to 500,000 characters, for whole-page copies.
 
 Studio bridge picks add `fallback_xpaths` (label-anchored when a repeated caption exists, then structural); `extract` evaluates `{xpath, attribute?}` selectors. Presets may set `extraction.output: "text"` with `ocr: true` for document presets. Job kinds add `archive_query` and `bulk_import`. Contracts: `host-signals`, `scrape-result`, `record-diff`, `watch`, and `collection-settings` schemas in `packages/contracts/`. Stage names add `finding_captures`. Scrapy engine page events carry `engine: "scrapy"`.
 

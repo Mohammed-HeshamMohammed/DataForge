@@ -58,3 +58,32 @@ describe("label-anchored fallbacks", () => {
     expect(bridge.takePicks()[0].fallback_xpaths).toEqual(["./div[1]/p[1]"]);
   });
 });
+
+describe("item pages", () => {
+  it("picks a value on a whole page and reads it back with a sanitized copy of the page", () => {
+    document.body.innerHTML =
+      "<main><h1>Widget 7</h1><div id='bullets'><ul><li>Steel</li><li>Blue</li></ul></div>" +
+      "<table><tr><th>Weight</th><td>1.5 kg</td></tr></table><form><input type='hidden' name='csrf' value='secret-token'></form>" +
+      "<script>window.track = 1;</script></main>";
+    const bridge = (window as unknown as {
+      __dataforgeStudio: {
+        setMode(m: string, r?: string | null): unknown;
+        takePicks(): { selector: string; fallback_xpaths: string[]; inside_record_root?: boolean }[];
+        extract(config: unknown): { records: Record<string, string>[]; error: string | null };
+      };
+    }).__dataforgeStudio;
+    bridge.setMode("element", null);
+    document.querySelector("td")!.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true }));
+    const [pick] = bridge.takePicks();
+    expect(pick.inside_record_root).toBeUndefined();
+    expect(pick.fallback_xpaths).toContain("./main[1]/table[1]/tbody[1]/tr[1]/td[1]");
+    const result = bridge.extract({ record_root: "body", limit: 1, element_html: true, element_max: 400000,
+      fields: [{ key: "weight", selectors: [{ css: pick.selector }] }, { key: "bullets", selectors: [{ css: "#bullets" }] }] });
+    const [record] = result.records;
+    expect(record.weight).toBe("1.5 kg");
+    expect(record.bullets).toMatch(/Steel\s*Blue/); // jsdom has no innerText; WebView2 separates list items
+    expect(record.__element).toContain("<h1>Widget 7</h1>");
+    expect(record.__element).not.toContain("secret-token");
+    expect(record.__element).not.toContain("window.track");
+  });
+});

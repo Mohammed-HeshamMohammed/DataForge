@@ -752,10 +752,50 @@ def primary_entity(records: list[dict], prefer_type: str | None = None) -> dict 
     return sorted(records, key=rank)[0]
 
 
-def detail_page_details(html: str, url: str, region: str = "US", prefer_type: str | None = None) -> dict[str, object]:
-    """Everything a detail page says about its subject, under `detail.`."""
+def detail_fields(html: str, url: str, preset: dict) -> dict[str, object]:
+    """The preset's own detail-page fields (`details.follow.fields`): selectors evaluated against the whole detail
+    page, with the same transforms and types as listing fields. Returned as `detail.<key>`."""
+    fields = follow_fields(preset)
+    if not fields or not html:
+        return {}
+    from parsel import Selector
+
+    from .extraction import _parsel_value, apply_field
+
+    try:
+        document = Selector(text=html)
+    except Exception:  # noqa: BLE001 - an unparseable page yields no custom fields
+        return {}
     out: dict[str, object] = {}
-    data_keys: list[str] = []
+    for field in fields:
+        for selector in field.get("selectors", []):
+            if not isinstance(selector, dict) or not (selector.get("css") or selector.get("xpath")):
+                continue
+            try:
+                value = _parsel_value(document, selector)
+            except Exception:  # noqa: BLE001 - a selector that fails on one page is simply unmatched
+                value = None
+            if value is not None:
+                converted = apply_field(value[:MAX_DETAIL_TEXT], field, url, preset)
+                if converted not in (None, ""):
+                    out[f"detail.{field['key']}"] = converted
+                    break
+    return out
+
+
+def follow_fields(preset: dict | None) -> list[dict]:
+    follow = ((preset or {}).get("details") or {}).get("follow") if isinstance((preset or {}).get("details"), dict) else None
+    fields = follow.get("fields") if isinstance(follow, dict) else None
+    return [f for f in fields if isinstance(f, dict) and isinstance(f.get("key"), str)] if isinstance(fields, list) else []
+
+
+def detail_page_details(html: str, url: str, region: str = "US", prefer_type: str | None = None, preset: dict | None = None,
+                        custom: dict[str, object] | None = None) -> dict[str, object]:
+    """Everything a detail page says about its subject, under `detail.`. The preset's own detail fields come first
+    and win over automatic values with the same key; `custom` passes values already extracted (Scrape Studio)."""
+    own = dict(custom) if custom is not None else (detail_fields(html, url, preset) if preset else {})
+    out: dict[str, object] = dict(own)
+    data_keys: list[str] = list(own)
     try:
         from .structured import entity_records, extract_entities
 
@@ -766,9 +806,9 @@ def detail_page_details(html: str, url: str, region: str = "US", prefer_type: st
     entity = primary_entity(records, prefer_type)
     if entity:
         for key, value in entity.items():
-            if key in ("structured_syntax", "structured_conflicts"):
-                continue
             name = "detail." + key
+            if key in ("structured_syntax", "structured_conflicts") or name in out:
+                continue
             out[name] = value
             data_keys.append(name)
     types = list(dict.fromkeys(t for e in entities for t in e["types"]))
@@ -803,8 +843,9 @@ def detail_page_details(html: str, url: str, region: str = "US", prefer_type: st
             out[target] = _collapse(value)[:MAX_VALUE]
     for key, value in _specs(doc).items():
         name = f"detail.spec.{key}"
-        out[name] = value
-        data_keys.append(name)
+        if name not in out:
+            out[name] = value
+            data_keys.append(name)
     page_text = text or _text(doc.find(".//body") if doc.find(".//body") is not None else doc)
     emails, phones = _contacts(doc, page_text, region)
     if emails:
@@ -820,6 +861,28 @@ def detail_page_details(html: str, url: str, region: str = "US", prefer_type: st
             out["detail.images"] = _join(images)
     out.update({k: v for k, v in value_details(out, url, region, data_keys).items() if k not in out})
     return out
+
+
+def rendered_detail(detail: dict, preset: dict, record: dict) -> dict[str, object]:
+    """Details for a detail page Scrape Studio opened in the embedded WebView: the preset's detail fields as the
+    page showed them, plus everything read from the page's sanitized copy."""
+    from .extraction import apply_field
+
+    url = str(detail.get("url") or "")
+    custom: dict[str, object] = {}
+    values = detail.get("fields") if isinstance(detail.get("fields"), dict) else {}
+    for field in follow_fields(preset):
+        value = values.get(field["key"])
+        if value not in (None, ""):
+            converted = apply_field(" ".join(str(value).split())[:MAX_DETAIL_TEXT], field, url, preset)
+            if converted not in (None, ""):
+                custom[f"detail.{field['key']}"] = converted
+    found: dict[str, object] = {"detail.url": url}
+    html = str(detail.get("html") or "")[:5_000_000]
+    found.update(detail_page_details(html, url, region_of(preset), str(record.get("schema_type") or "") or None, custom=custom) if html else
+                 {**custom, **value_details(custom, url, region_of(preset))})
+    found["detail.retrieved_at"] = str(detail.get("retrieved_at") or datetime.now(timezone.utc).isoformat())
+    return found
 
 
 def detail_link(record: dict, preset: dict, field: str | None = None) -> str | None:
@@ -934,7 +997,7 @@ def follow_detail_pages(
         if final and final != target:
             found["detail.final_url"] = final
         if "html" in content_type or not content_type:
-            found.update(detail_page_details(response.text, final or target, region, str(record.get("schema_type") or "") or None))
+            found.update(detail_page_details(response.text, final or target, region, str(record.get("schema_type") or "") or None, preset=preset))
         else:
             found["detail.content_type"] = content_type.split(";")[0].strip()
         found["detail.retrieved_at"] = datetime.now(timezone.utc).isoformat()

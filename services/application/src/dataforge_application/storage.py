@@ -203,6 +203,15 @@ class ProjectStore:
         )
         self._connection.commit()
 
+    def record_scrape_details(self, scrape_run_id: str, summary: dict) -> None:
+        """What the record-details pass added to a run (level, detail pages read, distinct detail fields)."""
+        pages = summary["detail_pages"].get("fetched", 0) if isinstance(summary.get("detail_pages"), dict) else 0
+        self._connection.execute(
+            "UPDATE scrape_runs SET detail_level = ?, detail_pages = ?, detail_fields = ? WHERE id = ?",
+            (summary.get("level"), int(pages), int(summary.get("fields_added", 0)), scrape_run_id),
+        )
+        self._connection.commit()
+
     def fail_scrape_run(self, scrape_run_id: str, error_type: str, message: str) -> None:
         occurred_at = datetime.now(timezone.utc).isoformat()
         self._connection.execute(

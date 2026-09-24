@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "dataforge-application"
-version = "0.1.0"
+version = "0.2.0"
 description = "Local application services for DataForge"
 requires-python = ">=3.11"
 dependencies = ["openpyxl>=3.1", "dataforge-matching-worker", "dataforge-scraping-worker"]

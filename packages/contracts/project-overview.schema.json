@@ -1,0 +1,194 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://dataforge.local/contracts/project-overview.schema.json",
+  "title": "ProjectOverview",
+  "description": "project.overview: a read-only snapshot for the Overview tab, computed from the project database and folder.",
+  "type": "object",
+  "required": [
+    "generated_at",
+    "app",
+    "project",
+    "collection",
+    "activity",
+    "by_source",
+    "top_hosts",
+    "top_presets",
+    "recent_runs",
+    "datasets",
+    "review",
+    "jobs",
+    "watches",
+    "presets",
+    "site_limits",
+    "storage",
+    "attention",
+    "checklist"
+  ],
+  "properties": {
+    "app": {
+      "type": "object",
+      "required": [
+        "version"
+      ],
+      "properties": {
+        "version": {
+          "type": "string",
+          "pattern": "^\\d+\\.\\d+\\.\\d+(-[0-9A-Za-z.-]+)?$"
+        }
+      }
+    },
+    "project": {
+      "type": "object",
+      "required": [
+        "id",
+        "name",
+        "root_path"
+      ]
+    },
+    "collection": {
+      "type": "object",
+      "required": [
+        "runs",
+        "full_runs",
+        "test_runs",
+        "failed_runs",
+        "records",
+        "records_last_7_days",
+        "records_previous_7_days",
+        "pages",
+        "detail_pages",
+        "hosts"
+      ],
+      "additionalProperties": {
+        "type": "integer",
+        "minimum": 0
+      }
+    },
+    "activity": {
+      "type": "array",
+      "minItems": 7,
+      "maxItems": 90,
+      "items": {
+        "type": "object",
+        "required": [
+          "date",
+          "records",
+          "runs",
+          "failed",
+          "detail_pages"
+        ],
+        "properties": {
+          "date": {
+            "type": "string",
+            "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+          },
+          "records": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "runs": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "failed": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "detail_pages": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      }
+    },
+    "recent_runs": {
+      "type": "array",
+      "maxItems": 8,
+      "items": {
+        "type": "object",
+        "required": [
+          "job_id",
+          "preset_id",
+          "status",
+          "records",
+          "detail_pages",
+          "created_at"
+        ],
+        "properties": {
+          "status": {
+            "enum": [
+              "started",
+              "completed",
+              "failed"
+            ]
+          },
+          "records": {
+            "type": "integer",
+            "minimum": 0
+          },
+          "detail_pages": {
+            "type": "integer",
+            "minimum": 0
+          }
+        }
+      }
+    },
+    "attention": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "kind",
+          "severity",
+          "count",
+          "target",
+          "message"
+        ],
+        "properties": {
+          "severity": {
+            "enum": [
+              "critical",
+              "warning",
+              "info"
+            ]
+          },
+          "target": {
+            "enum": [
+              "dashboard",
+              "scraping",
+              "studio",
+              "datasets",
+              "match",
+              "settings"
+            ]
+          }
+        }
+      }
+    },
+    "checklist": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "id",
+          "label",
+          "done",
+          "target"
+        ],
+        "properties": {
+          "done": {
+            "type": "boolean"
+          }
+        }
+      }
+    },
+    "storage": {
+      "type": "object",
+      "required": [
+        "database_bytes",
+        "total_bytes",
+        "areas"
+      ]
+    }
+  }
+}

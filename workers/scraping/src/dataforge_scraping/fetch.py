@@ -32,7 +32,10 @@ except ImportError:  # pragma: no cover
 APP_USER_AGENT = "DataForge/0.2 (local desktop; permitted collection)"
 LOCAL_HOSTS = {"127.0.0.1", "localhost"}
 ACCESS_STOP_CODES = {401, 402, 403, 407, 408, 425, 429, 451}
-CHALLENGE_MARKERS = ("g-recaptcha", "h-captcha", "cf-challenge", "/cdn-cgi/challenge-platform", "captcha-delivery")
+# Bot checks end collection (never solved or evaded): reCAPTCHA, hCaptcha, Cloudflare, DataDome, Amazon's robot check,
+# HUMAN (PerimeterX), and Imperva.
+CHALLENGE_MARKERS = ("g-recaptcha", "h-captcha", "cf-challenge", "/cdn-cgi/challenge-platform", "captcha-delivery", "/errors/validatecaptcha",
+                     "px-captcha", "_incapsula_resource")
 MAX_RETRY_AFTER_SECONDS = 60
 MAX_BODY_BYTES = 50 * 1024 * 1024
 TRANSIENT_BACKOFF_SECONDS = (3.0, 10.0)

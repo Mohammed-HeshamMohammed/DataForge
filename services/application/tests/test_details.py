@@ -15,7 +15,7 @@ from test_contracts import validate
 from test_workflows import call, ok, wait
 
 sys.path.insert(0, str(Path(__file__).parents[3] / "workers" / "scraping" / "tests"))
-from fixture_site import catalog_page, serve  # noqa: E402
+from fixture_site import PRODUCTS, catalog_page, item_page, serve  # noqa: E402
 
 
 @pytest.fixture()
@@ -104,7 +104,7 @@ def test_studio_staging_reads_sanitized_element_and_head_copies(service: Service
     assert job["result"]["details"]["level"] == "standard"
     full = wait(service, ok(service, "scrape.stage_rendered", preset=_studio_draft(service), pages=pages, run_mode="test", policy_acknowledgement=True,
                            purpose="internal_analysis", detail_level="full")["job_id"])
-    assert any("allow HTTP" in w for w in full["result"]["warnings"]) and full["result"]["details"]["detail_pages"] is None
+    assert any("Open each item's page" in w for w in full["result"]["warnings"]) and full["result"]["details"]["detail_pages"] is None
 
 
 def test_bulk_corpus_records_get_value_details_for_their_country(service: Service, tmp_path: Path) -> None:
@@ -118,3 +118,38 @@ def test_bulk_corpus_records_get_value_details_for_their_country(service: Servic
     assert record["phone.e164"] == "+49301234567" and record["phone.country"] == "DE"
     lean = wait(service, ok(service, "bulk.create_job", path=str(path), schema_types=["LocalBusiness"], detail_level="none")["job_id"])
     assert "phone.e164" not in lean["result"]["sample_records"][0]
+
+
+ITEM_FIELDS = [{"key": "weight", "selectors": [{"css": "table.specs tr:nth-of-type(1) td"}]}, {"key": "absent", "selectors": [{"css": ".nowhere"}]}]
+
+
+def test_item_page_preview_shows_own_fields_and_automatic_details(service: Service, site) -> None:
+    base, _ = site
+    preset = next(p for p in ok(service, "preset.list") if p["id"] == "generic.html_list" and p["version"] == "1.1.0")
+    draft = {**preset, "details": {"level": "full", "follow": {"fields": ITEM_FIELDS}}}
+    preview = ok(service, "scrape.test_detail", preset=draft, url=base + "/item/SKU-2", purpose="internal_analysis")
+    assert preview["fields"] == {"weight": "1.5 kg", "absent": None} and preview["missing"] == ["absent"]
+    assert preview["details"]["detail.sku"] == "SKU-2" and preview["details"]["detail.spec.color"] == "Blue"
+    from_html = ok(service, "scrape.test_detail", preset=draft, url="https://shop.test/item/SKU-1", html=item_page(PRODUCTS[0]))
+    assert from_html["fields"]["weight"] == "1.5 kg"
+    assert "HTTP 404" in call(service, "scrape.test_detail", preset=draft, url=base + "/item/NOPE", purpose="internal_analysis")["error"]["message"]
+    broken = {**draft, "details": {"level": "full", "follow": {"fields": [{"key": "x", "selectors": []}]}}}
+    assert "selector" in call(service, "scrape.test_detail", preset=broken, url=base + "/item/SKU-2")["error"]["message"]
+
+
+def test_studio_item_pages_are_checked_and_merged(service: Service, site) -> None:
+    base, _ = site
+    draft = _studio_draft(service)
+    draft["details"] = {"level": "full", "follow": {"field": "link", "fields": [{"key": "weight", "selectors": [{"css": "td"}]}]}}
+    records = [
+        {"title": "Widget 1", "link": base + "/item/SKU-1",
+         "__detail": {"url": base + "/item/SKU-1", "fields": {"weight": " 1.5 kg "}, "html": item_page(PRODUCTS[0]), "retrieved_at": "2026-09-24T10:00:00Z"}},
+        {"title": "Widget 2", "link": "https://elsewhere.example/x", "__detail": {"url": "https://elsewhere.example/x", "fields": {"weight": "9 kg"}}},
+    ]
+    job = wait(service, ok(service, "scrape.stage_rendered", preset=draft, pages=[{"url": base + "/catalog", "records": records}], run_mode="test",
+                          policy_acknowledgement=True, purpose="internal_analysis", detail_level="full")["job_id"])
+    assert job["state"] == "completed", job
+    first, second = job["result"]["sample_records"]
+    assert first["detail.weight"] == "1.5 kg" and first["detail.sku"] == "SKU-1" and first["detail.weight.number"] == 1.5
+    assert "__detail" not in first and not any(k.startswith("detail.") for k in second)
+    assert job["result"]["details"]["detail_pages"]["fetched"] == 1 and any("outside the preset scope" in w for w in job["result"]["warnings"])

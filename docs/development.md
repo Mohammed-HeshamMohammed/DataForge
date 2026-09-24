@@ -64,7 +64,44 @@ The build:
 
 Updater artifacts are signed with `TAURI_SIGNING_PRIVATE_KEY`, taken from `%USERPROFILE%\.dataforge\keys\updater.key` locally or from environment secrets in CI.
 
-Pushing a `vX.Y.Z` tag runs `.github/workflows/release.yml`. It verifies the tag matches the app version, runs the tests, builds and signs the installer, writes `latest.json`, generates an SBOM, and publishes the GitHub Release. Prerelease tags (`v1.2.0-beta.1`) also update the rolling `beta` release used by the beta channel.
+### Publishing a release
+
+The version lives in `apps/desktop/src-tauri/tauri.conf.json`. `scripts/bump-version.py` mirrors it into every other place:
+
+- `package.json`, `apps/desktop/package.json`, and `package-lock.json`;
+- `Cargo.toml` and `Cargo.lock`;
+- the three `pyproject.toml` files;
+- `dataforge_application.__version__`, which `app.info` and the Overview report.
+
+The desktop UI reads the version from `tauri.conf.json` at build time. CI fails if any file disagrees (`python scripts/bump-version.py check`).
+
+**To publish a new version:** go to GitHub → Actions → **Release** → **Run workflow**, then choose:
+
+- **part:** `patch`, `minor`, or `major`;
+- **channel:** `stable`, or `beta` for `X.Y.Z-beta.N` on the beta update channel;
+- or an exact **version**.
+
+Every run produces a new, higher version. The workflow:
+
+1. Bumps every manifest.
+2. Commits `Release vX.Y.Z [skip ci]` to the default branch.
+3. Tags that commit.
+4. On Windows: verifies the tag against every version file, runs the tests, builds and signs the installer, writes `latest.json`, generates an SBOM, and publishes the GitHub Release. Beta releases also update the rolling `beta` release.
+
+Pushing a `vX.Y.Z` tag by hand still works; the version files must already match it.
+
+**Setup:**
+
+- **`release` environment:** holds `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. Add required reviewers to approve each build.
+- **Protected default branch:** if it blocks pushes from workflows, add a `RELEASE_PUSH_TOKEN` secret, a fine-grained token with Contents read and write.
+
+Locally:
+
+```powershell
+python scripts/bump-version.py next --part minor     # preview
+python scripts/bump-version.py bump --part patch     # write
+python scripts/bump-version.py set 1.0.0             # exact
+```
 
 ## Signed preset packages
 
@@ -123,6 +160,18 @@ The CLI uses the same command API as the desktop app. With `--wait`, it follows 
 - **Stops:** 401/403/429-class responses, challenge markers, login forms (Studio), robots.txt disallow, and out-of-scope redirects or navigation all stop collection.
 - **API credentials** are resolved by the host from the OS store and never persisted.
 - **Record details:** every record carries value details, its element's contents, and page metadata by default (`standard`, no extra requests). `detail_level: "full"` also reads each record's detail page under the same policy. The Scraping tab defaults to Full. Results summarize what was added, and the Inspect button shows every value of a record, grouped. See [Record Details](Scrapper/Record%20Details.md).
+
+### Overview
+
+The Overview tab calls `project.overview`, a read-only snapshot of the project database and folder, refreshed every 5 seconds. It shows:
+
+- **Totals:** records collected (with the last 7 days against the week before), detail pages read, datasets and rows, and matches waiting for review.
+- **Chart:** records collected per day for the last 14 days, in local time. Hover or focus a day for runs, failures, and detail pages; a table view is included.
+- **Needs attention:** failed jobs, degraded or disabled presets, pending review, unmapped datasets, failing watches, and paused jobs. Each item links to the tab that resolves it.
+- **Getting started:** a checklist that disappears once everything is done.
+- **Recent runs:** preset and site, records, detail pages, and a readable outcome, with a link to open the dataset.
+- **Sources:** records by source, site, and preset.
+- **Project state:** datasets with mapping and review progress, jobs, watches with their next run, preset health, sites that limit collection, and disk use by area.
 
 ### Scrape Studio
 

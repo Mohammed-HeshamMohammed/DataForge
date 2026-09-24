@@ -17,6 +17,8 @@ jobs:
         with:
           python-version: "3.13"
       - run: python -m pip install -r requirements-dev.txt
+      - name: Version files agree (tauri.conf.json, npm, Cargo, Python)
+        run: python scripts/bump-version.py check
       - name: License gate for bundled Python dependencies
         run: python scripts/check-licenses.py
       - name: Application, scraping, and matching tests (migration, contract, golden-file, and property tests)

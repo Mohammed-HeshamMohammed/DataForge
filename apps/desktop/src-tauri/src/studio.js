@@ -6,7 +6,7 @@
 
   const SAFE_ATTRIBUTES = ["href", "src", "alt", "title", "datetime", "aria-label", "data-testid"];
   const SECRET_VALUE = /(token|session|auth|password|secret|sig=|key=)/i;
-  const CHALLENGE = ["g-recaptcha", "h-captcha", "cf-challenge", "challenge-platform", "captcha-delivery"];
+  const CHALLENGE = ["g-recaptcha", "h-captcha", "cf-challenge", "challenge-platform", "captcha-delivery", "/errors/validatecaptcha", "px-captcha", "_incapsula_resource"];
   let mode = "none";
   let recordRoot = null;
   let picks = [];
@@ -204,6 +204,9 @@
       pick.inside_record_root = !!root;
       // Ordered fallbacks tried after the CSS selector: label-anchored, then structural.
       pick.fallback_xpaths = root ? [labelXPath(el, root), structuralXPath(el, root)].filter((x) => x && x !== "./") : [];
+    } else if (mode === "element" && document.body) {
+      // A value on a whole page (an item's own page): fallbacks are anchored at <body>.
+      pick.fallback_xpaths = [labelXPath(el, document.body), structuralXPath(el, document.body)].filter((x) => x && x !== "./");
     }
     picks.push(pick);
     mode = "none";
@@ -324,7 +327,7 @@
             }
           }
         }
-        if (config.element_html) record.__element = sanitizedCopy(root, 8000);
+        if (config.element_html) record.__element = sanitizedCopy(root, Math.max(1000, Math.min(Number(config.element_max) || 8000, 500000)));
         return record;
       });
       let nextUrl = null;

@@ -192,3 +192,29 @@ DataForge is a graduation project used in a research paper, so GPL, AGPL, LGPL, 
   - Markup after `</html>` is now read.
 - **Scrapy child imports.** When running from source, the Scrapy child process gets the worker's `src` on `PYTHONPATH`, so it no longer depends on an editable install.
 
+## D29. Item pages are part of every preset, not a separate job
+
+A grid of products and each product's own page are one collection, so item pages are configured on the preset (`details.follow`), not as a second job.
+
+- **HTTP presets:** the job's policy-checked client opens each record's link.
+- **Scrape Studio:** the embedded WebView opens each item's page, one delay apart. Every page is checked with `scrape.check_url` and re-checked by the service. A bot check or login stops the loop but keeps the records already collected.
+- **Custom item-page fields come first** and win over automatic values with the same key. A preset author who picks the price on the item page gets that price, not the one in the structured-data offer.
+- **Studio picks on an item page** use absolute CSS paths with `<body>`-anchored XPath fallbacks. The bridge returns a sanitized whole-page copy, so structured data, specifications, and text are read the same way as over HTTP.
+- **Bot checks used by large retailers** (Amazon's robot check, HUMAN/PerimeterX, Imperva) were added to the challenge markers. They stop collection like reCAPTCHA does; nothing is solved or evaded.
+
+## D30. The Overview is computed, not stored
+
+`project.overview` aggregates the existing tables on each call, adding no caches or counters that could drift. It uses migration `010_record_details.sql`, which adds `detail_level`, `detail_pages`, and `detail_fields` to `scrape_runs` so detail totals are cheap sums.
+
+- **Local days:** activity is bucketed by the viewer's local day (the UI sends `getTimezoneOffset()`).
+- **Records collected** counts completed full runs, because test runs are not staged.
+- **Attention items** are ordered by severity and each names the tab that resolves it.
+- **Chart:** one series in a chart-specific token. The app's bright dark-theme accent fails the lightness band on the panel surface, so the dark theme uses `#2fa866` and the light theme `#16a36a`; both are validated against the panel surface. The chart has thin 4px-rounded columns, labels only on the busiest and latest days, a hover and focus readout, and a table view.
+
+## D31. Releases bump the version themselves
+
+- **One source of truth:** `tauri.conf.json`. `scripts/bump-version.py` mirrors it into the npm, Cargo, and Python manifests, the lockfiles, and `dataforge_application.__version__`. CI checks they agree.
+- **Reading the version:** the UI imports it from `tauri.conf.json` instead of a hand-written constant. The old constant said 0.2.0 while every manifest said 0.1.0, so all files were aligned to 0.2.0, the version users already saw.
+- **Triggering:** the Release workflow is started from the Actions tab with a part (patch, minor, major) and channel (stable, beta), or an exact version. It bumps, commits `[skip ci]`, tags, then builds and publishes in the same run, because tags pushed with `GITHUB_TOKEN` do not start other workflows.
+- **Safety:** a `concurrency` group serializes releases; a run fails if the version would not increase or the tag already exists.
+

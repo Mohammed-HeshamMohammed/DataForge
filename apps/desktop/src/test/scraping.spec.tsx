@@ -28,6 +28,9 @@ vi.mock("../lib/ipc.ts", () => ({
     if (command === "scrape.create_job") return { job_id: "job-1" };
     if (command === "preset.fixture_from_capture") return { fixture: "project:fixtures/captured/p/abc.html", source_url: "https://shop.test/p", redactions: { scripts: 2, contact_details: 1, tokens: 0 } };
     if (command === "job.get") return { id: "job-1", kind: "scrape", state: "running", params: {}, result: null, error: null, created_at: "", updated_at: "", events: [] };
+    if (command === "scrape.test_detail") return { url: String(payload.url), details: { "detail.description": "Long text", "detail.sku": "W-1", "detail.spec.weight": "1.5 kg" }, fields: { description: "Long text", seller: null }, missing: ["seller"] };
+    if (command === "preset.validate") return { errors: [] };
+    if (command === "preset.save_custom") return { id: "custom.local.items", version: "1.0.0" };
     throw new Error(`unexpected ${command}`);
   }),
 }));
@@ -114,5 +117,33 @@ describe("scraping tab", () => {
     fireEvent.click(screen.getByRole("button", { name: "Test 10 records" }));
     await waitFor(() => expect(calls.some((c) => c.command === "scrape.create_job")).toBe(true));
     expect(calls.find((c) => c.command === "scrape.create_job")!.payload).toMatchObject({ preset_id: "generic.structured_data", detail_level: "basic" });
+  });
+  it("adds item-page fields to a custom preset, previews an item page, and saves them", async () => {
+    const { Scraping } = await import("../features/scraping/Scraping.tsx");
+    const { container } = render(<Scraping navigate={() => {}} />);
+    await screen.findByText(/Structured data \(schema.org\) —/);
+    fireEvent.click(screen.getByRole("tab", { name: "Customize preset" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Add item-page field" }));
+    fireEvent.change(screen.getByLabelText("Item-page field name"), { target: { value: "description" } });
+    fireEvent.change(screen.getByLabelText("CSS selector for description on the item page"), { target: { value: "#productDescription" } });
+    fireEvent.click(screen.getByRole("button", { name: "Add item-page field" }));
+    fireEvent.change(screen.getAllByLabelText("Item-page field name")[1], { target: { value: "seller" } });
+    fireEvent.change(screen.getByLabelText("CSS selector for seller on the item page"), { target: { value: "#seller a" } });
+    fireEvent.change(screen.getByLabelText("What to read for seller"), { target: { value: "href" } });
+    fireEvent.change(screen.getByLabelText("Sample item page URL"), { target: { value: "https://shop.test/item/1" } });
+    fireEvent.click(screen.getByRole("button", { name: "Test item page" }));
+    await screen.findByRole("region", { name: "What DataForge reads from https://shop.test/item/1" });
+    expect(screen.getByText(/Not found on this page: seller/)).toBeTruthy();
+    const test = calls.find((c) => c.command === "scrape.test_detail")!.payload as { preset: { details: unknown; url_scope: { allowed_hosts: string[] } } };
+    expect(test.preset.url_scope.allowed_hosts).toEqual(["shop.test"]);
+    expect(test.preset.details).toEqual({ level: "full", follow: { fields: [
+      { key: "description", type: "string", selectors: [{ css: "#productDescription" }], transforms: ["trim", "collapse_whitespace"] },
+      { key: "seller", type: "url", selectors: [{ css: "#seller a", attribute: "href" }], transforms: ["to_absolute_url"] },
+    ] } });
+    expect(await accessibilityViolations(container)).toEqual([]);
+    fireEvent.click(screen.getByRole("button", { name: "Validate and save custom preset" }));
+    await waitFor(() => expect(calls.some((c) => c.command === "preset.save_custom")).toBe(true));
+    const saved = calls.find((c) => c.command === "preset.save_custom")!.payload as { preset: { details: { follow: { fields: unknown[] } } } };
+    expect(saved.preset.details.follow.fields).toHaveLength(2);
   });
 });

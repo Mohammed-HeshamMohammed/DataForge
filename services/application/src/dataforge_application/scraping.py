@@ -350,6 +350,8 @@ def make_scrape_kind(presets_dir: Path) -> JobKind:
                 except ValueError as error:
                     file_datasets.append({"url": item["url"], "error": str(error)})
         store.complete_scrape_run(run_id, result.pages_fetched, len(result.records), result.rejected_records, result.duplicate_records)
+        detail_summary = details.summarize(list(result.records), details.level_of(preset), result.details)
+        store.record_scrape_details(run_id, detail_summary)
         store._connection.execute("UPDATE scrape_runs SET cached_responses = ?, discovered_urls = ? WHERE id = ?", (result.cached_responses, result.discovered_urls, run_id))
         store._connection.commit()
         diff = None
@@ -365,7 +367,7 @@ def make_scrape_kind(presets_dir: Path) -> JobKind:
             "sample_records": list(result.records[:TEST_MODE_MAX_RECORDS]), "dataset_id": dataset_id, "file_datasets": file_datasets,
             "signals": list(result.signals), "cached_responses": result.cached_responses, "discovered_urls": result.discovered_urls,
             "watch_diff": diff, "warc_capture": str(capture.path) if capture is not None else None,
-            "details": details.summarize(list(result.records), details.level_of(preset), result.details),
+            "details": detail_summary,
         }
 
     return JobKind(run=run, validate=validate)
@@ -469,7 +471,8 @@ def make_rendered_kind(presets_dir: Path) -> JobKind:
         store._connection.commit()
         candidates = []
         selector_free = (preset.get("extraction") or {}).get("mode", "selectors") != "selectors"
-        level_standard, region = details.at_least(preset, "standard"), details.region_of(preset)
+        level_standard, level_full, region = details.at_least(preset, "standard"), details.at_least(preset, "full"), details.region_of(preset)
+        rendered_detail_pages = skipped_detail_pages = 0
         for page in params["pages"]:
             context.checkpoint()
             if selector_free:
@@ -494,6 +497,21 @@ def make_rendered_kind(presets_dir: Path) -> JobKind:
                 if level_standard and isinstance(element, str) and element:
                     for key, value in details.element_details(element[:200_000], page["url"], region).items():
                         record.setdefault(key, value)
+                detail = raw.get("__detail") if isinstance(raw, dict) else None
+                if level_full and isinstance(detail, dict) and detail.get("url"):
+                    # An item page Studio opened in the WebView: re-check it like any other rendered page.
+                    detail_url = str(detail["url"])
+                    try:
+                        validate_url(detail_url, preset)
+                        decision = sources.check_navigation(detail_url, params["purpose"])
+                    except (PolicyViolation, ValueError) as error:
+                        decision = {"allowed": False, "reason": str(error)}
+                    if decision["allowed"]:
+                        for key, value in details.rendered_detail(detail, preset, record).items():
+                            record.setdefault(key, value)
+                        rendered_detail_pages += 1
+                    else:
+                        skipped_detail_pages += 1
                 if details.at_least(preset, "basic"):
                     record.update(details.value_details(record, page["url"], region))
                 record.update(source_url=page["url"], source_retrieved_at=page.get("retrieved_at") or utc_now(), preset_id=preset["id"], preset_version=preset["version"], strategy_used="webview")
@@ -505,14 +523,19 @@ def make_rendered_kind(presets_dir: Path) -> JobKind:
         duplicates = len(candidates) - len(valid) - len(rejected)
         records = valid[:limit]
         follow_stats = None
-        if details.at_least(preset, "full") and records and (preset.get("pagination") or {}).get("type") != "detail_links":
+        if skipped_detail_pages:
+            warnings.append(f"{skipped_detail_pages} item page(s) were outside the preset scope or the site's signals and were not used")
+        if rendered_detail_pages:
+            follow_stats = {"candidates": rendered_detail_pages + skipped_detail_pages, "fetched": rendered_detail_pages, "reused": 0, "failed": 0,
+                            "skipped_scope": skipped_detail_pages, "skipped_robots": 0, "stop_reason": "completed"}
+        elif details.at_least(preset, "full") and records and (preset.get("pagination") or {}).get("type") != "detail_links":
             if "http" in preset["strategy"].get("allowed", []):
                 follow_stats, _ = details.follow_with_policy_client(
                     records, preset, contact=sources.get_settings(store)["contact_identity"], cache_dir=sources.cache_dir(store), purpose=params["purpose"],
                     limit=limit, should_stop=context.should_stop, on_page=lambda event: _page_event(context, event), warnings=warnings,
                 )
-            else:
-                warnings.append("Detail pages are followed only for presets that allow HTTP; use detail-link pagination in Scrape Studio for rendered detail pages")
+            elif details.detail_link(records[0], preset, ((preset.get("details") or {}).get("follow") or {}).get("field")):
+                warnings.append("Item pages were not opened: in Scrape Studio, turn on \"Open each item's page\" to read them in the WebView")
         dataset_id = None
         if params["run_mode"] == "full" and records:
             dataset_id = register_staged_rows(
@@ -520,6 +543,8 @@ def make_rendered_kind(presets_dir: Path) -> JobKind:
                 params.get("dataset_name") or f"{preset.get('display_name', preset['id'])} (Scrape Studio)",
             ).dataset_id
         store.complete_scrape_run(run_id, len(params["pages"]), len(records), len(rejected), duplicates)
+        detail_summary = details.summarize(records, details.level_of(preset), follow_stats)
+        store.record_scrape_details(run_id, detail_summary)
         coverage = _field_coverage(records, preset)
         return {
             "run_mode": params["run_mode"], "preset": f"{preset['id']}@{preset['version']}", "strategy_used": "webview",
@@ -527,7 +552,7 @@ def make_rendered_kind(presets_dir: Path) -> JobKind:
             "pages_fetched": len(params["pages"]), "records_extracted": len(records), "records_rejected": len(rejected), "records_duplicate": duplicates,
             "stop_reason": "max_records" if len(valid) > limit else "completed", "warnings": params.get("warnings", []) + warnings,
             "field_coverage": coverage, "sample_records": records[:TEST_MODE_MAX_RECORDS], "dataset_id": dataset_id,
-            "details": details.summarize(records, details.level_of(preset), follow_stats),
+            "details": detail_summary,
         }
 
     return JobKind(run=run, validate=validate)
