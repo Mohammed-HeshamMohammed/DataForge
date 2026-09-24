@@ -232,3 +232,12 @@ A grid of products and each product's own page are one collection, so item pages
 - Fixed element details (`item.price`, `item.rating`, …) find what a card usually has; comparing every card of the page finds what this site's cards have. A structural path that carries a value on at least 15% of the cards becomes an `item.<name>` field, named from its values, then its class words, then its kind.
 - Boilerplate is recognised by repetition (identical on 90% or more of the cards) and by accessibility markup (`aria-hidden` duplicates), not by site-specific rules, so the same pass works for any grid and on every parser and engine.
 - Results tables show the detected values by default, ranked by coverage; values that repeat on every record, long texts, and page-level metadata stay in the record inspector, where they are still one click away.
+
+## D34. Framed layout and a status bar
+
+- **Three layers:** a darker frame (`--color-frame`: window edges, title bar, status bar), panels for the two sidebars (`--color-panel`, bordered and rounded), and the main pane as the lightest surface. Every panel is inset from the window edges and from each other by one `--frame-gap` (8 px, 6 px in compact density), so the edges read as a single, even gap.
+- **Status bar:** a 26 px strip under the panels with icon indicators, each with a count, a tooltip naming what it means, and a click that goes to its detail:
+  - left: the local-service block (green *Local*, red *Offline*; click to re-check), the project (open or copy its folder), `⊗` recent failed jobs (Overview), `⚠` datasets without a confirmed mapping (Datasets), and running jobs (toggles the job center, pulses while jobs run);
+  - right: pairs waiting for review (Match), datasets and rows (Datasets), zoom when it is not 100% (reset), an available update (Settings → Updates), the two sidebar toggles, and the version (About).
+- **One poll:** `project.summary` moved from the workspace to `App`, so the sidebars, pane header, and status bar share one request every 2.5 s instead of polling separately. Without a project the bar shows only the service and the version.
+- The project sidebar's dataset list now fills its panel instead of stopping at a fixed height.

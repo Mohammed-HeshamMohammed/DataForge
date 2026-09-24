@@ -100,3 +100,37 @@ export const SidebarIcon = (p: IconProps) => (
     <path d="M9 4v16" />
   </Icon>
 );
+
+export const TableIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <rect x="3" y="4" width="18" height="16" rx="2" />
+    <path d="M3 10h18M9 10v10" />
+  </Icon>
+);
+
+export const AlertIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M12 4 2.5 20h19Z" />
+    <path d="M12 10v4M12 17h.01" />
+  </Icon>
+);
+
+export const ActivityIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M3 12h4l3-7 4 14 3-7h4" />
+  </Icon>
+);
+
+export const ZoomIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <circle cx="11" cy="11" r="7" />
+    <path d="m20 20-3.5-3.5M8 11h6M11 8v6" />
+  </Icon>
+);
+
+export const ErrorIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <circle cx="12" cy="12" r="9" />
+    <path d="m9 9 6 6m0-6-6 6" />
+  </Icon>
+);

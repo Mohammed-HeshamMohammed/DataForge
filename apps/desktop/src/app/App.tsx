@@ -14,6 +14,7 @@ import { AboutDialog, ShortcutsDialog } from "../components/CommandPalette.tsx";
 import { Sidebar, type ProjectSummary } from "../components/Sidebar.tsx";
 import { PaneHeader } from "../components/PaneHeader.tsx";
 import { RightSidebar } from "../components/RightSidebar.tsx";
+import { StatusBar } from "../components/StatusBar.tsx";
 import { Dashboard } from "../features/dashboard/Dashboard.tsx";
 import { Datasets } from "../features/datasets/Datasets.tsx";
 import { Scraping } from "../features/scraping/Scraping.tsx";
@@ -55,6 +56,12 @@ export function App() {
   const [centerOpen, setCenterOpen] = useState(false);
   const [info, setInfo] = useState<AppInfo | null>(null);
   const toast = useToast();
+  // One poll of the project summary feeds the sidebars, the pane header, and the status bar.
+  const summary = useService<ProjectSummary>(project ? "project.summary" : null, {}, 2500);
+  useEffect(() => {
+    if (project) void summary.reload();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project?.root_path]);
 
   useEffect(() => saveSetting("layout", layout), [layout]);
   useEffect(() => {
@@ -299,6 +306,7 @@ export function App() {
         layout={layout}
         refreshToken={refreshToken}
         onUpdateInfo={setUpdateInfo}
+        summary={summary}
       />
     );
   }
@@ -321,6 +329,21 @@ export function App() {
         onCommandCenterChange={setCenterOpen}
       />
       {body}
+      <StatusBar
+        project={project}
+        summary={project ? summary.data : null}
+        navigate={project ? navigate : undefined}
+        layout={layout}
+        onToggleLeft={() => setLayout((l) => ({ ...l, left: !l.left }))}
+        onToggleRight={() => setLayout((l) => ({ ...l, right: !l.right }))}
+        zoom={zoom}
+        onResetZoom={() => setZoom(1)}
+        update={updateInfo}
+        onUpdate={project ? () => { saveSetting("settingsSection", "updates"); navigate("settings"); } : undefined}
+        onProjectFolder={project ? () => (isTauri() ? void revealInFolder(project.root_path) : void copyText(project.root_path).then(() => toast.show({ message: "Project path copied" }))) : undefined}
+        onAbout={() => setDialog("about")}
+        version={APP_VERSION}
+      />
       {toast.node}
       {dialog === "shortcuts" && <ShortcutsDialog commands={commands} onClose={() => setDialog(null)} />}
       {dialog === "about" && (
@@ -347,6 +370,7 @@ function Workspace({
   layout,
   refreshToken,
   onUpdateInfo,
+  summary,
 }: {
   project: Project;
   tab: Tab;
@@ -355,9 +379,9 @@ function Workspace({
   layout: Layout;
   refreshToken: number;
   onUpdateInfo: (info: UpdateInfo | null) => void;
+  summary: ReturnType<typeof useService<ProjectSummary>>;
 }) {
   const [localRefresh, setLocalRefresh] = useState(0);
-  const summary = useService<ProjectSummary>("project.summary", {}, 2500);
   const active = TABS.find((t) => t.id === tab)!;
   useEffect(() => {
     if (refreshToken) void summary.reload();

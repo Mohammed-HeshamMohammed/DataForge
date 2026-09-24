@@ -3,6 +3,10 @@
 :root[data-theme="dark"] {
   color-scheme: dark;
   --color-window: #161b25;
+  /* Layers: frame (window edges, title and status bars) < panel (sidebars) < surface-raised (main pane). */
+  --color-frame: #0e1219;
+  --color-panel: #161b25;
+  --color-statusbar-accent: #34d399;
   --color-surface: #161b25;
   --color-surface-raised: #1d2330;
   --color-surface-sunken: #131822;
@@ -33,6 +37,9 @@
 :root[data-theme="light"] {
   color-scheme: light;
   --color-window: #e9edf3;
+  --color-frame: #dfe4ec;
+  --color-panel: #f3f5f9;
+  --color-statusbar-accent: #1b7447;
   --color-surface: #e9edf3;
   --color-surface-raised: #ffffff;
   --color-surface-sunken: #f3f5f9;
@@ -76,6 +83,9 @@
   --focus-ring-default: 0 0 0 2px var(--color-window), 0 0 0 4px var(--color-accent);
   --motion-fast: 120ms;
   --titlebar-height: 40px;
+  --statusbar-height: 26px;
+  /* The gap between panels, and between the panels and the window edges. */
+  --frame-gap: 8px;
   font-family: var(--font-body);
   font-size: 14px;
 }
@@ -212,6 +222,7 @@ kbd {
   flex-direction: column;
   height: 100vh;
   overflow: hidden;
+  background: var(--color-frame);
 }
 
 .titlebar {
@@ -292,8 +303,22 @@ kbd {
   min-height: 0;
   display: grid;
   grid-template-columns: 18.5rem minmax(0, 1fr) 17.5rem;
-  gap: var(--spacing-lg);
-  padding: 0 var(--spacing-lg) var(--spacing-lg);
+  gap: var(--frame-gap);
+  padding: 0 var(--frame-gap) var(--frame-gap);
+}
+
+/* The dataset list fills the rest of the project panel instead of stopping at a fixed height. */
+.sidebar-datasets {
+  flex: 1;
+  min-height: 8rem;
+  display: flex;
+  flex-direction: column;
+}
+
+.sidebar-datasets .scroll-list {
+  flex: 1;
+  min-height: 0;
+  max-height: none;
 }
 
 .sidebar-right .sidebar-grow {
@@ -379,7 +404,10 @@ kbd {
   flex-direction: column;
   gap: var(--spacing-lg);
   overflow-y: auto;
-  padding: var(--spacing-xs) var(--spacing-xs) 0 var(--spacing-xs);
+  padding: var(--spacing-md);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--color-panel);
 }
 
 .activity {
@@ -720,7 +748,7 @@ kbd {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  border-radius: var(--radius-xl);
+  border-radius: var(--radius-lg);
   background: var(--color-surface-raised);
   border: 1px solid var(--color-border-subtle);
   overflow: hidden;
@@ -1630,7 +1658,6 @@ fieldset.scope legend {
 @media (max-width: 1279px) {
   .shell {
     grid-template-columns: 16.5rem minmax(0, 1fr) 15rem;
-    gap: var(--spacing-md);
   }
 }
 
@@ -2087,4 +2114,140 @@ fieldset.scope legend {
 .attention-list + .section-label,
 .muted + .section-label {
   margin-top: var(--spacing-md);
+}
+
+/* ---------- Status bar ---------- */
+.statusbar {
+  flex: none;
+  height: var(--statusbar-height);
+  display: flex;
+  align-items: stretch;
+  justify-content: space-between;
+  gap: var(--spacing-md);
+  min-width: 0;
+  padding: 0 var(--frame-gap) 0 0;
+  background: var(--color-frame);
+  color: var(--color-text-muted);
+  font-size: 0.75rem;
+  line-height: 1;
+  user-select: none;
+}
+
+.statusbar-group {
+  display: flex;
+  align-items: center;
+  gap: 1px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.statusbar-origin,
+.statusbar-item {
+  font: inherit;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: none;
+  border: 0;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+/* The service indicator is the one coloured block, like a remote indicator in an editor. */
+.statusbar-origin {
+  align-self: stretch;
+  padding: 0 10px 0 calc(var(--frame-gap) + 4px);
+  margin-right: 4px;
+  background: var(--color-action-primary);
+  color: var(--color-action-primary-text);
+  font-weight: 600;
+}
+
+.statusbar-origin:hover {
+  background: var(--color-action-primary-strong);
+}
+
+.statusbar-origin.is-offline {
+  background: var(--color-status-critical);
+  color: var(--color-window);
+}
+
+.statusbar-item {
+  height: 20px;
+  padding: 0 6px;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: inherit;
+}
+
+.statusbar-item:hover:not(:disabled) {
+  background: var(--color-surface-hover);
+  color: var(--color-text);
+}
+
+.statusbar-item:disabled {
+  cursor: default;
+}
+
+.statusbar-item[aria-pressed="true"] {
+  color: var(--color-text);
+}
+
+.statusbar-item.tone-critical {
+  color: var(--color-status-critical);
+}
+
+.statusbar-item.tone-warning {
+  color: var(--color-status-warning);
+}
+
+.statusbar-item.tone-accent {
+  color: var(--color-statusbar-accent);
+}
+
+.statusbar-value {
+  font-variant-numeric: tabular-nums;
+}
+
+.statusbar-project {
+  display: inline-block;
+  max-width: 14rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: bottom;
+}
+
+.statusbar-version {
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+}
+
+.statusbar-mirror {
+  transform: scaleX(-1);
+}
+
+.statusbar-item.is-busy svg {
+  animation: statusbar-pulse 1.1s ease-in-out infinite alternate;
+}
+
+@keyframes statusbar-pulse {
+  from {
+    opacity: 0.45;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .statusbar-item.is-busy svg {
+    animation: none;
+  }
+}
+
+@media (max-width: 767px) {
+  .statusbar-project {
+    max-width: 7rem;
+  }
 }

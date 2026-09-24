@@ -515,6 +515,7 @@ kbd {
 
 /* Compact density (View → Compact density) */
 :root[data-density="compact"] {
+  --frame-gap: 6px;
   --spacing-md: 0.5rem;
   --spacing-lg: 0.75rem;
   --spacing-xl: 1rem;
