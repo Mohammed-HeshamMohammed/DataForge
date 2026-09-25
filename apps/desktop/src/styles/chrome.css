@@ -949,8 +949,8 @@ kbd {
 
 /* Sidebars are contained panels like the main pane, floating with gaps to each other and the window edges. */
 .shell {
-  padding: var(--spacing-sm) var(--spacing-lg) var(--spacing-lg);
-  gap: var(--spacing-lg);
+  padding: var(--spacing-md) 0;
+  gap: var(--spacing-md);
 }
 
 .sidebar {
@@ -978,13 +978,14 @@ kbd {
 /* IDE-style status bar */
 .statusbar {
   flex: none;
-  height: 26px;
+  height: 30px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: var(--spacing-md);
-  padding: 0 var(--spacing-sm);
-  border-top: 1px solid var(--color-border-subtle);
+  padding: 0 var(--spacing-md);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 999px;
   background: var(--color-surface-raised);
   color: var(--color-text-muted);
   font-size: 0.75rem;
@@ -1077,5 +1078,44 @@ kbd {
 @media (max-width: 899px) {
   .statusbar-group:last-child .statusbar-item:nth-child(2) {
     display: none;
+  }
+}
+
+/* One outer rounded frame holds everything: title bar and status bar are inset pills, and the
+   sidebars and main pane float between them with even gaps. */
+#app {
+  padding: 6px;
+}
+
+.window {
+  height: calc(100vh - 12px);
+  padding: var(--spacing-md);
+  border: 1px solid var(--color-border-strong);
+  border-radius: 28px;
+  background: var(--color-window);
+}
+
+.titlebar {
+  padding: 0 0 0 var(--spacing-lg);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 999px;
+  background: var(--color-surface-raised);
+}
+
+.titlebar-actions {
+  padding-right: var(--spacing-sm);
+}
+
+@media (max-width: 767px) {
+  #app {
+    padding: 0;
+  }
+
+  .window {
+    height: auto;
+    min-height: 100vh;
+    border-radius: 0;
+    border: 0;
+    overflow: visible;
   }
 }
