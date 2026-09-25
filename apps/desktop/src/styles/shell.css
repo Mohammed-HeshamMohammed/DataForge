@@ -2639,7 +2639,7 @@ fieldset.scope legend {
     max-height: none;
   }
 
-  .sidebar-right .profile-card {
+  .sidebar-stack:not(.minimized) .sidebar-service {
     display: none;
   }
 }

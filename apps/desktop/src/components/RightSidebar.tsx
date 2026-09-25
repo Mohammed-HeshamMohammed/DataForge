@@ -1,11 +1,11 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import type { Navigate } from "../app/App.tsx";
 import { call } from "../lib/ipc.ts";
 import { useService } from "../lib/hooks.ts";
 import { formatTime, isActive, JOB_KIND_LABELS } from "../lib/format.ts";
 import type { Job } from "../lib/types.ts";
 import { ErrorNote, StateBadge } from "./ui.tsx";
-import { InfoIcon, RefreshIcon, SidebarIcon } from "./icons.tsx";
+import { ActivityIcon, HistoryIcon, InfoIcon, RefreshIcon, ServiceIcon, SidebarIcon } from "./icons.tsx";
 
 export function RightSidebar({ navigate, onChanged, minimized = false, onToggle = () => {} }: { navigate: Navigate; onChanged: () => void; minimized?: boolean; onToggle?: () => void }) {
   const jobs = useService<Job[]>("job.list", { limit: 30 }, 1500);
@@ -60,12 +60,22 @@ export function RightSidebar({ navigate, onChanged, minimized = false, onToggle 
     </li>
   );
 
+  const serviceState = health.data?.status === "ok" ? "ok" : health.error ? "down" : "checking";
+  const railButton = (label: string, icon: ReactNode, badge?: number, dot?: string) => (
+    <button type="button" className="sidebar-rail-btn" onClick={onToggle} aria-label={`Restore ${label}`} title={`Restore ${label} (Ctrl+J)`}>
+      {icon}
+      {badge ? <span className="rail-count">{badge}</span> : null}
+      {dot ? <span className={`rail-dot rail-dot-${dot}`} aria-hidden="true" /> : null}
+    </button>
+  );
+
   return (
     <div className={`sidebar-stack${minimized ? " minimized" : ""}`} role="group" aria-label="Job center">
       <aside className={`sidebar sidebar-right sidebar-jobs-active${minimized ? " minimized" : ""}`} aria-label="Active jobs">
         <button type="button" className="sidebar-minimize" onClick={onToggle} aria-label={minimized ? "Restore jobs sidebar" : "Minimize jobs sidebar"} title={minimized ? "Restore jobs sidebar (Ctrl+J)" : "Minimize jobs sidebar (Ctrl+J)"}>
           <SidebarIcon size={17} />
         </button>
+        {minimized && railButton("active jobs", <ActivityIcon size={18} />, active.length)}
         <div className="sidebar-content">
           <section>
             <div className="section-label-row">
@@ -84,7 +94,8 @@ export function RightSidebar({ navigate, onChanged, minimized = false, onToggle 
         </div>
       </aside>
 
-      <aside className="sidebar sidebar-right sidebar-jobs-recent" aria-label="Recent jobs and service">
+      <aside className={`sidebar sidebar-right sidebar-jobs-recent${minimized ? " minimized" : ""}`} aria-label="Recent jobs">
+        {minimized && railButton("recent jobs", <HistoryIcon size={18} />, recent.length)}
         <div className="sidebar-content">
           <section className="sidebar-grow">
             <div className="section-label-row">
@@ -93,7 +104,12 @@ export function RightSidebar({ navigate, onChanged, minimized = false, onToggle 
             </div>
             {recent.length === 0 ? <p className="muted small">No finished jobs yet.</p> : <ul className="plain-list scroll-list tall">{recent.map(renderJob)}</ul>}
           </section>
+        </div>
+      </aside>
 
+      <aside className={`sidebar sidebar-right sidebar-service${minimized ? " minimized" : ""}`} aria-label="Local service">
+        {minimized && railButton("local service", <ServiceIcon size={18} />, undefined, serviceState)}
+        <div className="sidebar-content">
           <div className="profile-card">
             <span className={`status-orb ${health.data?.status === "ok" ? "status-orb-ok" : "status-orb-warn"}`} aria-hidden="true" />
             <div className="profile-text">
