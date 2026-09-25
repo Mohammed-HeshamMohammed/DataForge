@@ -76,6 +76,11 @@ Studio bridge actions also include `scrollStep` and `links(css)` for infinite sc
 | `dataset.diff` | `before_dataset_id`, `after_dataset_id`, `unique_by` | `{counts, added, removed, changed}` |
 | `settings.get` / `settings.update` | — / `changes` (`contact_identity`, `default_purpose`, `http_cache`, `warc_capture`, `ai_suggestions`) | project settings |
 | `cache.purge` | — | `{bytes_removed}` |
+| `app.info` | — | `{app_data_dir, logs_dir, docs_dir?, plan_file?, project_root?, schema_version}`; local folders the Help and File menus open |
+| `project.create_sample` | — | project (`sample_dataset_id` on first creation); idempotent local "Getting Started" project with a small contacts file |
+| `scrape.site_catalog` | — | `[{site_id, site_name, site_category, domains, recommended_method, suggested_fields, requires_rendered, example_url}]` |
+| `scrape.detect_url` | `url`, `purpose?` | `{url, content_type, confidence, source, preset_id, preset_version, requires_rendered, created_preset, reason}` plus site profile fields; falls back to a known-site profile with `detection_limited: true` when the page cannot be inspected |
+| `settings.update` | adds `network_proxy` `{enabled, url}` to `changes` | project settings; one credential-free fixed proxy for collection workers |
 
 Studio bridge picks add `fallback_xpaths` (label-anchored when a repeated caption exists, then structural); `extract` evaluates `{xpath, attribute?}` selectors. Presets may set `extraction.output: "text"` with `ocr: true` for document presets. Job kinds add `archive_query` and `bulk_import`. Contracts: `host-signals`, `scrape-result`, `record-diff`, `watch`, and `collection-settings` schemas in `packages/contracts/`. Stage names add `finding_captures`. Scrapy engine page events carry `engine: "scrapy"`.
 
