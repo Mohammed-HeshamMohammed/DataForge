@@ -2628,12 +2628,15 @@ fieldset.scope legend {
     grid-row: 1 / span 2;
   }
 
-  .sidebar-right {
+  .sidebar-stack {
     grid-column: 2;
     max-height: 15rem;
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    align-content: start;
+    flex-direction: row;
+  }
+
+  .sidebar-stack .sidebar {
+    flex: 1 1 0;
+    max-height: none;
   }
 
   .sidebar-right .profile-card {
@@ -2689,10 +2692,10 @@ fieldset.scope legend {
     grid-row: auto;
   }
 
-  .sidebar-right {
+  .sidebar-stack {
     grid-column: auto;
     max-height: none;
-    display: flex;
+    flex-direction: column;
   }
 
   .sidebar-actions {

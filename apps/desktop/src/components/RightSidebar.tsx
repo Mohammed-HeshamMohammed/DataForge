@@ -61,46 +61,52 @@ export function RightSidebar({ navigate, onChanged, minimized = false, onToggle 
   );
 
   return (
-    <aside className={`sidebar sidebar-right${minimized ? " minimized" : ""}`} aria-label="Job center">
-      <button type="button" className="sidebar-minimize" onClick={onToggle} aria-label={minimized ? "Restore jobs sidebar" : "Minimize jobs sidebar"} title={minimized ? "Restore jobs sidebar (Ctrl+J)" : "Minimize jobs sidebar (Ctrl+J)"}>
-        <SidebarIcon size={17} />
-      </button>
-      <div className="sidebar-content">
-      <section>
-        <div className="section-label-row">
-          <h2 className="section-label">Active jobs</h2>
-          <span className="count-badge">{active.length}</span>
-        </div>
-        <ErrorNote message={error ?? jobs.error} />
-        {active.length === 0 ? (
-          <p className="info-box">
-            <InfoIcon size={16} /> Nothing running. Progress for imports, collections, and duplicate cleanup appears here.
-          </p>
-        ) : (
-          <ul className="plain-list">{active.map(renderJob)}</ul>
-        )}
-      </section>
-
-      <section className="sidebar-grow">
-        <div className="section-label-row">
-          <h2 className="section-label">Recent jobs</h2>
-          <span className="count-badge">{recent.length}</span>
-        </div>
-        {recent.length === 0 ? <p className="muted small">No finished jobs yet.</p> : <ul className="plain-list scroll-list tall">{recent.map(renderJob)}</ul>}
-      </section>
-
-      <div className="profile-card">
-        <span className={`status-orb ${health.data?.status === "ok" ? "status-orb-ok" : "status-orb-warn"}`} aria-hidden="true" />
-        <div className="profile-text">
-          <strong>Local service</strong>
-          <span className="list-item-sub">{health.data ? `Checked ${new Date(health.data.checked_at).toLocaleTimeString()}` : health.error ? "Unavailable" : "Checking…"}</span>
-          <span className={health.data?.status === "ok" ? "role-badge" : "status-badge"}>{health.data?.status ?? "…"}</span>
-        </div>
-        <button type="button" className="icon-btn-plain" aria-label="Check service" onClick={() => void health.reload()}>
-          <RefreshIcon size={18} />
+    <div className={`sidebar-stack${minimized ? " minimized" : ""}`} role="group" aria-label="Job center">
+      <aside className={`sidebar sidebar-right sidebar-jobs-active${minimized ? " minimized" : ""}`} aria-label="Active jobs">
+        <button type="button" className="sidebar-minimize" onClick={onToggle} aria-label={minimized ? "Restore jobs sidebar" : "Minimize jobs sidebar"} title={minimized ? "Restore jobs sidebar (Ctrl+J)" : "Minimize jobs sidebar (Ctrl+J)"}>
+          <SidebarIcon size={17} />
         </button>
-      </div>
-      </div>
-    </aside>
+        <div className="sidebar-content">
+          <section>
+            <div className="section-label-row">
+              <h2 className="section-label">Active jobs</h2>
+              <span className="count-badge">{active.length}</span>
+            </div>
+            <ErrorNote message={error ?? jobs.error} />
+            {active.length === 0 ? (
+              <p className="info-box">
+                <InfoIcon size={16} /> Nothing running. Progress for imports, collections, and duplicate cleanup appears here.
+              </p>
+            ) : (
+              <ul className="plain-list">{active.map(renderJob)}</ul>
+            )}
+          </section>
+        </div>
+      </aside>
+
+      <aside className="sidebar sidebar-right sidebar-jobs-recent" aria-label="Recent jobs and service">
+        <div className="sidebar-content">
+          <section className="sidebar-grow">
+            <div className="section-label-row">
+              <h2 className="section-label">Recent jobs</h2>
+              <span className="count-badge">{recent.length}</span>
+            </div>
+            {recent.length === 0 ? <p className="muted small">No finished jobs yet.</p> : <ul className="plain-list scroll-list tall">{recent.map(renderJob)}</ul>}
+          </section>
+
+          <div className="profile-card">
+            <span className={`status-orb ${health.data?.status === "ok" ? "status-orb-ok" : "status-orb-warn"}`} aria-hidden="true" />
+            <div className="profile-text">
+              <strong>Local service</strong>
+              <span className="list-item-sub">{health.data ? `Checked ${new Date(health.data.checked_at).toLocaleTimeString()}` : health.error ? "Unavailable" : "Checking…"}</span>
+              <span className={health.data?.status === "ok" ? "role-badge" : "status-badge"}>{health.data?.status ?? "…"}</span>
+            </div>
+            <button type="button" className="icon-btn-plain" aria-label="Check service" onClick={() => void health.reload()}>
+              <RefreshIcon size={18} />
+            </button>
+          </div>
+        </div>
+      </aside>
+    </div>
   );
 }
