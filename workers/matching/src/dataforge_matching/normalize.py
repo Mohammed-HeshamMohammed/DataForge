@@ -6,17 +6,32 @@ import re
 import unicodedata
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
-NORMALIZATION_VERSION = "1.0.0"
+import phonenumbers
+
+NORMALIZATION_VERSION = "1.1.0"
 
 # Roles whose values are interchangeable across columns (compared as sets).
 SET_ROLES = frozenset({"phone", "email"})
 # Roles compared like-for-like; at most one column per role.
 POSITIONAL_ROLES = frozenset(
-    {"address", "mailing_address", "name", "first_name", "last_name", "city", "region", "postal_code", "url"}
+    {
+        "address", "mailing_address", "building_name", "house_number", "street", "unit", "po_box", "neighborhood",
+        "district", "city", "county", "region", "country", "country_code", "postal_code", "latitude", "longitude",
+        "name", "first_name", "last_name", "url",
+    }
 )
 # Identifiers are namespaced by source column, so several identifier columns are allowed.
 ALL_ROLES = SET_ROLES | POSITIONAL_ROLES | {"identifier", "other", "ignore"}
-SENSITIVE_ROLES = frozenset({"phone", "email", "address", "mailing_address", "name", "first_name", "last_name"})
+SENSITIVE_ROLES = frozenset({
+    "phone", "email", "address", "mailing_address", "building_name", "house_number", "street", "unit", "po_box",
+    "neighborhood", "district", "city", "county", "region", "country", "country_code", "postal_code", "latitude",
+    "longitude", "name", "first_name", "last_name",
+})
+
+ADDRESS_TEXT_ROLES = frozenset({
+    "building_name", "house_number", "street", "unit", "po_box", "neighborhood", "district", "city", "county",
+    "region", "country", "country_code",
+})
 
 _SUFFIXES = {
     "street": "st", "str": "st", "avenue": "ave", "av": "ave", "road": "rd", "drive": "dr", "lane": "ln",
@@ -44,6 +59,12 @@ def phone(value: object, default_region: str | None = "US") -> str | None:
     digits = re.sub(r"\D", "", raw)
     if len(digits) < 7:
         return None
+    try:
+        parsed = phonenumbers.parse(raw, default_region)
+        if phonenumbers.is_possible_number(parsed):
+            return phonenumbers.format_number(parsed, phonenumbers.PhoneNumberFormat.E164)
+    except phonenumbers.NumberParseException:
+        pass
     if raw.startswith("+"):
         return "+" + digits
     if default_region == "US":
@@ -51,7 +72,7 @@ def phone(value: object, default_region: str | None = "US") -> str | None:
             return "+1" + digits
         if len(digits) == 11 and digits.startswith("1"):
             return "+" + digits
-    # Region is ambiguous: keep a digits-only value rather than inventing a country.
+    # Preserve the conservative fallback for incomplete or ambiguous values.
     return digits
 
 
@@ -80,6 +101,14 @@ def address(value: object) -> dict[str, str] | None:
     house = tokens[0] if tokens and re.fullmatch(r"\d+[a-z]?", tokens[0]) else ""
     street_tokens = tokens[1:] if house else tokens
     return {"house_number": house, "street": " ".join(street_tokens), "unit": unit, "full": " ".join(tokens)}
+
+
+def coordinate(value: object, minimum: float, maximum: float) -> float | None:
+    try:
+        result = float(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+    return round(result, 7) if minimum <= result <= maximum else None
 
 
 def url(value: object) -> str | None:
@@ -120,13 +149,32 @@ def normalize_row(raw: dict[str, object], mapping: dict[str, str], default_regio
         elif role == "url":
             if (normalized := url(value)) is not None:
                 out[role] = normalized
+        elif role == "latitude":
+            if (normalized := coordinate(value, -90, 90)) is not None:
+                out[role] = normalized
+        elif role == "longitude":
+            if (normalized := coordinate(value, -180, 180)) is not None:
+                out[role] = normalized
         elif role == "first_name":
             first = text(value)
         elif role == "last_name":
             last = text(value)
-        elif role in ("name", "city", "region"):
+        elif role == "name" or role in ADDRESS_TEXT_ROLES:
             if (normalized := text(value)):
                 out[role] = normalized
+    # Separate address columns become the same parsed structure used by a complete address.
+    # Explicit components also improve a parsed full address without altering the raw values.
+    if out.get("address") or out.get("street"):
+        parsed = out.get("address") or address(" ".join(part for part in (str(out.get("house_number", "")), str(out["street"]), str(out.get("unit", ""))) if part))
+        if parsed:
+            if out.get("house_number"):
+                parsed["house_number"] = str(out["house_number"])
+            if out.get("street"):
+                parsed["street"] = str(out["street"])
+            if out.get("unit"):
+                parsed["unit"] = str(out["unit"])
+            parsed["full"] = " ".join(part for part in (parsed["house_number"], parsed["street"], parsed["unit"]) if part)
+            out["address"] = parsed
     if "name" not in out and (first or last):
         out["name"] = f"{first} {last}".strip()
     return out

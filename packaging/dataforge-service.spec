@@ -17,7 +17,7 @@ for package in (
     "scrapy_deltafetch", "spidermon", "itemadapter", "itemloaders", "w3lib", "parsel", "protego", "queuelib",
     "extruct", "pyRdfa", "rdflib", "mf2py", "html_text", "jstyleson", "lxml_html_clean", "trafilatura", "justext", "htmldate", "courlan",
     "dateparser", "tldextract", "phonenumbers", "usaddress", "price_parser", "selectolax", "pdfplumber", "pdfminer", "pypdfium2", "pypdfium2_raw",
-    "autoscraper", "feedparser", "markdownify", "warcio", "hishel", "truststore", "babel", "dataforge_scraping",
+    "autoscraper", "feedparser", "markdownify", "warcio", "hishel", "truststore", "babel", "pyarrow", "dataforge_scraping",
 ):
     package_datas, package_binaries, package_hidden = collect_all(package)
     datas += package_datas

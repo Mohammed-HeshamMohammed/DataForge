@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<catalog xmlns="urn:dataforge:fixture">
+  <record code="A"><name>Alpha</name><amount>10</amount></record>
+  <record code="B"><name>Beta</name><amount>20</amount></record>
+</catalog>

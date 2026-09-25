@@ -81,6 +81,8 @@ Studio bridge picks add `fallback_xpaths` (label-anchored when a repeated captio
 
 `scrape.create_job` and `job.retry` accept `credential_ref`. Only the desktop host may add `credential_secret`; the host rejects UI payloads that contain it, and the service keeps it in memory only.
 
+API integrations may declare bearer, named-header, query-parameter, HTTP Basic, or OAuth 2 client-credentials authentication. Basic and OAuth pairs are stored as `username:password` / `client_id:client_secret` (or the equivalent JSON object) in the OS credential store. OAuth access tokens are obtained from an HTTPS, allow-listed token endpoint and are never persisted. Project collection settings may declare one credential-free fixed proxy URL; rotation is not supported.
+
 ## Host commands (Tauri `invoke`)
 
 | Command | Arguments | Notes |

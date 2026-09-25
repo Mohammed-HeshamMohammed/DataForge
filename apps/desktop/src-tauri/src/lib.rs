@@ -51,6 +51,7 @@ pub fn run() {
             credentials::credential_list,
             studio::studio_open,
             studio::studio_set_bounds,
+            studio::studio_set_visible,
             studio::studio_navigate,
             studio::studio_control,
             studio::studio_close,

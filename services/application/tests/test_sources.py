@@ -13,6 +13,7 @@ import pytest
 
 from dataforge_application import sources
 from dataforge_application.api import Service
+from dataforge_scraping.errors import PolicyViolation
 
 from test_workflows import call, ok, wait
 
@@ -54,10 +55,14 @@ def test_purpose_required_and_signals_recorded(service: Service, site) -> None:
 def test_settings_contact_identity_gates_sec_preset(service: Service) -> None:
     settings = ok(service, "settings.get")
     assert settings["warc_capture"] == {"enabled": False, "retention_days": 30} and settings["ai_suggestions"]["remote_consent"] is False
+    assert settings["network_proxy"] == {"enabled": False, "url": ""}
     blocked = call(service, "scrape.create_job", preset_id="sec.submissions", preset_version="1.0.0", policy_acknowledgement=True, purpose="research", variables={"cik": "0000320193"})
     assert "contact identity" in blocked["error"]["message"]
     assert "unknown" in call(service, "settings.update", changes={"surprise": 1})["error"]["message"].lower()
     ok(service, "settings.update", changes={"contact_identity": {"organization": "Acme Research", "email": "ops@acme.test"}})
+    assert "without credentials" in call(service, "settings.update", changes={"network_proxy": {"enabled": True, "url": "http://user:secret@proxy.test:8080"}})["error"]["message"]
+    proxy_settings = ok(service, "settings.update", changes={"network_proxy": {"enabled": True, "url": "http://proxy.test:8080"}})
+    assert proxy_settings["network_proxy"] == {"enabled": True, "url": "http://proxy.test:8080"}
     bad_variable = call(service, "scrape.create_job", preset_id="sec.submissions", preset_version="1.0.0", policy_acknowledgement=True, purpose="research", variables={"cik": "12"})
     assert "invalid format" in bad_variable["error"]["message"]
 
@@ -183,9 +188,121 @@ def test_suggestions_detection_and_maintenance(service: Service) -> None:
     assert report["suggestions"][0]["suggested"] == "p.cost"
 
 
+def test_automatic_url_detection_creates_reusable_host_scoped_presets(service: Service, site) -> None:
+    base, _ = site
+    detected = ok(service, "scrape.detect_url", url=base + "/products?page=1", purpose="internal_analysis")
+    assert detected["source"] == "website" and detected["reason"] == "Repeated record cards detected"
+    assert detected["preset_id"].startswith("custom.detected.") and detected["created_preset"] is True
+    repeated = ok(service, "scrape.detect_url", url=base + "/products?page=1", purpose="internal_analysis")
+    assert (repeated["preset_id"], repeated["preset_version"], repeated["created_preset"]) == (detected["preset_id"], detected["preset_version"], False)
+    job = scrape(service, preset_id=detected["preset_id"], preset_version=detected["preset_version"], start_url=base + "/products?page=1")
+    assert job["state"] == "completed" and job["result"]["records_extracted"] == 4
+    feed = ok(service, "scrape.detect_url", url=base + "/feed.xml", purpose="research")
+    assert (feed["source"], feed["preset_id"]) == ("feed", "generic.feed")
+    sitemap = ok(service, "scrape.detect_url", url=base + "/sitemap_index.xml", purpose="research")
+    assert sitemap["source"] == "sitemap" and sitemap["preset_id"].startswith("generic.sitemap_")
+    xml = ok(service, "scrape.detect_url", url=base + "/records.xml", purpose="research")
+    assert (xml["source"], xml["preset_id"]) == ("xml", "generic.xml")
+    rendered = ok(service, "scrape.detect_url", url=base + "/app-shell", purpose="research")
+    assert rendered["requires_rendered"] is True and "Scrape Studio" in rendered["reason"]
+
+
+@pytest.mark.parametrize(("url", "site_id", "category"), [
+    ("https://www.amazon.com/s?k=laptop", "amazon", "marketplace"),
+    ("https://www.amazon.eg/s?k=laptop", "amazon", "marketplace"),
+    ("https://www.ebay.com/sch/i.html?_nkw=laptop", "ebay", "marketplace"),
+    ("https://www.ebay.ch/sch/i.html?_nkw=laptop", "ebay", "marketplace"),
+    ("https://www.ebay.co.jp/sch/i.html?_nkw=laptop", "ebay", "marketplace"),
+    ("https://www.walmart.com/search?q=laptop", "walmart", "marketplace"),
+    ("https://www.target.com/s?searchTerm=laptop", "target", "marketplace"),
+    ("https://www.bestbuy.com/site/searchpage.jsp", "bestbuy", "marketplace"),
+    ("https://www.etsy.com/search?q=lamp", "etsy", "marketplace"),
+    ("https://www.aliexpress.com/w/wholesale-laptop.html", "aliexpress", "marketplace"),
+    ("https://www.newegg.com/p/pl?d=laptop", "newegg", "marketplace"),
+    ("https://www.zillow.com/homes/", "zillow", "real_estate"),
+    ("https://www.realtor.com/realestateandhomes-search/", "realtor", "real_estate"),
+    ("https://www.redfin.com/city/", "redfin", "real_estate"),
+    ("https://www.trulia.com/for_sale/", "trulia", "real_estate"),
+    ("https://www.homes.com/homes-for-sale/", "homes", "real_estate"),
+    ("https://www.apartments.com/austin-tx/", "apartments", "real_estate"),
+    ("https://www.loopnet.com/search/commercial-real-estate/", "loopnet", "real_estate"),
+    ("https://www.propertyshark.com/mason/", "propertyshark", "real_estate"),
+    ("https://www.indeed.com/jobs?q=engineer", "indeed", "jobs"),
+    ("https://uk.indeed.com/jobs?q=engineer", "indeed", "jobs"),
+    ("https://www.linkedin.com/jobs/search/", "linkedin_jobs", "jobs"),
+    ("https://www.glassdoor.com/Job/jobs.htm", "glassdoor", "jobs"),
+    ("https://www.ziprecruiter.com/jobs-search", "ziprecruiter", "jobs"),
+    ("https://wellfound.com/jobs", "wellfound", "jobs"),
+    ("https://www.monster.com/jobs/search", "monster", "jobs"),
+    ("https://www.google.com/maps/search/cafes", "google_maps", "local_directory"),
+    ("https://www.yelp.com/search?find_desc=cafe", "yelp", "local_directory"),
+    ("https://www.yelp.co.jp/search?find_desc=cafe", "yelp", "local_directory"),
+    ("https://www.yellowpages.com/search?search_terms=cafe", "yellow_pages", "local_directory"),
+    ("https://www.yellowpages.com.au/search/listings?clue=cafe", "yellow_pages", "local_directory"),
+    ("https://www.tripadvisor.com/Search?q=cafe", "tripadvisor", "local_directory"),
+    ("https://www.tripadvisor.com.eg/Search?q=cafe", "tripadvisor", "local_directory"),
+    ("https://foursquare.com/explore", "foursquare", "local_directory"),
+    ("https://www.reddit.com/r/data/", "reddit", "community"),
+    ("https://en.wikipedia.org/wiki/Web_scraping", "wikipedia", "publisher"),
+    ("https://medium.com/tag/data", "medium", "publisher"),
+    ("https://www.reuters.com/world/", "major_publisher", "publisher"),
+    ("https://www.youtube.com/results?search_query=data", "youtube", "media"),
+    ("https://www.imdb.com/search/title/", "imdb", "media"),
+    ("https://www.rottentomatoes.com/browse/movies_at_home/", "rottentomatoes", "media"),
+    ("https://github.com/openai", "github", "developer"),
+    ("https://stackoverflow.com/questions", "stackoverflow", "developer"),
+    ("https://www.producthunt.com/topics/developer-tools", "producthunt", "developer"),
+    ("https://www.npmjs.com/search?q=react", "npm", "developer"),
+])
+def test_known_site_profiles_cover_supported_families(url: str, site_id: str, category: str) -> None:
+    profile = sources.identify_known_site(url)
+    assert profile is not None
+    assert (profile["site_id"], profile["site_category"]) == (site_id, category)
+    assert profile["suggested_fields"] and profile["recommended_method"]
+
+
+def test_path_specific_site_profiles_do_not_overmatch() -> None:
+    assert sources.identify_known_site("https://www.linkedin.com/in/example") is None
+    assert sources.identify_known_site("https://www.google.com/search?q=maps") is None
+
+
+def test_site_catalog_exposes_every_supported_family(service: Service) -> None:
+    catalog = sources.site_catalog()
+    assert len(catalog) == 38
+    assert len({entry["site_id"] for entry in catalog}) == len(catalog)
+    assert any(entry["site_id"] == "google_maps" for entry in catalog)
+    assert catalog == ok(service, "scrape.site_catalog")
+    assert all(entry["domains"] and entry["example_url"].startswith("https://") for entry in catalog)
+    assert all(entry["suggested_fields"] and entry["recommended_method"] for entry in catalog)
+
+
+def test_known_site_detection_survives_a_blocked_probe(service: Service, monkeypatch: pytest.MonkeyPatch) -> None:
+    def blocked(*_args, **_kwargs):
+        raise PolicyViolation("Collection stopped on access response: 403")
+
+    monkeypatch.setattr(sources, "detect_url", blocked)
+    detected = ok(service, "scrape.detect_url", url="https://www.amazon.com/s?k=laptop", purpose="price_monitoring")
+    assert detected["site_id"] == "amazon" and detected["site_category"] == "marketplace"
+    assert detected["detection_limited"] is True and detected["requires_rendered"] is True
+    assert detected["preset_id"] == "generic.html_list" and "403" in detected["reason"]
+
+
 def test_new_presets_pass_health_checks_in_service(service: Service) -> None:
     results = {r["id"]: r["status"] for r in ok(service, "preset.health_check")}
-    for preset_id in ("generic.structured_data", "generic.document_tables", "generic.feed", "osm.overpass_pois", "wikidata.sparql", "sec.submissions", "gdelt.doc_search"):
+    for preset_id in (
+        "generic.structured_data",
+        "generic.document_tables",
+        "generic.feed",
+        "generic.oai_pmh",
+        "generic.xml",
+        "generic.graphql",
+        "crossref.works",
+        "gleif.lei_records",
+        "osm.overpass_pois",
+        "wikidata.sparql",
+        "sec.submissions",
+        "gdelt.doc_search",
+    ):
         assert results[preset_id] == "passed", preset_id
 
 
@@ -195,7 +312,7 @@ def test_studio_navigation_and_staging_apply_site_signals(service: Service, site
     base, state = site
     state.robots = "User-agent: *\nDisallow: /product/SKU-2\n"
     checkers: dict[str, SignalChecker] = {}
-    monkeypatch.setattr(sources, "shared_checker", lambda purpose: checkers.setdefault(purpose, SignalChecker(httpx.Client(), purpose, include_local=True)))
+    monkeypatch.setattr(sources, "shared_checker", lambda purpose, _proxy=None: checkers.setdefault(purpose, SignalChecker(httpx.Client(), purpose, include_local=True)))
     preset = next(p for p in ok(service, "preset.list") if p["id"] == "generic.structured_data")
     allowed = ok(service, "scrape.check_url", preset=preset, url=base + "/product/SKU-1", scope_url=base + "/", purpose="internal_analysis")
     blocked = ok(service, "scrape.check_url", preset=preset, url=base + "/product/SKU-2", scope_url=base + "/", purpose="internal_analysis")

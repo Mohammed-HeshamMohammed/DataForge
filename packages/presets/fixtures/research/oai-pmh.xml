@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<OAI-PMH xmlns="http://www.openarchives.org/OAI/2.0/" xmlns:oai_dc="http://www.openarchives.org/OAI/2.0/oai_dc/" xmlns:dc="http://purl.org/dc/elements/1.1/">
+  <responseDate>2026-09-18T00:00:00Z</responseDate>
+  <request verb="ListRecords">https://repository.example/oai</request>
+  <ListRecords>
+    <record><header><identifier>oai:example:1</identifier><datestamp>2026-01-01</datestamp><setSpec>papers</setSpec></header><metadata><oai_dc:dc><dc:title>First paper</dc:title><dc:creator>Ada</dc:creator><dc:identifier>https://example.test/1</dc:identifier></oai_dc:dc></metadata></record>
+    <record><header><identifier>oai:example:2</identifier><datestamp>2026-01-02</datestamp><setSpec>papers</setSpec></header><metadata><oai_dc:dc><dc:title>Second paper</dc:title><dc:creator>Grace</dc:creator><dc:identifier>https://example.test/2</dc:identifier></oai_dc:dc></metadata></record>
+    <resumptionToken completeListSize="2" cursor="0"></resumptionToken>
+  </ListRecords>
+</OAI-PMH>

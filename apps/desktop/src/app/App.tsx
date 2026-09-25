@@ -7,7 +7,7 @@ import {
 import { isActive } from "../lib/format.ts";
 import { isTextField, matchesShortcut, type Command } from "../lib/commands.ts";
 import type { Job, Project } from "../lib/types.ts";
-import { ErrorNote, PathInput, useToast } from "../components/ui.tsx";
+import { ErrorNote, useToast } from "../components/ui.tsx";
 import { TitleBar, type TitleProject } from "../components/TitleBar.tsx";
 import { AboutDialog, ShortcutsDialog } from "../components/CommandPalette.tsx";
 import { Sidebar, type ProjectSummary } from "../components/Sidebar.tsx";
@@ -15,21 +15,21 @@ import { PaneHeader } from "../components/PaneHeader.tsx";
 import { RightSidebar } from "../components/RightSidebar.tsx";
 import { Dashboard } from "../features/dashboard/Dashboard.tsx";
 import { Datasets } from "../features/datasets/Datasets.tsx";
-import { Scraping } from "../features/scraping/Scraping.tsx";
 import { MatchTab } from "../features/matching/MatchTab.tsx";
 import { DEFAULT_UPDATE_PREFS, Settings, type UpdatePrefs } from "../features/settings/Settings.tsx";
 import { Studio } from "../features/studio/Studio.tsx";
+import { ProjectGate } from "../features/onboarding/ProjectGate.tsx";
+import type { SourceKind } from "../features/scraping/sources.ts";
 
 export type Tab = "dashboard" | "scraping" | "studio" | "datasets" | "match" | "settings";
-export type Navigate = (tab: Tab, context?: { datasetId?: string; jobId?: string }) => void;
+export type NavigationContext = { datasetId?: string; jobId?: string; url?: string; source?: SourceKind };
+export type Navigate = (tab: Tab, context?: NavigationContext) => void;
 
 export const TABS: { id: Tab; label: string; title: string }[] = [
   { id: "dashboard", label: "Overview", title: "Overview" },
-  { id: "scraping", label: "Scraping", title: "Scraping" },
   { id: "studio", label: "Scrape Studio", title: "Scrape Studio" },
   { id: "datasets", label: "Datasets", title: "Datasets" },
-  { id: "match", label: "Match & Deduplicate", title: "Match & Deduplicate" },
-  { id: "settings", label: "Settings", title: "Settings" },
+  { id: "match", label: "Clean & Combine", title: "Clean & Combine" },
 ];
 
 export const APP_VERSION = "0.2.0";
@@ -44,7 +44,7 @@ export function App() {
   const recent = useService<Project[]>("project.recent");
   const [project, setProject] = useState<Project | null>(null);
   const [tab, setTab] = useState<Tab>("dashboard");
-  const [context, setContext] = useState<{ datasetId?: string; jobId?: string }>({});
+  const [contexts, setContexts] = useState<Partial<Record<Tab, NavigationContext>>>({});
   const [refreshToken, setRefreshToken] = useState(0);
   const [updateInfo, setUpdateInfo] = useState<UpdateInfo | null>(null);
   const [layout, setLayout] = useState<Layout>(() => loadSetting<Layout>("layout", { left: true, right: true, compact: false }));
@@ -84,7 +84,7 @@ export function App() {
   }, [project?.root_path]);
 
   const navigate: Navigate = useCallback((next, ctx = {}) => {
-    setContext(ctx);
+    if (Object.keys(ctx).length) setContexts((current) => ({ ...current, [next]: ctx }));
     setTab(next);
   }, []);
 
@@ -163,7 +163,7 @@ export function App() {
       {
         id: "file.import", label: "Import data file…", menu: "file", group: 2, shortcut: "Ctrl+I", enabled: hasProject,
         run: async () => {
-          const path = await pickFile([{ name: "Data files", extensions: ["csv", "json", "xlsx"] }]);
+          const path = await pickFile([{ name: "Data files", extensions: ["csv", "json", "jsonl", "ndjson", "xlsx", "xml", "parquet", "docx", "zip", "gz"] }]);
           if (!path) return navigate("datasets");
           try {
             await call("dataset.import", { path });
@@ -198,8 +198,8 @@ export function App() {
       // View
       { id: "view.palette", label: "Search commands…", menu: "view", group: 1, shortcut: "Ctrl+Shift+P", run: () => setCenterOpen(true) },
       { id: "view.paletteK", label: "Quick search…", menu: "view", group: 1, shortcut: "Ctrl+K", run: () => setCenterOpen(true), paletteHidden: true },
-      { id: "view.left", label: layout.left ? "Hide left sidebar" : "Show left sidebar", menu: "view", group: 2, shortcut: "Ctrl+B", enabled: hasProject, run: () => setLayout((l) => ({ ...l, left: !l.left })) },
-      { id: "view.right", label: layout.right ? "Hide jobs sidebar" : "Show jobs sidebar", menu: "view", group: 2, shortcut: "Ctrl+J", enabled: hasProject, run: () => setLayout((l) => ({ ...l, right: !l.right })) },
+      { id: "view.left", label: layout.left ? "Minimize left sidebar" : "Restore left sidebar", menu: "view", group: 2, shortcut: "Ctrl+B", enabled: hasProject, run: () => setLayout((l) => ({ ...l, left: !l.left })) },
+      { id: "view.right", label: layout.right ? "Minimize jobs sidebar" : "Restore jobs sidebar", menu: "view", group: 2, shortcut: "Ctrl+J", enabled: hasProject, run: () => setLayout((l) => ({ ...l, right: !l.right })) },
       { id: "view.density", label: layout.compact ? "Comfortable density" : "Compact density", menu: "view", group: 2, run: () => setLayout((l) => ({ ...l, compact: !l.compact })) },
       { id: "view.theme", label: theme === "dark" ? "Light theme" : "Dark theme", menu: "view", group: 3, shortcut: "Ctrl+Shift+L", run: () => setTheme(theme === "dark" ? "light" : "dark") },
       { id: "view.zoomIn", label: "Zoom in", menu: "view", group: 4, shortcut: "Ctrl+=", run: () => setZoom((z) => stepZoom(z, 1)) },
@@ -213,7 +213,7 @@ export function App() {
       { id: "go.previous", label: "Previous tab", menu: "go", group: 2, shortcut: "Ctrl+Shift+Tab", enabled: hasProject, run: () => navigate(TABS[(TABS.findIndex((t) => t.id === tab) - 1 + TABS.length) % TABS.length].id) },
 
       // Run
-      { id: "run.match", label: "Start matching…", menu: "run", group: 1, enabled: hasProject, run: () => navigate("match") },
+      { id: "run.match", label: "Clean duplicate records…", menu: "run", group: 1, enabled: hasProject, run: () => navigate("match") },
       { id: "run.collect", label: "New collection…", menu: "run", group: 1, enabled: hasProject, run: () => navigate("scraping") },
       { id: "run.studio", label: "Open Scrape Studio", menu: "run", group: 1, enabled: hasProject, run: () => navigate("studio") },
       {
@@ -292,11 +292,13 @@ export function App() {
         key={project.root_path}
         project={project}
         tab={tab}
-        context={context}
+        contexts={contexts}
         navigate={navigate}
         layout={layout}
         refreshToken={refreshToken}
         onUpdateInfo={setUpdateInfo}
+        onToggleLeft={() => setLayout((value) => ({ ...value, left: !value.left }))}
+        onToggleRight={() => setLayout((value) => ({ ...value, right: !value.right }))}
       />
     );
   }
@@ -336,36 +338,44 @@ export function App() {
     </div>
   );
 }
-
 function Workspace({
   project,
   tab,
-  context,
+  contexts,
   navigate,
   layout,
   refreshToken,
   onUpdateInfo,
+  onToggleLeft,
+  onToggleRight,
 }: {
   project: Project;
   tab: Tab;
-  context: { datasetId?: string; jobId?: string };
+  contexts: Partial<Record<Tab, NavigationContext>>;
   navigate: Navigate;
   layout: Layout;
   refreshToken: number;
   onUpdateInfo: (info: UpdateInfo | null) => void;
+  onToggleLeft: () => void;
+  onToggleRight: () => void;
 }) {
-  const [localRefresh, setLocalRefresh] = useState(0);
+  const [visitedTabs, setVisitedTabs] = useState<Set<Tab>>(() => new Set([tab]));
+  const [refreshes, setRefreshes] = useState<Partial<Record<Tab, number>>>({});
   const summary = useService<ProjectSummary>("project.summary", {}, 2500);
-  const active = TABS.find((t) => t.id === tab)!;
+  const active = TABS.find((t) => t.id === tab) ?? { id: tab, label: tab === "scraping" ? "Scraping" : "Settings", title: tab === "scraping" ? "Scraping" : "Settings" };
+  const mountedTabs = visitedTabs.has(tab) ? visitedTabs : new Set([...visitedTabs, tab]);
+  useEffect(() => {
+    setVisitedTabs((current) => current.has(tab) ? current : new Set([...current, tab]));
+  }, [tab]);
   useEffect(() => {
     if (refreshToken) void summary.reload();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refreshToken]);
 
-  const shellClass = ["shell", layout.left ? "" : "hide-left", layout.right ? "" : "hide-right"].filter(Boolean).join(" ");
+  const shellClass = ["shell", layout.left ? "" : "minimize-left", layout.right ? "" : "minimize-right"].filter(Boolean).join(" ");
   return (
     <div className={shellClass}>
-      {layout.left && <Sidebar project={project} summary={summary.data} navigate={navigate} />}
+      <Sidebar project={project} summary={summary.data} navigate={navigate} minimized={!layout.left} onToggle={onToggleLeft} />
       <main className="main-pane" aria-labelledby="pane-title">
         <PaneHeader
           title={active.title}
@@ -374,79 +384,27 @@ function Workspace({
           onTab={(id) => navigate(id)}
           chip={{ label: "Needs review", value: summary.data?.totals.pending_review ?? 0, onClick: () => navigate("match") }}
           onRefresh={() => {
-            setLocalRefresh((k) => k + 1);
+            setRefreshes((current) => ({ ...current, [tab]: (current[tab] ?? 0) + 1 }));
             void summary.reload();
           }}
         />
-        <div className={tab === "studio" ? "pane-body pane-body-fill" : "pane-body"} key={`${tab}-${localRefresh}-${refreshToken}`}>
-          {tab === "dashboard" && <Dashboard navigate={navigate} />}
-          {tab === "scraping" && <Scraping navigate={navigate} />}
-          {tab === "studio" && <Studio navigate={navigate} />}
-          {tab === "datasets" && <Datasets navigate={navigate} initialDatasetId={context.datasetId} />}
-          {tab === "match" && <MatchTab key={`${context.datasetId}-${context.jobId}`} initialDatasetId={context.datasetId} initialJobId={context.jobId} />}
-          {tab === "settings" && <Settings project={project} onUpdateInfo={onUpdateInfo} />}
-        </div>
+        {(["dashboard", "scraping", "studio", "datasets", "match", "settings"] as Tab[]).filter((panelTab) => mountedTabs.has(panelTab)).map((panelTab) => (
+          <div
+            className={panelTab === "studio" ? "pane-body pane-body-fill" : "pane-body"}
+            key={`${panelTab}-${refreshes[panelTab] ?? 0}-${refreshToken}`}
+            hidden={panelTab !== tab}
+            aria-hidden={panelTab !== tab}
+          >
+            {panelTab === "dashboard" && <Dashboard navigate={navigate} />}
+            {panelTab === "scraping" && <Settings project={project} navigate={navigate} initialSection="scraping" initialSource={contexts.scraping?.source} onUpdateInfo={onUpdateInfo} />}
+            {panelTab === "studio" && <Studio navigate={navigate} initialUrl={contexts.studio?.url} active={tab === "studio"} />}
+            {panelTab === "datasets" && <Datasets navigate={navigate} initialDatasetId={contexts.datasets?.datasetId} />}
+            {panelTab === "match" && <MatchTab initialDatasetId={contexts.match?.datasetId} initialJobId={contexts.match?.jobId} />}
+            {panelTab === "settings" && <Settings project={project} navigate={navigate} onUpdateInfo={onUpdateInfo} />}
+          </div>
+        ))}
       </main>
-      {layout.right && <RightSidebar navigate={navigate} onChanged={() => void summary.reload()} />}
-    </div>
-  );
-}
-
-function ProjectGate({ onOpen }: { onOpen: (project: Project) => void }) {
-  const recent = useService<Project[]>("project.recent");
-  const [path, setPath] = useState("");
-  const [name, setName] = useState("");
-  const [error, setError] = useState<string | null>(null);
-
-  const open = async (command: "project.open" | "project.create", target = path) => {
-    try {
-      onOpen(await call<Project>(command, { path: target, name: name || undefined }));
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    }
-  };
-
-  return (
-    <div className="shell shell-gate">
-      <main className="main-pane gate">
-        <p className="eyebrow">Local-first data workspace</p>
-        <h1 className="pane-title">Open a project</h1>
-        <p className="lede">Projects keep datasets, jobs, review decisions, evidence, and exports in one folder on this computer.</p>
-        <div className="gate-grid">
-          <section>
-            <h2 className="section-label">Open or create</h2>
-            <PathInput label="Project folder" value={path} onChange={setPath} placeholder="C:\Users\you\Documents\DataForge\My project" onBrowse={isTauri() ? pickDirectory : undefined} />
-            <label className="field">
-              <span>Name (new projects)</span>
-              <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Defaults to the folder name" />
-            </label>
-            <div className="row-actions">
-              <button type="button" className="btn" disabled={!path} onClick={() => void open("project.open")}>
-                Open existing
-              </button>
-              <button type="button" className="btn btn-primary" disabled={!path} onClick={() => void open("project.create")}>
-                Create project
-              </button>
-            </div>
-            <ErrorNote message={error} />
-          </section>
-          {recent.data && recent.data.length > 0 && (
-            <section>
-              <h2 className="section-label">Recent projects</h2>
-              <ul className="plain-list scroll-list">
-                {recent.data.map((p) => (
-                  <li key={p.root_path}>
-                    <button type="button" className="list-item" onClick={() => void open("project.open", p.root_path)}>
-                      <span className="list-item-title">{p.name}</span>
-                      <span className="list-item-sub">{p.root_path}</span>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </section>
-          )}
-        </div>
-      </main>
+      <RightSidebar navigate={navigate} onChanged={() => void summary.reload()} minimized={!layout.right} onToggle={onToggleRight} />
     </div>
   );
 }

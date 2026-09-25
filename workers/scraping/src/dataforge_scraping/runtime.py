@@ -26,13 +26,13 @@ from bs4 import BeautifulSoup
 from .errors import PolicyViolation
 from .extraction import (
     ScrapeResult, _detail_urls, _minimum_coverage, _next_api_url, _next_html_url, _unique_fields, _validate_record, _with_query,
-    api_auth_headers, canonicalize_url, extract_page, extraction_mode, strategy_rationale, validate_url,
+    api_auth_headers, canonicalize_url, credential_pair, extract_page, extraction_mode, strategy_rationale, validate_url,
 )
 from .fetch import fetch, from_cache, make_client, scheduler_for
 from .signals import SignalChecker
 
-DISCOVERY_MODES = ("none", "sitemap", "feed", "crawl", "llms_txt")
-_FILE_LINK = re.compile(r"\.(pdf|csv|xlsx|json)(?:$|\?)", re.I)
+DISCOVERY_MODES = ("none", "sitemap", "feed", "crawl", "llms_txt", "oai_pmh")
+_FILE_LINK = re.compile(r"\.(pdf|csv|xlsx|json|jsonl|ndjson|xml|parquet|docx|zip|gz)(?:$|\?)", re.I)
 
 
 @dataclass
@@ -78,6 +78,8 @@ def resolve_variables(preset: dict, variables: dict | None, record_limit: int) -
                 raise PolicyViolation(f"Request variable '{name}' must be one of {', '.join(spec.get('choices', []))}")
         elif kind == "sparql":
             value = sparql_with_limit(str(value), record_limit)
+        elif kind == "graphql":
+            value = graphql_read_query(str(value))
         elif kind == "path":
             value = str(value).rstrip("/")
             if not re.fullmatch(r"(/[A-Za-z0-9_.-]{1,40}){0,4}", value) or ".." in value:
@@ -115,6 +117,21 @@ def sparql_with_limit(query: str, cap: int) -> str:
             return stripped.strip()[: match.start(1)] + str(cap) + stripped.strip()[match.end(1):]
         return stripped.strip()
     return stripped.strip() + f"\nLIMIT {cap}"
+
+
+def graphql_read_query(query: str) -> str:
+    """Accept GraphQL reads while refusing mutation and subscription operations."""
+    if len(query) > 20_000:
+        raise PolicyViolation("GraphQL query is too long")
+    stripped = re.sub(r"(?m)^\s*#[^\n]*$", "", query).strip()
+    if re.search(r"\b(mutation|subscription)\b", stripped, re.I):
+        raise PolicyViolation("Only read-only GraphQL queries are allowed")
+    operation = re.match(r"^(query|mutation|subscription)\b", stripped, re.I)
+    if operation and operation.group(1).lower() != "query":
+        raise PolicyViolation("Only read-only GraphQL queries are allowed")
+    if not stripped.startswith("{") and not re.match(r"^(query|fragment)\b", stripped, re.I):
+        raise PolicyViolation("GraphQL input must be a query or fragment")
+    return stripped
 
 
 def _render(template: str, values: dict[str, str], encode: bool, path_variables: frozenset[str] = frozenset()) -> str:
@@ -176,6 +193,7 @@ def collect(
     frontier_store: FrontierStore | None = None,
     include_local_signals: bool = False,
     sleep: Callable[[float], None] = time.sleep,
+    proxy_url: str | None = None,
 ) -> ScrapeResult:
     policy = preset.get("policy", {})
     if not isinstance(policy, dict) or policy.get("requires_user_authorization_acknowledgement") is not True:
@@ -200,9 +218,28 @@ def collect(
         raise PolicyViolation("This API preset requires a saved credential; add one in Settings")
 
     owns_client = client is None
-    client = client or make_client(preset, contact, api_auth_headers(preset, credential), cache_dir)
+    client = client or make_client(preset, contact, api_auth_headers(preset, credential), cache_dir, proxy_url=proxy_url)
     if not owns_client:
         client.headers.update(api_auth_headers(preset, credential))
+    if integration.get("auth") == "oauth2_client_credentials":
+        token_url = str(integration.get("token_url") or "")
+        if urlparse(token_url).scheme != "https":
+            raise PolicyViolation("OAuth token endpoints must use HTTPS")
+        validate_url(token_url, preset)
+        client_id, client_secret = credential_pair(credential or "")
+        token_form = {"grant_type": "client_credentials", "client_id": client_id, "client_secret": client_secret}
+        if integration.get("scope"):
+            token_form["scope"] = str(integration["scope"])
+        try:
+            token_response = client.post(token_url, data=token_form)
+            token_response.raise_for_status()
+            token_document = token_response.json()
+            access_token = token_document.get("access_token") if isinstance(token_document, dict) else None
+        except Exception as error:
+            raise PolicyViolation("OAuth authorization failed; check the saved client credential and token endpoint") from error
+        if not isinstance(access_token, str) or not access_token:
+            raise PolicyViolation("OAuth token endpoint did not return an access token")
+        client.headers["Authorization"] = f"Bearer {access_token}"
     scheduler = scheduler_for(preset)
     signals = SignalChecker(client, purpose or policy.get("purpose") or "internal_analysis", policy.get("robots_policy", "respect"), include_local_signals, scheduler)
 
@@ -271,6 +308,14 @@ def collect(
         content_type = response.headers.get("content-type", "")
         if "markdown" in content_type or page_url.endswith(".md"):
             return [_markdown_record(response.text, page_url, preset)]
+        if mode_is_documents and ("csv" in content_type or page_url.lower().endswith(".csv")):
+            return _csv_rows(response.content, page_url, preset)
+        if mode_is_documents and (page_url.lower().endswith((".json", ".jsonl", ".ndjson", ".xlsx", ".xls", ".xml", ".parquet", ".docx", ".zip", ".gz")) or any(token in content_type for token in ("json", "xml", "parquet", "spreadsheet", "wordprocessingml", "zip", "gzip"))):
+            from .documents import check_document
+
+            kind = check_document(response.content)
+            files.append({"url": page_url, "kind": kind, "sha256": hashlib.sha256(response.content).hexdigest(), "content": response.content})
+            return []
         page = extract_page(response.text if "pdf" not in content_type else "", response.content, content_type, page_url, preset, warnings)
         if mode_is_documents and "html" in content_type and discovery.get("file_links", True):
             page.extend(document_links(response.text, page_url))
@@ -480,6 +525,29 @@ def collect(
 
             stop_reason = _visit_pages(in_scope_links(), get, page_records, accept, budget_left_pages(lambda: counter["pages"], page_limit, records, record_limit, deadline, should_stop), on_page, preset, warnings, counter)
             pages_fetched = counter["pages"]
+        elif mode == "oai_pmh":
+            from .discovery import parse_oai_pmh
+
+            endpoint = url
+            current = _with_query(endpoint, "verb", "ListRecords")
+            current = _with_query(current, "metadataPrefix", resolved_variables.get("metadata_prefix", "oai_dc"))
+            for name in ("set", "from", "until"):
+                if resolved_variables.get(name):
+                    current = _with_query(current, name, resolved_variables[name])
+            while current:
+                reason = budget_left()
+                if reason:
+                    stop_reason = reason
+                    break
+                response = get(current, headers=request_headers)
+                candidates, token = parse_oai_pmh(response.content, current, preset)
+                added = accept(candidates)
+                pages_fetched += 1
+                state["discovered"] += len(candidates)
+                on_page({"page": pages_fetched, "url": canonicalize_url(current, preset), "candidates": len(candidates), "new_records": added, "total_records": len(records)})
+                current = _with_query(endpoint, "verb", "ListRecords")
+                current = _with_query(current, "resumptionToken", token) if token else None
+            stop_reason = stop_reason or "completed"
         else:
             raise ValueError(f"Unknown discovery mode {mode!r}")
     finally:

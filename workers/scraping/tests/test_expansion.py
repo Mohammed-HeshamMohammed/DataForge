@@ -203,6 +203,13 @@ def test_sitemap_parser_rejects_entities_and_reads_text_sitemaps() -> None:
     assert discovery.parse_sitemap(b"https://a.test/1\nhttps://a.test/2\n") == ("text", [("https://a.test/1", None), ("https://a.test/2", None)])
 
 
+def test_extended_document_types_are_sniffed_by_content() -> None:
+    assert sniff_type(b"PAR1data") == "parquet"
+    assert sniff_type(gzip.compress(b"id,name\n1,Alpha\n")) == "gz"
+    assert sniff_type(b"<items><item>Alpha</item></items>") == "xml"
+    assert sniff_type(b'{"id":1}\n{"id":2}\n') == "jsonl"
+
+
 @settings(max_examples=40, deadline=None)
 @given(st.lists(st.from_regex(r"https://h\.test/[a-c]{1,3}(#[a-z]{1,3})?", fullmatch=True), max_size=40))
 def test_frontier_never_queues_duplicates(urls: list[str]) -> None:
@@ -233,6 +240,15 @@ def test_feed_and_llms_txt_discovery(site) -> None:
     llms = extract_html_pages(base + "/", local(load("generic.llms_txt@1.0.0.json"), base))
     assert {r.get("format") for r in llms.records} == {"markdown", None}
     assert not any("extra" in r["source_url"] for r in llms.records)  # Optional section skipped by default
+
+
+def test_oai_pmh_harvest_follows_opaque_resumption_tokens(site) -> None:
+    base, state = site
+    preset = local(load("generic.oai_pmh@1.0.0.json"), base)
+    result = extract_html_pages(base + "/oai", preset, variables={"metadata_prefix": "oai_dc"}, max_pages=3)
+    assert [record["identifier"] for record in result.records] == ["oai:fixture:1", "oai:fixture:2"]
+    assert result.records[1]["title"] == "Paper 2"
+    assert any("resumptionToken=page-2" in request for request in state.requests)
 
 
 def test_crawl_persists_frontier_and_resumes(site) -> None:
@@ -301,6 +317,13 @@ def test_request_templates_validate_variables_and_sparql_limits() -> None:
     assert sparql_with_limit("PREFIX wd: <http://www.wikidata.org/entity/>\nSELECT ?x WHERE { ?x ?p wd:Q1 }", 50).endswith("LIMIT 50")
     with pytest.raises(PolicyViolation, match="read-only"):
         sparql_with_limit("DELETE WHERE { ?s ?p ?o }", 10)
+
+
+def test_fixed_proxy_configuration_is_validated_without_rotation() -> None:
+    with pytest.raises(ValueError, match="without credentials"):
+        make_client(proxy_url="http://user:secret@proxy.test:8080")
+    with make_client(proxy_url="http://proxy.test:8080") as client:
+        assert isinstance(client, httpx.Client)
 
 
 def test_api_template_post_body_and_query_param_credential_never_stored(site) -> None:

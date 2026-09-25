@@ -117,6 +117,7 @@ The CLI uses the same command API as the desktop app. With `--wait`, it follows 
 
 ### Scraping
 
+- **Automatic mode** inspects one policy-permitted response, detects feeds, sitemaps, OAI-PMH, JSON APIs, data files, structured records, repeated cards, or article pages, then selects a bundled preset or saves a versioned host-scoped preset.
 - **Every job** requires the authorization acknowledgement and pins its resolved preset.
 - **Test runs** are capped at 10 records. Custom presets need a successful test before a full run.
 - **Preset status:** `degraded` presets warn, `disabled` presets are blocked, and `deprecated` presets name a successor.
@@ -138,7 +139,8 @@ Every action is in the title-bar menus and the command palette (Ctrl+K). Help �
 
 ### Collection sources and live checks
 
-- **Sources:** the Scraping tab picks a source type (Website, Sitemap, Feed, Site crawl, Open data API, Documents, Web archive, Bulk corpus). Every job declares a purpose; site signals are applied to it (decision D18).
+- **Sources:** Settings → Scraping offers Automatic, Website, Sitemap, Feed, Site crawl, Open data API, Research repository (OAI-PMH), Documents, Web archive, and Bulk corpus. Every job declares a purpose; site signals are applied to it (decision D18).
+- **Research APIs:** curated presets cover Crossref scholarly works with cursor pagination and GLEIF legal entities with JSON:API next links. Direct CSV is parsed in the collection path; direct JSON/XLS/XLSX is staged through the normal importer.
 - **Engines:** `engine: auto` uses Scrapy for sitemap and crawl jobs above 200 pages. `python -m dataforge_scraping.engines.scrapy_engine <job.json>` runs the child directly for debugging.
 - **Settings → Collection:** contact identity (required by SEC EDGAR and Wikidata), default purpose, HTTP cache, WARC capture with retention, and suggestion provider.
 - **Licenses:** `python scripts/check-licenses.py` must pass before a release build.

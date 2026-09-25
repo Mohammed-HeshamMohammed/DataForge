@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 name = "dataforge-matching-worker"
 version = "0.1.0"
 requires-python = ">=3.11"
-dependencies = ["rapidfuzz>=3.9"]
+dependencies = ["phonenumbers>=9.0", "rapidfuzz>=3.9"]
 
 [project.optional-dependencies]
 test = ["pytest>=8.0"]

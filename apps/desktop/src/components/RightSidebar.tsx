@@ -5,9 +5,9 @@ import { useService } from "../lib/hooks.ts";
 import { formatTime, isActive, JOB_KIND_LABELS } from "../lib/format.ts";
 import type { Job } from "../lib/types.ts";
 import { ErrorNote, StateBadge } from "./ui.tsx";
-import { InfoIcon, RefreshIcon } from "./icons.tsx";
+import { InfoIcon, RefreshIcon, SidebarIcon } from "./icons.tsx";
 
-export function RightSidebar({ navigate, onChanged }: { navigate: Navigate; onChanged: () => void }) {
+export function RightSidebar({ navigate, onChanged, minimized = false, onToggle = () => {} }: { navigate: Navigate; onChanged: () => void; minimized?: boolean; onToggle?: () => void }) {
   const jobs = useService<Job[]>("job.list", { limit: 30 }, 1500);
   const health = useService<{ status: string; checked_at: string }>("health.check", {}, 15000);
   const [error, setError] = useState<string | null>(null);
@@ -61,7 +61,11 @@ export function RightSidebar({ navigate, onChanged }: { navigate: Navigate; onCh
   );
 
   return (
-    <aside className="sidebar sidebar-right" aria-label="Job center">
+    <aside className={`sidebar sidebar-right${minimized ? " minimized" : ""}`} aria-label="Job center">
+      <button type="button" className="sidebar-minimize" onClick={onToggle} aria-label={minimized ? "Restore jobs sidebar" : "Minimize jobs sidebar"} title={minimized ? "Restore jobs sidebar (Ctrl+J)" : "Minimize jobs sidebar (Ctrl+J)"}>
+        <SidebarIcon size={17} />
+      </button>
+      <div className="sidebar-content">
       <section>
         <div className="section-label-row">
           <h2 className="section-label">Active jobs</h2>
@@ -70,7 +74,7 @@ export function RightSidebar({ navigate, onChanged }: { navigate: Navigate; onCh
         <ErrorNote message={error ?? jobs.error} />
         {active.length === 0 ? (
           <p className="info-box">
-            <InfoIcon size={16} /> Nothing running. Progress for imports, scrapes, and match jobs appears here.
+            <InfoIcon size={16} /> Nothing running. Progress for imports, collections, and duplicate cleanup appears here.
           </p>
         ) : (
           <ul className="plain-list">{active.map(renderJob)}</ul>
@@ -95,6 +99,7 @@ export function RightSidebar({ navigate, onChanged }: { navigate: Navigate; onCh
         <button type="button" className="icon-btn-plain" aria-label="Check service" onClick={() => void health.reload()}>
           <RefreshIcon size={18} />
         </button>
+      </div>
       </div>
     </aside>
   );

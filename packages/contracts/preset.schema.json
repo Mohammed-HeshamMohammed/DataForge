@@ -71,6 +71,19 @@
             "http",
             "webview"
           ]
+        },
+        "api_integration": {
+          "type": ["object", "null"],
+          "properties": {
+            "auth": {
+              "enum": ["bearer", "header", "query_param", "basic", "oauth2_client_credentials", null]
+            },
+            "header_name": { "type": "string" },
+            "parameter": { "type": "string" },
+            "token_url": { "type": "string", "format": "uri" },
+            "scope": { "type": "string" },
+            "optional": { "type": "boolean" }
+          }
         }
       }
     },
@@ -85,7 +98,8 @@
             "cursor",
             "infinite_scroll",
             "api_cursor",
-            "detail_links"
+            "detail_links",
+            "load_more"
           ]
         }
       }
@@ -109,7 +123,8 @@
             "sitemap",
             "feed",
             "crawl",
-            "llms_txt"
+            "llms_txt",
+            "oai_pmh"
           ]
         },
         "crawl": {
@@ -132,6 +147,9 @@
           "type": "object"
         },
         "llms_txt": {
+          "type": "object"
+        },
+        "oai_pmh": {
           "type": "object"
         },
         "file_links": {
@@ -168,6 +186,7 @@
                   "number",
                   "enum",
                   "sparql",
+                  "graphql",
                   "path"
                 ]
               }
@@ -185,7 +204,8 @@
             "structured_data",
             "article",
             "document_tables",
-            "api"
+            "api",
+            "xml"
           ]
         }
       }

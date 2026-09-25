@@ -1,6 +1,7 @@
 name: CI
 
 on:
+  workflow_dispatch:
   pull_request:
   push:
     branches: [main]
@@ -70,3 +71,41 @@ jobs:
         with:
           node-version: "22"
       - run: npm ci --prefix apps/desktop && npm audit --prefix apps/desktop --audit-level=high
+
+  package-windows:
+    if: github.event_name != 'pull_request'
+    needs: [python, desktop-ui, desktop-host, security]
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/desktop/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri
+      - run: python -m pip install -r requirements-dev.txt
+      - run: npm ci --prefix apps/desktop
+      - name: Build and smoke-test unsigned installer on a clean runner
+        shell: pwsh
+        run: ./scripts/build-release.ps1 -SkipTests -Unsigned
+      - name: Verify installer artifact
+        shell: pwsh
+        run: |
+          $installers = @(Get-ChildItem apps/desktop/src-tauri/target/release/bundle/nsis -Filter *.exe -File)
+          if ($installers.Count -lt 1) { throw "No NSIS installer was produced" }
+          $installers | Select-Object Name, Length
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dataforge-windows-unsigned
+          path: |
+            apps/desktop/src-tauri/target/release/bundle/nsis/*.exe
+            apps/desktop/src-tauri/target/release/bundle/nsis/SHA256SUMS.txt
+          if-no-files-found: error

@@ -423,6 +423,16 @@ Bugs found by the live run and fixed, each with a regression test: spurious cove
 
 Still not verified: SEC EDGAR and Wikidata live runs (they need your contact identity), a model endpoint for AI proposals (none configured), real Tesseract OCR (not installed), and the packaged build. On this machine every newly built PyInstaller executable disappears as it is written, including a one-line "hello" program, so the block is the antivirus policy rather than DataForge's bundle; an exception for the build folder is needed.
 
+### Follow-up completed 2026-09-18
+
+| Gap | Resolution | Verified |
+| --- | --- | --- |
+| Source and preset selection was manual | Settings → Scraping now starts in Automatic mode. One policy-checked fetch detects the source and selects a bundled preset or saves a versioned, host-scoped custom preset. | Service test covers repeated-card detection, preset reuse, four-record extraction, feeds, and sitemaps; the live desktop flow selected Crossref from its URL. |
+| Research repositories | Added OAI-PMH `ListRecords` harvesting with metadata-prefix, set, date filters, and opaque resumption tokens. | Fixture health check and multi-page runtime test. |
+| Research and registry APIs | Added curated Crossref works and GLEIF LEI presets with their documented pagination styles. | Offline fixtures and service health checks; live Crossref URL detection. |
+| Direct data URLs | Direct CSV is extracted in the document collection path; JSON, XLS, and XLSX downloads are staged through the normal importer. | Worker runtime and package tests. |
+| Scrapy pause/cancel intermittently failed on Windows | Atomic control-file replacement now retries transient Windows sharing violations. | Pause/resume/cancel test passed three consecutive runs; full scraping suite passed. |
+
 ## Sources
 
 Research conducted 2026-09-16. Versions and licenses were read from PyPI metadata on the same date.

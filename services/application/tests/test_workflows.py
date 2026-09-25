@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import csv
+import gzip
 import json
 import time
+import zipfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from threading import Thread
@@ -10,6 +12,7 @@ from threading import Thread
 import pytest
 
 from dataforge_application.api import Service
+from dataforge_application import projects
 from dataforge_application.storage import ProjectStore
 
 
@@ -61,6 +64,62 @@ def import_people(svc: Service, tmp_path: Path) -> str:
     return job["result"]["dataset_id"]
 
 
+@pytest.mark.parametrize(
+    ("filename", "content", "expected"),
+    [
+        ("rows.jsonl", b'{"id":1,"name":"Alpha"}\n{"id":2,"name":"Beta"}\n', "Beta"),
+        ("rows.xml", b"<items><item><id>1</id><name>Alpha</name></item><item><id>2</id><name>Beta</name></item></items>", "Beta"),
+    ],
+)
+def test_extended_dataset_imports(service: Service, tmp_path: Path, filename: str, content: bytes, expected: str) -> None:
+    source = tmp_path / filename
+    source.write_bytes(content)
+    job = wait(service, ok(service, "dataset.import", path=str(source))["job_id"])
+    assert job["state"] == "completed", job
+    rows = ok(service, "dataset.rows", dataset_id=job["result"]["dataset_id"])
+    assert rows[-1]["raw"]["name"] == expected
+
+
+def test_zip_gzip_and_docx_imports(service: Service, tmp_path: Path) -> None:
+    payload = b"id,name\n1,Alpha\n2,Beta\n"
+    gzip_path = tmp_path / "rows.csv.gz"
+    gzip_path.write_bytes(gzip.compress(payload))
+    zipped = tmp_path / "rows.zip"
+    with zipfile.ZipFile(zipped, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("data/rows.csv", payload)
+    docx = tmp_path / "notes.docx"
+    document = b"""<w:document xmlns:w='urn:w'><w:body><w:tbl><w:tr><w:tc><w:p><w:r><w:t>id</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>name</w:t></w:r></w:p></w:tc></w:tr><w:tr><w:tc><w:p><w:r><w:t>1</w:t></w:r></w:p></w:tc><w:tc><w:p><w:r><w:t>Alpha</w:t></w:r></w:p></w:tc></w:tr></w:tbl></w:body></w:document>"""
+    with zipfile.ZipFile(docx, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("word/document.xml", document)
+    for path, expected in ((gzip_path, "Beta"), (zipped, "Beta"), (docx, "Alpha")):
+        job = wait(service, ok(service, "dataset.import", path=str(path))["job_id"])
+        assert job["state"] == "completed", job
+        rows = ok(service, "dataset.rows", dataset_id=job["result"]["dataset_id"])
+        assert rows[-1]["raw"]["name"] == expected
+
+
+def test_parquet_import(service: Service, tmp_path: Path) -> None:
+    import pyarrow as arrow
+    import pyarrow.parquet as parquet
+
+    source = tmp_path / "rows.parquet"
+    parquet.write_table(arrow.table({"id": [1, 2], "name": ["Alpha", "Beta"]}), source)
+    job = wait(service, ok(service, "dataset.import", path=str(source))["job_id"])
+    assert job["state"] == "completed", job
+    rows = ok(service, "dataset.rows", dataset_id=job["result"]["dataset_id"])
+    assert rows[-1]["raw"] == {"id": 2, "name": "Beta"}
+
+
+def test_zip_import_rejects_ambiguous_archives(service: Service, tmp_path: Path) -> None:
+    source = tmp_path / "ambiguous.zip"
+    with zipfile.ZipFile(source, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("one.csv", "id\n1\n")
+        archive.writestr("two.json", '[{"id":2}]')
+    job = wait(service, ok(service, "dataset.import", path=str(source))["job_id"])
+    assert job["state"] == "failed"
+    assert "exactly one" in str(job["error"])
+
+
 def test_migrations_apply_once_and_project_reopens(service: Service, tmp_path: Path) -> None:
     store = ProjectStore(tmp_path / "project" / "dataforge.sqlite3")
     assert store.migrate(service.migrations_dir) == []
@@ -69,6 +128,22 @@ def test_migrations_apply_once_and_project_reopens(service: Service, tmp_path: P
     assert reopened["name"] == "Fixture"
     assert call(service, "project.create", path=str(tmp_path / "project"))["error"]["code"] == "invalid_request"
     assert call(service, "project.open", path="relative/path")["error"]["message"] == "Project path must be absolute"
+
+
+def test_sample_project_is_safe_and_idempotent(service: Service) -> None:
+    sample = ok(service, "project.create_sample")
+    assert sample["name"] == "Getting Started"
+    assert Path(sample["root_path"]).is_relative_to(projects.app_data_dir())
+    listed = ok(service, "dataset.list")
+    assert len(listed) == 1
+    assert listed[0]["name"] == "Sample contacts"
+    rows = ok(service, "dataset.rows", dataset_id=listed[0]["id"])
+    assert len(rows) == 5
+    assert all(str(value).endswith("example.test") or "@" not in str(value) for row in rows for value in row["raw"].values())
+
+    reopened = ok(service, "project.create_sample")
+    assert reopened["id"] == sample["id"]
+    assert len(ok(service, "dataset.list")) == 1
 
 
 def test_full_match_review_and_export_workflow(service: Service, tmp_path: Path) -> None:

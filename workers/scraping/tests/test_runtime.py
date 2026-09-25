@@ -8,8 +8,9 @@ from urllib.parse import parse_qs, urlparse
 
 import pytest
 
-from dataforge_scraping.extraction import PolicyViolation, extract_html_pages
+from dataforge_scraping.extraction import PolicyViolation, extract_document, extract_html_pages
 from dataforge_scraping.presets import resolve_for_url, validate_preset
+from dataforge_scraping.runtime import build_request, graphql_read_query, resolve_variables
 
 PRESETS = Path(__file__).parents[3] / "packages" / "presets"
 
@@ -122,6 +123,27 @@ def test_json_api_with_cursor_pagination(base: str) -> None:
     result = extract_html_pages(f"{base}/api", preset)
     assert [(r["id"], r["name"]) for r in result.records] == [("1", "One"), ("2", "Two")]
     assert result.strategy_used == "api"
+
+
+def test_xml_and_soap_records_are_namespace_independent() -> None:
+    preset = load("generic.xml@1.0.0.json")
+    xml = b"""<?xml version='1.0'?><soap:Envelope xmlns:soap='urn:soap'><soap:Body><m:List xmlns:m='urn:items'><m:item code='A'><m:name>Alpha</m:name><m:price>10</m:price></m:item><m:item code='B'><m:name>Beta</m:name><m:price>20</m:price></m:item></m:List></soap:Body></soap:Envelope>"""
+    records, rejected, warnings = extract_document(xml, "https://example.test/items.xml", preset)
+    assert rejected == [] and warnings == []
+    assert [(row["@code"], row["name"], row["price"]) for row in records] == [("A", "Alpha", "10"), ("B", "Beta", "20")]
+    with pytest.raises(ValueError, match="DTD"):
+        extract_document(b"<!DOCTYPE x [<!ENTITY e 'boom'>]><items><item>&e;</item></items>", "https://example.test/x.xml", preset)
+
+
+def test_graphql_query_is_read_only_and_json_body_is_escaped() -> None:
+    preset = load("generic.graphql@1.0.0.json")
+    query = 'query Items { items(filter: "new") { id name } }'
+    values = resolve_variables(preset, {"query": query}, 50)
+    url, method, body, headers = build_request("https://api.example.test/graphql", preset, values)
+    assert (url, method, headers["Content-Type"]) == ("https://api.example.test/graphql", "POST", "application/json")
+    assert json.loads(body)["query"] == query
+    with pytest.raises(PolicyViolation, match="read-only"):
+        graphql_read_query("mutation { deleteAll }")
 
 
 def test_detail_links_follow_in_scope_items_and_listing_pages(base: str) -> None:

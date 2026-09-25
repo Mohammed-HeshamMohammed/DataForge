@@ -7,28 +7,55 @@ File types are decided by magic bytes, never by extension. Each row keeps page a
 from __future__ import annotations
 
 import io
+import json
 import re
+import zipfile
 
 MAX_DOCUMENT_BYTES = 50 * 1024 * 1024
-FILE_LINK_TYPES = ("pdf", "csv", "xlsx", "json")
+FILE_LINK_TYPES = ("pdf", "csv", "xlsx", "json", "jsonl", "xml", "parquet", "docx", "zip", "gz")
 
 
 def sniff_type(content: bytes) -> str | None:
     head = content[:8]
     if head.startswith(b"%PDF-"):
         return "pdf"
+    if head.startswith(b"PAR1"):
+        return "parquet"
+    if head.startswith(b"\x1f\x8b"):
+        return "gz"
     if head.startswith(b"PK\x03\x04"):
-        return "xlsx" if b"xl/" in content[:4096] or b"[Content_Types].xml" in content[:4096] else "zip"
+        try:
+            with zipfile.ZipFile(io.BytesIO(content)) as archive:
+                names = set(archive.namelist())
+            if "word/document.xml" in names:
+                return "docx"
+            if any(name.startswith("xl/") for name in names):
+                return "xlsx"
+        except zipfile.BadZipFile:
+            return None
+        return "zip"
     text = content[:4096].lstrip(b"\xef\xbb\xbf").lstrip()
-    if text[:1] in (b"{", b"["):
+    if text[:1] == b"[":
         return "json"
+    if text[:1] == b"{":
+        try:
+            json.loads(text.decode("utf-8"))
+            return "json"
+        except (ValueError, UnicodeDecodeError):
+            pass
     if text[:1] == b"<":
-        return "html"
+        return "html" if re.match(br"<\s*!?doctype\s+html|<\s*html\b", text[:500], re.I) else "xml"
     try:
         sample = text.decode("utf-8")
     except UnicodeDecodeError:
         return None
     lines = [line for line in sample.splitlines()[:5] if line.strip()]
+    if len(lines) >= 2:
+        try:
+            if all(isinstance(json.loads(line), dict) for line in lines):
+                return "jsonl"
+        except (ValueError, TypeError):
+            pass
     if len(lines) >= 2 and all(line.count(",") >= 1 or line.count("\t") >= 1 for line in lines):
         return "csv"
     return "text" if sample.isprintable() or "\n" in sample else None

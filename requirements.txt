@@ -1,6 +1,7 @@
 # Runtime dependencies of the application service and workers (bundled into the installer).
 # Every package must pass scripts/check-licenses.py; see docs/Scrapper/Scraping Expansion Plan.md section 4.
 openpyxl==3.1.5
+pyarrow==25.0.1
 rapidfuzz==3.14.6
 cryptography==50.0.0
 httpx==0.28.1

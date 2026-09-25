@@ -5,6 +5,10 @@ import { useService } from "../../lib/hooks.ts";
 import { credentials, loadSetting, saveSetting, updates, type UpdateInfo } from "../../lib/desktop.ts";
 import { formatTime } from "../../lib/format.ts";
 import { ConfirmButton, ErrorNote, PathInput } from "../../components/ui.tsx";
+import { CustomSelect } from "../../components/CustomSelect.tsx";
+import type { Navigate } from "../../app/App.tsx";
+import { Scraping } from "../scraping/Scraping.tsx";
+import type { SourceKind } from "../scraping/sources.ts";
 
 type PresetRow = { id: string; version: string; display_name: string; source: string; status: string; declared_status: string; successor?: string; package?: string | null; health_status: { status: string; checked_at: string; failures: string[]; suggestions?: { field: string; suggested: string; score: number }[] } | null; extraction?: { record_root?: unknown } };
 type PackageRow = { name: string; version: string; key_id: string; installed_at: string; removed_at: string | null };
@@ -13,6 +17,7 @@ export type UpdatePrefs = { repository: string; channel: "stable" | "beta"; auto
 export const DEFAULT_UPDATE_PREFS: UpdatePrefs = { repository: "", channel: "stable", autoCheck: false, lastCheck: null };
 
 const SETTINGS_SECTIONS = [
+  { id: "scraping", label: "Scraping" },
   { id: "project", label: "Project" },
   { id: "collection", label: "Collection" },
   { id: "presets", label: "Presets" },
@@ -22,8 +27,11 @@ const SETTINGS_SECTIONS = [
 type SettingsSection = (typeof SETTINGS_SECTIONS)[number]["id"];
 
 /** One section at a time with a vertical section list, so settings never need a long page scroll. */
-export function Settings({ project, onUpdateInfo }: { project: Project; onUpdateInfo?: (info: UpdateInfo | null) => void }) {
-  const [section, setSection] = useState<SettingsSection>(() => loadSetting<SettingsSection>("settingsSection", "project"));
+export function Settings({ project, navigate, initialSection, initialSource, onUpdateInfo }: { project: Project; navigate: Navigate; initialSection?: SettingsSection; initialSource?: SourceKind; onUpdateInfo?: (info: UpdateInfo | null) => void }) {
+  const [section, setSection] = useState<SettingsSection>(() => initialSection ?? loadSetting<SettingsSection>("settingsSection", "project"));
+  useEffect(() => {
+    if (initialSection) setSection(initialSection);
+  }, [initialSection]);
   useEffect(() => saveSetting("settingsSection", section), [section]);
   return (
     <div className="settings-layout">
@@ -35,6 +43,7 @@ export function Settings({ project, onUpdateInfo }: { project: Project; onUpdate
         ))}
       </nav>
       <div id="settings-panel" role="tabpanel" aria-labelledby={`settings-tab-${section}`}>
+        {section === "scraping" && <Scraping navigate={navigate} initialSource={initialSource} />}
         {section === "project" && <ProjectSection project={project} />}
         {section === "collection" && <CollectionSection />}
         {section === "presets" && <PresetsSection />}
@@ -68,6 +77,7 @@ function ProjectSection({ project }: { project: Project }) {
 
 type CollectionSettings = {
   contact_identity: { organization: string; email: string };
+  network_proxy: { enabled: boolean; url: string };
   default_purpose: string;
   http_cache: { enabled: boolean };
   warc_capture: { enabled: boolean; retention_days: number };
@@ -126,13 +136,16 @@ function CollectionSection() {
       </div>
       <label className="field">
         <span>Default purpose</span>
-        <select value={draft.default_purpose} onChange={(e) => setDraft({ ...draft, default_purpose: e.target.value })}>
-          {PURPOSE_OPTIONS.map(([id, label]) => (
-            <option key={id} value={id}>
-              {label}
-            </option>
-          ))}
-        </select>
+        <CustomSelect value={draft.default_purpose} onChange={(value) => setDraft({ ...draft, default_purpose: value })} options={PURPOSE_OPTIONS.map(([id, label]) => ({ value: id, label }))} />
+      </label>
+      <h3 className="section-label">Organization proxy</h3>
+      <p className="muted small">Routes worker HTTP requests through one fixed proxy supplied by your organization. Credentials in proxy URLs and automatic rotation are not accepted. Scrape Studio continues to use the operating system's WebView proxy settings.</p>
+      <label className="toggle block">
+        <input type="checkbox" checked={draft.network_proxy.enabled} onChange={(e) => setDraft({ ...draft, network_proxy: { ...draft.network_proxy, enabled: e.target.checked } })} /> Use a fixed proxy for collection workers
+      </label>
+      <label className="field">
+        <span>Proxy URL</span>
+        <input value={draft.network_proxy.url} onChange={(e) => setDraft({ ...draft, network_proxy: { ...draft.network_proxy, url: e.target.value.trim() } })} placeholder="http://proxy.organization.test:8080" spellCheck={false} />
       </label>
       <h3 className="section-label">Caching and capture</h3>
       <label className="toggle block">
@@ -152,10 +165,10 @@ function CollectionSection() {
       <h3 className="section-label">Suggestions</h3>
       <label className="field">
         <span>Draft preset proposals</span>
-        <select value={draft.ai_suggestions.provider} onChange={(e) => setDraft({ ...draft, ai_suggestions: { ...draft.ai_suggestions, provider: e.target.value as "local_heuristic" | "model" } })}>
-          <option value="local_heuristic">On this computer, without AI (structured data and page structure)</option>
-          <option value="model">Also ask a language model (OpenAI-compatible endpoint)</option>
-        </select>
+        <CustomSelect value={draft.ai_suggestions.provider} onChange={(value) => setDraft({ ...draft, ai_suggestions: { ...draft.ai_suggestions, provider: value as "local_heuristic" | "model" } })} options={[
+          { value: "local_heuristic", label: "On this computer, without AI", description: "Uses structured data and page structure" },
+          { value: "model", label: "Also ask a language model", description: "Uses an OpenAI-compatible endpoint" },
+        ]} />
       </label>
       {draft.ai_suggestions.provider === "model" && (
         <>
@@ -226,10 +239,10 @@ function UpdatesSection({ onUpdateInfo }: { onUpdateInfo?: (info: UpdateInfo | n
         </label>
         <label className="field">
           <span>Channel</span>
-          <select value={prefs.channel} onChange={(e) => setPrefs({ ...prefs, channel: e.target.value as UpdatePrefs["channel"] })}>
-            <option value="stable">Stable</option>
-            <option value="beta">Beta (prereleases, may be unstable)</option>
-          </select>
+          <CustomSelect value={prefs.channel} onChange={(value) => setPrefs({ ...prefs, channel: value as UpdatePrefs["channel"] })} options={[
+            { value: "stable", label: "Stable" },
+            { value: "beta", label: "Beta", description: "Prereleases; may be unstable" },
+          ]} />
         </label>
       </div>
       <label className="toggle block">
@@ -289,7 +302,7 @@ function CredentialsSection() {
   return (
     <section className="panel">
       <h2>API credentials</h2>
-      <p className="muted small">Stored in the Windows Credential Manager. DataForge never shows a saved value again, never writes it to project files or logs, and sends it only to the hosts of the API preset that uses it.</p>
+      <p className="muted small">Stored in the Windows Credential Manager. DataForge never shows a saved value again, never writes it to project files or logs, and sends it only to the hosts of the API preset that uses it. Basic credentials use <code>username:password</code>; OAuth client credentials can use <code>client_id:client_secret</code> or a JSON object with <code>client_id</code> and <code>client_secret</code>.</p>
       {!isTauri() && <p className="muted">Available in the desktop app.</p>}
       {list && list.length > 0 && (
         <ul className="plain-list">
@@ -376,13 +389,13 @@ function MaintenanceCheck({ presets }: { presets: PresetRow[] }) {
       <div className="split tight-2">
         <label className="field">
           <span>Preset</span>
-          <select value={preset ? `${preset.id}@${preset.version}` : ""} onChange={(e) => setKey(e.target.value)}>
-            {candidates.map((p) => (
-              <option key={`${p.id}@${p.version}`} value={`${p.id}@${p.version}`}>
-                {p.display_name} — {p.id}@{p.version}
-              </option>
-            ))}
-          </select>
+          <CustomSelect
+            value={preset ? `${preset.id}@${preset.version}` : ""}
+            onChange={setKey}
+            searchable={candidates.length > 8}
+            searchPlaceholder="Search presets"
+            options={candidates.map((p) => ({ value: `${p.id}@${p.version}`, label: p.display_name, description: `${p.id}@${p.version}` }))}
+          />
         </label>
         <label className="field">
           <span>Page URL</span>
@@ -391,13 +404,7 @@ function MaintenanceCheck({ presets }: { presets: PresetRow[] }) {
       </div>
       <label className="field inline">
         <span>Purpose</span>
-        <select value={purpose} onChange={(e) => setPurpose(e.target.value)}>
-          {PURPOSE_OPTIONS.map(([id, label]) => (
-            <option key={id} value={id}>
-              {label}
-            </option>
-          ))}
-        </select>
+        <CustomSelect value={purpose} onChange={setPurpose} options={PURPOSE_OPTIONS.map(([id, label]) => ({ value: id, label }))} />
       </label>
       <button type="button" className="btn btn-small" disabled={!preset || !url.startsWith("https://") || busy} onClick={() => void check()}>
         {busy ? "Checking…" : "Check page"}

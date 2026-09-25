@@ -1,7 +1,7 @@
 # Build a Windows installer: packaged Python service + React UI + Tauri host + bundled resources.
 # Signing the updater artifacts needs TAURI_SIGNING_PRIVATE_KEY (and _PASSWORD if set); without it the
 # installer still builds but the update signature step is skipped with a warning.
-param([switch]$SkipTests)
+param([switch]$SkipTests, [switch]$Unsigned)
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
@@ -32,7 +32,8 @@ if ($env:TAURI_SIGNING_PRIVATE_KEY -and -not $env:TAURI_SIGNING_PRIVATE_KEY_PASS
 
 Set-Location "$root\apps\desktop"
 npm run typecheck
-npx tauri build --config src-tauri/tauri.release.conf.json
+$tauriConfig = if ($Unsigned) { "src-tauri/tauri.ci.conf.json" } else { "src-tauri/tauri.release.conf.json" }
+npx tauri build --config $tauriConfig
 if ($LASTEXITCODE) { throw "Tauri build failed" }
 
 $bundle = Get-ChildItem "$root\apps\desktop\src-tauri\target\release\bundle\nsis" -File

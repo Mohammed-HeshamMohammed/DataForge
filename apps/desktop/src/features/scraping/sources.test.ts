@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { defaultVariables, needsStartUrl, presetsFor, sourceOf, variablePayload, variableProblems, type SourcePreset } from "./sources.ts";
+import { BUILT_IN_SITE_CATALOG, defaultVariables, enrichSiteCatalog, needsStartUrl, presetsFor, sourceOf, variablePayload, variableProblems, type SourcePreset } from "./sources.ts";
 
 const http = (extra: Partial<SourcePreset>): SourcePreset => ({ id: "x.y", version: "1.0.0", page_type: "p", strategy: { preferred: "http", allowed: ["http"] }, extraction: {}, ...extra });
 
@@ -27,9 +27,10 @@ test("presets are sorted into source types", () => {
     http({ id: "a.feed", discovery: { mode: "feed" } }),
     http({ id: "a.crawl", discovery: { mode: "crawl" } }),
     http({ id: "a.docs", extraction: { mode: "document_tables" } }),
+    http({ id: "a.oai", discovery: { mode: "oai_pmh" } }),
     overpass,
   ];
-  assert.deepEqual(presets.map(sourceOf), ["website", "sitemap", "feed", "crawl", "documents", "api"]);
+  assert.deepEqual(presets.map(sourceOf), ["website", "sitemap", "feed", "crawl", "documents", "repository", "api"]);
   assert.deepEqual(presetsFor(presets, "archive").map((p) => p.id), ["a.list"]);
 });
 
@@ -42,4 +43,27 @@ test("request variables get defaults, hints, and typed payloads", () => {
   assert.deepEqual(variablePayload(overpass, { ...values, amenity: "cafe", south: "30.2" }), { endpoint: "overpass.kumi.systems", amenity: "cafe", south: 30.2, limit: 500 });
   assert.equal(needsStartUrl(overpass), false);
   assert.equal(needsStartUrl(http({})), true);
+});
+
+test("built-in website fallback covers every supported site group", () => {
+  assert.equal(BUILT_IN_SITE_CATALOG.length, 38);
+  assert.deepEqual(
+    [...new Set(BUILT_IN_SITE_CATALOG.map((site) => site.site_category))].sort(),
+    ["community", "content", "developer", "jobs", "local", "marketplace", "media", "real_estate"],
+  );
+  assert.ok(BUILT_IN_SITE_CATALOG.every((site) => site.example_url && site.suggested_fields.length));
+  assert.ok(BUILT_IN_SITE_CATALOG.every((site) => site.variants?.length));
+  const amazon = BUILT_IN_SITE_CATALOG.find((site) => site.site_id === "amazon");
+  assert.ok(amazon?.variants?.some((variant) => variant.domain === "amazon.eg"));
+  assert.ok(amazon?.variants?.some((variant) => variant.domain === "amazon.co.uk"));
+});
+
+test("service site entries inherit the shipped regional editions", () => {
+  const [amazon] = enrichSiteCatalog([{
+    site_id: "amazon", site_name: "Amazon", site_category: "marketplace", domains: ["amazon.com"],
+    recommended_method: "visual_studio", suggested_fields: ["title", "price"], requires_rendered: true,
+    example_url: "https://www.amazon.com/s?k=laptop",
+  }]);
+  assert.ok(amazon.domains.includes("amazon.eg"));
+  assert.ok(amazon.variants?.some((variant) => variant.label === "Egypt" && variant.example_url.includes("amazon.eg")));
 });

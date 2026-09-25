@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -28,6 +29,7 @@ from .storage import ProjectStore, utc_now
 
 SETTING_DEFAULTS: dict[str, object] = {
     "contact_identity": {"organization": "", "email": ""},
+    "network_proxy": {"enabled": False, "url": ""},
     "http_cache": {"enabled": True},
     "warc_capture": {"enabled": False, "retention_days": 30},
     "ai_suggestions": {"provider": "local_heuristic", "endpoint": "", "model": "", "remote_consent": False},
@@ -52,6 +54,14 @@ def set_settings(store: ProjectStore, changes: dict) -> dict:
             raise ValueError(f"default_purpose must be one of {', '.join(PURPOSES)}")
         if key == "contact_identity":
             value = {"organization": str(value.get("organization", "")).strip()[:120], "email": str(value.get("email", "")).strip()[:200]}
+        if key == "network_proxy":
+            url = str(value.get("url", "")).strip()
+            parsed = urlparse(url) if url else None
+            if url and (parsed.scheme not in ("http", "https") or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment):
+                raise ValueError("Proxy URL must be an http:// or https:// address without credentials, a query, or a fragment")
+            value = {"enabled": bool(value.get("enabled")), "url": url[:500]}
+            if value["enabled"] and not url:
+                raise ValueError("Enter the fixed proxy URL before enabling it")
         if key == "ai_suggestions":
             value = {**SETTING_DEFAULTS["ai_suggestions"], **{k: v for k, v in value.items() if k in SETTING_DEFAULTS["ai_suggestions"]}}
             if value["provider"] not in ("local_heuristic", "model"):
@@ -68,6 +78,12 @@ def set_settings(store: ProjectStore, changes: dict) -> dict:
 
 def cache_dir(store: ProjectStore) -> Path | None:
     return store.project_root / "cache" / "http" if get_settings(store)["http_cache"].get("enabled", True) else None
+
+
+def proxy_url(store: ProjectStore) -> str | None:
+    """One administrator-supplied network route. It is never rotated or changed in response to a block."""
+    proxy = get_settings(store)["network_proxy"]
+    return str(proxy.get("url")) if proxy.get("enabled") and proxy.get("url") else None
 
 
 def purge_cache(store: ProjectStore) -> dict:
@@ -116,7 +132,7 @@ def check_signals(store: ProjectStore, url: str, purpose: str) -> dict:
     if parsed.scheme != "https":
         raise ValueError("Signals can be checked for HTTPS URLs")
     preset = {"url_scope": {"allowed_hosts": [parsed.hostname]}, "policy": {}, "request_limits": {}}
-    with make_client(None) as client:
+    with make_client(None, proxy_url=proxy_url(store)) as client:
         checker = SignalChecker(client, purpose)
         allowed, reason = True, None
         try:
@@ -130,43 +146,44 @@ def check_signals(store: ProjectStore, url: str, purpose: str) -> dict:
     return {"url": f"{parsed.scheme}://{parsed.netloc}{parsed.path}", "purpose": purpose, "allowed": allowed, "reason": reason, "hosts": checker.summary()}
 
 
-_CHECKERS: dict[str, tuple[SignalChecker, object, float]] = {}
+_CHECKERS: dict[tuple[str, str], tuple[SignalChecker, object, float]] = {}
 _CHECKERS_LOCK = threading.Lock()
 CHECKER_TTL_SECONDS = 600
 
 
-def shared_checker(purpose: str) -> SignalChecker:
+def shared_checker(purpose: str, fixed_proxy: str | None = None) -> SignalChecker:
     """Signals for navigation checks outside collection jobs (Scrape Studio). Cached per purpose for ten
     minutes, so each host's robots.txt, TDMRep, and ai.txt are read once per session, not once per page."""
     import time
 
     if purpose not in PURPOSES:
         raise ValueError(f"purpose must be one of {', '.join(PURPOSES)}")
+    key = (purpose, fixed_proxy or "")
     with _CHECKERS_LOCK:
-        cached = _CHECKERS.get(purpose)
+        cached = _CHECKERS.get(key)
         if cached and time.monotonic() - cached[2] < CHECKER_TTL_SECONDS:
             return cached[0]
         if cached:
             cached[1].close()
-        client = make_client(None, timeout=20.0)
+        client = make_client(None, timeout=20.0, proxy_url=fixed_proxy)
         checker = SignalChecker(client, purpose)
-        _CHECKERS[purpose] = (checker, client, time.monotonic())
+        _CHECKERS[key] = (checker, client, time.monotonic())
         return checker
 
 
-def check_navigation(url: str, purpose: str) -> dict:
+def check_navigation(store: ProjectStore, url: str, purpose: str) -> dict:
     """{allowed, reason, skippable}: a robots.txt disallow on one detail link is skippable; TDMRep and AIPREF
     reservations, and robots errors, stop the whole collection."""
     try:
-        shared_checker(purpose).check_url(url)
+        shared_checker(purpose, proxy_url(store)).check_url(url)
     except PolicyViolation as error:
         message = str(error)
         return {"allowed": False, "reason": message, "skippable": "robots.txt disallows this URL" in message}
     return {"allowed": True, "reason": None, "skippable": False}
 
 
-def navigation_signals(purpose: str, urls: list[str]) -> list[dict]:
-    checker = shared_checker(purpose)
+def navigation_signals(store: ProjectStore, purpose: str, urls: list[str]) -> list[dict]:
+    checker = shared_checker(purpose, proxy_url(store))
     hosts = {urlparse(u).netloc for u in urls}
     return [info for info in checker.summary() if info["host"] in hosts]
 
@@ -247,7 +264,7 @@ def make_archive_kind(presets_resolver) -> JobKind:
         candidates, warnings = [], []
         captures_read = 0
         try:
-            with make_client(None, cache_dir=cache_dir(store)) as client:
+            with make_client(None, cache_dir=cache_dir(store), proxy_url=proxy_url(store)) as client:
                 checker = SignalChecker(client, params["purpose"], "respect", scheduler=scheduler)
 
                 def get(url: str, headers: dict | None = None):
@@ -518,7 +535,7 @@ def page_html(payload: dict, store: ProjectStore, validate) -> tuple[str, str]:
         raise ValueError("Provide page html or a preset to fetch the page with")
     validate(url, preset)
     purpose = payload.get("purpose") or get_settings(store)["default_purpose"]
-    with make_client(preset, get_settings(store)["contact_identity"], cache_dir=cache_dir(store)) as client:
+    with make_client(preset, get_settings(store)["contact_identity"], cache_dir=cache_dir(store), proxy_url=proxy_url(store)) as client:
         checker = SignalChecker(client, purpose, preset.get("policy", {}).get("robots_policy", "respect"))
         checker.check_url(url)
         response = fetch(client, url, preset, validate)
@@ -543,13 +560,295 @@ def propose_presets(store: ProjectStore, html: str, url: str, provider: str | No
     provider = provider or settings["provider"]
     client = None
     if provider == "model":
-        client = make_client(None, timeout=120)
+        client = make_client(None, timeout=120, proxy_url=proxy_url(store))
     try:
         proposals = suggest.propose(html, url, provider, settings.get("endpoint"), settings.get("model"), bool(settings.get("remote_consent")), client)
     finally:
         if client is not None:
             client.close()
     return {"provider": provider, "proposals": proposals, "labels": {"ai_assisted": provider == "model"}}
+
+
+SITE_FIELDS = {
+    "marketplace": ["title", "price", "currency", "availability", "rating", "review_count", "seller", "url"],
+    "real_estate": ["address", "building_name", "house_number", "street", "unit", "neighborhood", "district", "city", "county", "region", "country", "country_code", "postal_code", "latitude", "longitude", "price", "property_type", "bedrooms", "bathrooms", "area", "parcel_or_listing_id", "agent", "url"],
+    "jobs": ["title", "company", "location", "salary", "employment_type", "posted_at", "description", "url"],
+    "local_directory": ["name", "category", "address", "street", "neighborhood", "district", "city", "county", "region", "country", "country_code", "postal_code", "latitude", "longitude", "phone", "rating", "review_count", "website", "url"],
+    "community": ["title", "author", "score", "published_at", "community", "url"],
+    "publisher": ["headline", "author", "published_at", "updated_at", "section", "summary", "url"],
+    "media": ["title", "creator", "published_at", "rating", "duration", "description", "url"],
+    "developer": ["name", "owner", "version", "language", "stars", "downloads", "description", "url"],
+}
+
+# Host recognition does not bypass a site's access rules. It gives automatic detection a useful
+# vocabulary and field plan before selector discovery examines the fetched or rendered page.
+KNOWN_SITE_PROFILES = (
+    ("amazon", "Amazon", "marketplace", ("amazon.com", "amazon.ca", "amazon.co.uk", "amazon.de", "amazon.fr", "amazon.it", "amazon.es", "amazon.com.au", "amazon.co.jp", "amazon.in", "amazon.com.mx", "amazon.com.br"), True, None),
+    ("ebay", "eBay", "marketplace", ("ebay.com", "ebay.co.uk", "ebay.ca", "ebay.com.au", "ebay.de", "ebay.fr", "ebay.it", "ebay.es"), True, None),
+    ("walmart", "Walmart", "marketplace", ("walmart.com", "walmart.ca", "walmart.com.mx"), True, None),
+    ("target", "Target", "marketplace", ("target.com",), True, None),
+    ("bestbuy", "Best Buy", "marketplace", ("bestbuy.com", "bestbuy.ca"), True, None),
+    ("etsy", "Etsy", "marketplace", ("etsy.com",), True, None),
+    ("aliexpress", "AliExpress", "marketplace", ("aliexpress.com", "aliexpress.us"), True, None),
+    ("newegg", "Newegg", "marketplace", ("newegg.com", "newegg.ca"), True, None),
+    ("zillow", "Zillow", "real_estate", ("zillow.com",), True, None),
+    ("realtor", "Realtor.com", "real_estate", ("realtor.com",), True, None),
+    ("redfin", "Redfin", "real_estate", ("redfin.com",), True, None),
+    ("trulia", "Trulia", "real_estate", ("trulia.com",), True, None),
+    ("homes", "Homes.com", "real_estate", ("homes.com",), True, None),
+    ("apartments", "Apartments.com", "real_estate", ("apartments.com",), True, None),
+    ("loopnet", "LoopNet", "real_estate", ("loopnet.com",), True, None),
+    ("propertyshark", "PropertyShark", "real_estate", ("propertyshark.com",), True, None),
+    ("indeed", "Indeed", "jobs", ("indeed.com", "indeed.co.uk", "indeed.ca", "indeed.com.au", "indeed.de", "indeed.fr", "indeed.co.in"), True, None),
+    ("linkedin_jobs", "LinkedIn Jobs", "jobs", ("linkedin.com",), True, "/jobs"),
+    ("glassdoor", "Glassdoor", "jobs", ("glassdoor.com", "glassdoor.co.uk", "glassdoor.ca"), True, None),
+    ("ziprecruiter", "ZipRecruiter", "jobs", ("ziprecruiter.com",), True, None),
+    ("wellfound", "Wellfound", "jobs", ("wellfound.com",), True, None),
+    ("monster", "Monster", "jobs", ("monster.com", "monster.co.uk", "monster.ca", "monster.de", "monster.fr"), True, None),
+    ("yelp", "Yelp", "local_directory", ("yelp.com", "yelp.co.uk", "yelp.ca", "yelp.com.au"), True, None),
+    ("yellow_pages", "Yellow Pages", "local_directory", ("yellowpages.com", "yellowpages.ca"), True, None),
+    ("tripadvisor", "Tripadvisor", "local_directory", ("tripadvisor.com", "tripadvisor.co.uk", "tripadvisor.ca"), True, None),
+    ("foursquare", "Foursquare", "local_directory", ("foursquare.com", "4sq.com"), True, None),
+    ("reddit", "Reddit", "community", ("reddit.com",), True, None),
+    ("wikipedia", "Wikipedia", "publisher", ("wikipedia.org",), False, None),
+    ("medium", "Medium", "publisher", ("medium.com",), False, None),
+    ("youtube", "YouTube", "media", ("youtube.com", "youtu.be"), True, None),
+    ("imdb", "IMDb", "media", ("imdb.com",), True, None),
+    ("rottentomatoes", "Rotten Tomatoes", "media", ("rottentomatoes.com",), True, None),
+    ("github", "GitHub", "developer", ("github.com",), True, None),
+    ("stackoverflow", "Stack Overflow", "developer", ("stackoverflow.com",), False, None),
+    ("producthunt", "Product Hunt", "developer", ("producthunt.com",), True, None),
+    ("npm", "npm", "developer", ("npmjs.com",), True, None),
+    ("major_publisher", "Major publisher", "publisher", ("nytimes.com", "washingtonpost.com", "theguardian.com", "bbc.com", "bbc.co.uk", "reuters.com", "apnews.com", "cnn.com", "bloomberg.com", "forbes.com", "wsj.com", "ft.com"), False, None),
+)
+
+# Country storefronts share the same extraction family. Keeping aliases separate from the
+# profile tuple makes additions reviewable without duplicating the profile metadata.
+SITE_DOMAIN_ALIASES = {
+    "amazon": ("amazon.eg", "amazon.ae", "amazon.sa", "amazon.nl", "amazon.pl", "amazon.se", "amazon.com.be", "amazon.com.tr", "amazon.sg", "amazon.ie", "amazon.co.za"),
+    "ebay": ("ebay.at", "ebay.be", "ebay.ch", "ebay.ie", "ebay.nl", "ebay.pl", "ebay.com.hk", "ebay.ph", "ebay.co.jp", "ebay.vn"),
+    "glassdoor": ("glassdoor.com.au", "glassdoor.de", "glassdoor.fr", "glassdoor.co.in"),
+    "monster": ("monster.ie", "monster.co.in", "monster.com.sg"),
+    "yelp": ("yelp.de", "yelp.fr", "yelp.es", "yelp.it", "yelp.co.jp"),
+    "yellow_pages": ("yellowpages.com.au",),
+    "tripadvisor": ("tripadvisor.com.eg", "tripadvisor.com.au", "tripadvisor.de", "tripadvisor.fr", "tripadvisor.it", "tripadvisor.es", "tripadvisor.in", "tripadvisor.jp"),
+}
+
+SITE_EXAMPLE_URLS = {
+    "amazon": "https://www.amazon.com/s?k=laptop",
+    "ebay": "https://www.ebay.com/sch/i.html?_nkw=laptop",
+    "walmart": "https://www.walmart.com/search?q=laptop",
+    "target": "https://www.target.com/s?searchTerm=laptop",
+    "bestbuy": "https://www.bestbuy.com/site/searchpage.jsp?st=laptop",
+    "etsy": "https://www.etsy.com/search?q=lamp",
+    "aliexpress": "https://www.aliexpress.com/w/wholesale-laptop.html",
+    "newegg": "https://www.newegg.com/p/pl?d=laptop",
+    "zillow": "https://www.zillow.com/homes/",
+    "realtor": "https://www.realtor.com/realestateandhomes-search/",
+    "redfin": "https://www.redfin.com/city/",
+    "trulia": "https://www.trulia.com/for_sale/",
+    "homes": "https://www.homes.com/homes-for-sale/",
+    "apartments": "https://www.apartments.com/",
+    "loopnet": "https://www.loopnet.com/search/commercial-real-estate/",
+    "propertyshark": "https://www.propertyshark.com/mason/",
+    "indeed": "https://www.indeed.com/jobs?q=engineer",
+    "linkedin_jobs": "https://www.linkedin.com/jobs/search/",
+    "glassdoor": "https://www.glassdoor.com/Job/jobs.htm",
+    "ziprecruiter": "https://www.ziprecruiter.com/jobs-search",
+    "wellfound": "https://wellfound.com/jobs",
+    "monster": "https://www.monster.com/jobs/search",
+    "google_maps": "https://www.google.com/maps/search/cafes",
+    "yelp": "https://www.yelp.com/search?find_desc=cafe",
+    "yellow_pages": "https://www.yellowpages.com/search?search_terms=cafe",
+    "tripadvisor": "https://www.tripadvisor.com/Search?q=cafe",
+    "foursquare": "https://foursquare.com/explore",
+    "reddit": "https://www.reddit.com/r/data/",
+    "wikipedia": "https://en.wikipedia.org/wiki/Web_scraping",
+    "medium": "https://medium.com/tag/data",
+    "major_publisher": "https://www.reuters.com/world/",
+    "youtube": "https://www.youtube.com/results?search_query=data",
+    "imdb": "https://www.imdb.com/search/title/",
+    "rottentomatoes": "https://www.rottentomatoes.com/browse/movies_at_home/",
+    "github": "https://github.com/openai",
+    "stackoverflow": "https://stackoverflow.com/questions",
+    "producthunt": "https://www.producthunt.com/topics/developer-tools",
+    "npm": "https://www.npmjs.com/search?q=react",
+}
+
+
+def site_catalog() -> list[dict]:
+    """Return the site families that automatic URL detection can recognize."""
+    entries = [
+        {
+            "site_id": site_id,
+            "site_name": name,
+            "site_category": category,
+            "domains": list(dict.fromkeys((*domains, *SITE_DOMAIN_ALIASES.get(site_id, ())))),
+            "recommended_method": "visual_studio" if rendered else "structured_or_article",
+            "suggested_fields": list(SITE_FIELDS[category]),
+            "requires_rendered": rendered,
+            "example_url": SITE_EXAMPLE_URLS[site_id],
+        }
+        for site_id, name, category, domains, rendered, _required_path in KNOWN_SITE_PROFILES
+    ]
+    entries.append({
+        "site_id": "google_maps", "site_name": "Google Maps", "site_category": "local_directory",
+        "domains": ["google.com", "maps.google.com"], "recommended_method": "visual_studio",
+        "suggested_fields": list(SITE_FIELDS["local_directory"]), "requires_rendered": True,
+        "example_url": SITE_EXAMPLE_URLS["google_maps"],
+    })
+    return sorted(entries, key=lambda entry: (entry["site_category"], entry["site_name"].lower()))
+
+
+def _host_matches(host: str, domain: str) -> bool:
+    return host == domain or host.endswith("." + domain)
+
+
+def identify_known_site(url: str) -> dict | None:
+    """Classify supported site families without making a network request."""
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower().rstrip(".")
+    path = parsed.path.lower()
+    google_host = host.startswith("google.") or host.startswith("www.google.") or host.startswith("maps.google.")
+    if google_host and (host.startswith("maps.") or path == "/maps" or path.startswith("/maps/")):
+        return {
+            "site_id": "google_maps", "site_name": "Google Maps", "site_category": "local_directory",
+            "recommended_method": "visual_studio", "suggested_fields": SITE_FIELDS["local_directory"], "requires_rendered": True,
+        }
+    for site_id, name, category, domains, rendered, required_path in KNOWN_SITE_PROFILES:
+        recognized_domains = (*domains, *SITE_DOMAIN_ALIASES.get(site_id, ()))
+        if any(_host_matches(host, domain) for domain in recognized_domains) and (not required_path or path == required_path or path.startswith(required_path + "/")):
+            return {
+                "site_id": site_id, "site_name": name, "site_category": category,
+                "recommended_method": "visual_studio" if rendered else "structured_or_article",
+                "suggested_fields": SITE_FIELDS[category], "requires_rendered": rendered,
+            }
+    return None
+
+
+def detect_url(store: ProjectStore, url: str, purpose: str, presets: list[dict], validate) -> dict:
+    """Fetch one permitted URL, identify its source type, and recommend or generate a working preset."""
+    url = str(url).strip()
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        raise ValueError("Enter a complete http:// or https:// URL")
+    if purpose not in PURPOSES:
+        raise ValueError("Choose a collection purpose")
+    site_profile = identify_known_site(url)
+    probe = {
+        "url_scope": {"allowed_hosts": [parsed.hostname], "allowed_path_patterns": []},
+        "policy": {"requires_user_authorization_acknowledgement": True, "robots_policy": "respect"},
+        "request_limits": {"max_concurrency": 1, "min_delay_ms": 500, "max_pages_default": 1, "max_records_default": 10, "max_duration_seconds": 60},
+    }
+    validate(url, probe)
+    with make_client(probe, get_settings(store)["contact_identity"], cache_dir=cache_dir(store), timeout=30.0, proxy_url=proxy_url(store)) as client:
+        checker = SignalChecker(client, purpose, "respect")
+        checker.check_url(url)
+        response = fetch(client, url, probe, validate)
+        content_type = response.headers.get("content-type", "").split(";", 1)[0].lower()
+        checker.check_response(url, response, response.text[:100_000] if "html" in content_type else None)
+
+    body = response.content
+    text = response.text
+    prefix = body.lstrip()[:5000].lower()
+    path = parsed.path.lower()
+    active = [p for p in presets if not p.get("errors") and p.get("status") != "disabled"]
+
+    def existing(preset_id: str) -> dict | None:
+        return next((p for p in active if p.get("id") == preset_id), None)
+
+    host_specific = [p for p in active if parsed.hostname in (p.get("url_scope") or {}).get("allowed_hosts", [])]
+    result = {"url": url, "content_type": content_type, "confidence": "high", "reason": "", "source": "website", "preset_id": None, "preset_version": None, "draft_preset": None, "requires_rendered": False}
+
+    if body[:5] == b"%PDF-" or "pdf" in content_type or path.endswith(".pdf"):
+        choice = existing("generic.document_tables")
+        result.update(source="documents", reason="PDF document detected")
+    elif b"<oai-pmh" in prefix or "verb=identify" in url.lower() or re.search(r"(^|[/_.-])oai([/_.-]|$)", path):
+        choice = existing("generic.oai_pmh")
+        result.update(source="repository", reason="OAI-PMH repository endpoint detected")
+    elif b"<urlset" in prefix or b"<sitemapindex" in prefix or "sitemap" in path:
+        choice = existing("generic.sitemap_structured") or existing("generic.sitemap_article")
+        result.update(source="sitemap", reason="XML sitemap detected")
+    elif b"<rss" in prefix or b"<feed" in prefix or any(token in content_type for token in ("rss", "atom")):
+        choice = existing("generic.feed")
+        result.update(source="feed", reason="RSS or Atom feed detected")
+    elif "xml" in content_type or prefix.startswith(b"<?xml") or (prefix.startswith(b"<") and path.endswith((".xml", ".soap"))):
+        choice = existing("generic.xml")
+        result.update(source="xml", reason="XML or SOAP records detected")
+    elif "json" in content_type or prefix.startswith((b"{", b"[")) or path.endswith(".json"):
+        choice = host_specific[0] if host_specific else None
+        result.update(source="api", reason=f"JSON API detected{f' for {parsed.hostname}' if choice else ''}")
+        if choice is None:
+            result["draft_preset"] = _json_draft(json.loads(text), url)
+    elif path.endswith((".csv", ".xlsx", ".xls", ".jsonl", ".ndjson", ".parquet", ".docx", ".zip", ".gz")) or content_type in ("text/csv", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/vnd.apache.parquet"):
+        choice = existing("generic.document_tables")
+        result.update(source="documents", reason="Downloadable data file detected")
+    else:
+        from dataforge_scraping import suggest
+
+        proposals = suggest.propose_local(text, url)
+        passing = [proposal for proposal in proposals if suggest.evaluate(proposal, text, url).get("passed")]
+        if passing:
+            result["draft_preset"] = passing[0]["preset"]
+            detected = passing[0]["source"]
+            result.update(source="website", reason="Structured records detected" if detected == "structured_data" else "Repeated record cards detected")
+            choice = None
+        else:
+            from bs4 import BeautifulSoup
+
+            soup = BeautifulSoup(text, "html.parser")
+            visible_text = " ".join(soup.get_text(" ", strip=True).split())
+            requires_rendered = len(visible_text) < 500 and len(soup.select("script[src], script[type='module']")) >= 2
+            choice = existing("generic.html_list") if requires_rendered else existing("generic.article")
+            result.update(
+                source="website", confidence="medium", requires_rendered=requires_rendered,
+                reason="JavaScript-rendered page detected; use the embedded Scrape Studio" if requires_rendered else "HTML page detected; article extraction is safest without repeated records",
+            )
+
+    if not site_profile and ("NewsArticle" in text or 'property="article:publisher"' in text or "property='article:publisher'" in text):
+        site_profile = {
+            "site_id": "publisher", "site_name": parsed.hostname, "site_category": "publisher",
+            "recommended_method": "structured_or_article", "suggested_fields": SITE_FIELDS["publisher"], "requires_rendered": False,
+        }
+    if site_profile:
+        profile_rendered = bool(site_profile.pop("requires_rendered"))
+        result.update(site_profile)
+        result["requires_rendered"] = bool(result["requires_rendered"] or profile_rendered)
+        result["reason"] = f"{site_profile['site_category'].replace('_', ' ').title()} profile matched; {result['reason'][0].lower() + result['reason'][1:]}"
+        if profile_rendered and choice and choice.get("id") == "generic.article":
+            choice = existing("generic.html_list") or choice
+
+    if choice:
+        result.update(preset_id=choice["id"], preset_version=choice["version"])
+    result["signals"] = checker.summary()
+    return result
+
+
+def _json_draft(document: object, url: str) -> dict:
+    """Create a bounded capture-all API preset around the first JSON record array."""
+    def find(node: object, path: str = "", depth: int = 0) -> str | None:
+        if isinstance(node, list) and (not node or isinstance(node[0], dict)):
+            return path
+        if isinstance(node, dict) and depth < 4:
+            for key, value in node.items():
+                found = find(value, f"{path}.{key}".strip("."), depth + 1)
+                if found is not None:
+                    return found
+        return None
+
+    parsed = urlparse(url)
+    slug = re.sub(r"[^a-z0-9]+", "_", (parsed.hostname or "api").lower()).strip("_")[:30] or "api"
+    item_path = find(document)
+    if item_path is None:
+        raise ValueError("JSON response has no array of record objects")
+    return {
+        "id": f"custom.detected.{slug}", "version": "1.0.0", "display_name": f"Detected API: {parsed.hostname}", "page_type": "api_collection", "status": "active",
+        "owner": "local-user", "description": "Generated from a URL inspection. Review and test before a full run.", "category": "custom",
+        "policy": {"collection_basis": "public_api", "requires_user_authorization_acknowledgement": True, "robots_policy": "respect", "authentication": "forbidden", "captcha_or_access_challenge": "stop", "paywall_or_rate_limit": "stop", "personal_data_classification": "unknown"},
+        "request_limits": {"max_concurrency": 1, "min_delay_ms": 1000, "max_pages_default": 1, "max_records_default": 1000, "max_duration_seconds": 900},
+        "url_scope": {"allowed_hosts": [parsed.hostname], "allowed_path_patterns": []}, "strategy": {"preferred": "api", "allowed": ["api"]},
+        "pagination": {"type": "none"}, "extraction": {"item_path": item_path, "capture_all": True, "fields": []}, "validation": {"minimum_record_coverage": 0.0, "unique_by": []},
+    }
 
 
 def save_fingerprints(store: ProjectStore, preset: dict, fixtures: dict[str, str]) -> list[dict]:

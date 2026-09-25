@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { Navigate } from "../app/App.tsx";
 import { formatCount } from "../lib/format.ts";
 import type { Job, Project } from "../lib/types.ts";
+import { SidebarIcon } from "./icons.tsx";
 
 export type DatasetSummary = {
   id: string;
@@ -46,7 +47,7 @@ function datasetStatus(d: DatasetSummary): { badge?: string; percent?: number; s
   return { percent, sub: `${formatCount(d.canonical_records)} canonical · ${formatCount(d.pending_review)} to review` };
 }
 
-export function Sidebar({ summary, navigate }: { project?: Project; summary: ProjectSummary | null; navigate: Navigate }) {
+export function Sidebar({ summary, navigate, minimized = false, onToggle = () => {} }: { project?: Project; summary: ProjectSummary | null; navigate: Navigate; minimized?: boolean; onToggle?: () => void }) {
   const [filter, setFilter] = useState("");
   const totals = summary?.totals;
   const reviewTotal = (totals?.pending_review ?? 0) + (totals?.reviewed ?? 0);
@@ -54,7 +55,11 @@ export function Sidebar({ summary, navigate }: { project?: Project; summary: Pro
   const datasets = (summary?.datasets ?? []).filter((d) => d.name.toLowerCase().includes(filter.toLowerCase()));
 
   return (
-    <aside className="sidebar" aria-label="Project">
+    <aside className={`sidebar${minimized ? " minimized" : ""}`} aria-label="Project">
+      <button type="button" className="sidebar-minimize" onClick={onToggle} aria-label={minimized ? "Restore left sidebar" : "Minimize left sidebar"} title={minimized ? "Restore left sidebar (Ctrl+B)" : "Minimize left sidebar (Ctrl+B)"}>
+        <SidebarIcon size={17} />
+      </button>
+      <div className="sidebar-content">
       <section>
         <h2 className="section-label">Review progress</h2>
         <div className="activity">
@@ -105,7 +110,7 @@ export function Sidebar({ summary, navigate }: { project?: Project; summary: Pro
           })}
         </ul>
       </section>
-
+      </div>
     </aside>
   );
 }

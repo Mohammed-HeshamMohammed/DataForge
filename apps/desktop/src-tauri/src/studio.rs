@@ -6,12 +6,28 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::{mpsc, Mutex};
 use std::time::Duration;
-use tauri::webview::PageLoadEvent;
-use tauri::{AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, Rect, Url, WebviewBuilder, WebviewUrl};
+use tauri::webview::{DownloadEvent, PageLoadEvent};
+use tauri::{
+    AppHandle, Emitter, LogicalPosition, LogicalSize, Manager, Rect, Url, WebviewBuilder,
+    WebviewUrl,
+};
 
 const LABEL: &str = "scrape-studio";
 const BRIDGE_SCRIPT: &str = include_str!("studio.js");
-const BRIDGE_ACTIONS: &[&str] = &["setMode", "takePicks", "pageInfo", "count", "extract", "scrollStep", "links", "html"];
+const BRIDGE_ACTIONS: &[&str] = &[
+    "setMode",
+    "takePicks",
+    "pageInfo",
+    "count",
+    "extract",
+    "scrollStep",
+    "scrollPage",
+    "suggestFlow",
+    "links",
+    "html",
+    "click",
+    "networkData",
+];
 
 #[derive(Default)]
 pub struct StudioState(Mutex<Vec<String>>);
@@ -37,12 +53,21 @@ pub fn url_allowed(url: &Url, allowed_hosts: &[String]) -> bool {
     let host = url.host_str().unwrap_or_default();
     let local = matches!(host, "127.0.0.1" | "localhost");
     let scheme_ok = url.scheme() == "https" || (url.scheme() == "http" && local);
-    scheme_ok && url.username().is_empty() && url.password().is_none() && (local || allowed_hosts.iter().any(|h| h == host)) || url.as_str() == "about:blank"
+    scheme_ok
+        && url.username().is_empty()
+        && url.password().is_none()
+        && (local || allowed_hosts.iter().any(|h| h == host))
+        || url.as_str() == "about:blank"
 }
 
 /// Only the origin and path reach the UI; query strings may carry tokens.
 fn redacted(url: &Url) -> String {
-    format!("{}://{}{}", url.scheme(), url.host_str().unwrap_or_default(), url.path())
+    format!(
+        "{}://{}{}",
+        url.scheme(),
+        url.host_str().unwrap_or_default(),
+        url.path()
+    )
 }
 
 fn parse_allowed(state: &StudioState, raw: &str) -> Result<Url, String> {
@@ -55,8 +80,18 @@ fn parse_allowed(state: &StudioState, raw: &str) -> Result<Url, String> {
 }
 
 #[tauri::command(async)]
-pub fn studio_open(app: AppHandle, state: tauri::State<'_, StudioState>, url: String, allowed_hosts: Vec<String>, bounds: Bounds) -> Result<(), String> {
-    if allowed_hosts.is_empty() || allowed_hosts.iter().any(|h| h.is_empty() || h.contains('/')) {
+pub fn studio_open(
+    app: AppHandle,
+    state: tauri::State<'_, StudioState>,
+    url: String,
+    allowed_hosts: Vec<String>,
+    bounds: Bounds,
+) -> Result<(), String> {
+    if allowed_hosts.is_empty()
+        || allowed_hosts
+            .iter()
+            .any(|h| h.is_empty() || h.contains('/'))
+    {
         return Err("Allowed hosts must be plain host names".into());
     }
     *state.0.lock().map_err(|_| "studio state poisoned")? = allowed_hosts.clone();
@@ -67,6 +102,8 @@ pub fn studio_open(app: AppHandle, state: tauri::State<'_, StudioState>, url: St
     let window = app.get_window("main").ok_or("Main window not found")?;
     let nav_app = app.clone();
     let load_app = app.clone();
+    let download_app = app.clone();
+    let download_hosts = allowed_hosts.clone();
     let builder = WebviewBuilder::new(LABEL, WebviewUrl::External(url))
         .initialization_script(BRIDGE_SCRIPT)
         .incognito(true) // one isolated session per Studio visit: no stored cookies or logins
@@ -84,23 +121,61 @@ pub fn studio_open(app: AppHandle, state: tauri::State<'_, StudioState>, url: St
                 PageLoadEvent::Finished => "finished",
             };
             let _ = load_app.emit_to("main", "studio-event", json!({ "type": "page_load", "event": event, "url": redacted(payload.url()) }));
+        })
+        .on_download(move |_webview, event| match event {
+            DownloadEvent::Requested { url, .. } => {
+                let allowed = url_allowed(&url, &download_hosts);
+                if !allowed {
+                    let _ = download_app.emit_to("main", "studio-event", json!({ "type": "download_blocked", "url": redacted(&url) }));
+                }
+                allowed
+            }
+            DownloadEvent::Finished { url, path, success } => {
+                let _ = download_app.emit_to("main", "studio-event", json!({
+                    "type": "download", "url": redacted(&url), "path": path.map(|p| p.to_string_lossy().to_string()), "success": success
+                }));
+                true
+            }
+            _ => true,
         });
     let rect = bounds.rect();
-    window.add_child(builder, rect.position, rect.size).map_err(|e| format!("Could not open Scrape Studio: {e}"))?;
+    window
+        .add_child(builder, rect.position, rect.size)
+        .map_err(|e| format!("Could not open Scrape Studio: {e}"))?;
     Ok(())
 }
 
 fn studio(app: &AppHandle) -> Result<tauri::Webview, String> {
-    app.get_webview(LABEL).ok_or_else(|| "Scrape Studio is not open".to_string())
+    app.get_webview(LABEL)
+        .ok_or_else(|| "Scrape Studio is not open".to_string())
 }
 
 #[tauri::command(async)]
 pub fn studio_set_bounds(app: AppHandle, bounds: Bounds) -> Result<(), String> {
-    studio(&app)?.set_bounds(bounds.rect()).map_err(|e| e.to_string())
+    studio(&app)?
+        .set_bounds(bounds.rect())
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command(async)]
-pub fn studio_navigate(app: AppHandle, state: tauri::State<'_, StudioState>, url: String) -> Result<(), String> {
+pub fn studio_set_visible(app: AppHandle, visible: bool) -> Result<(), String> {
+    let Some(webview) = app.get_webview(LABEL) else {
+        return Ok(());
+    };
+    if visible {
+        webview.show()
+    } else {
+        webview.hide()
+    }
+    .map_err(|e| e.to_string())
+}
+
+#[tauri::command(async)]
+pub fn studio_navigate(
+    app: AppHandle,
+    state: tauri::State<'_, StudioState>,
+    url: String,
+) -> Result<(), String> {
     let url = parse_allowed(&state, &url)?;
     studio(&app)?.navigate(url).map_err(|e| e.to_string())
 }
@@ -111,6 +186,7 @@ pub fn studio_control(app: AppHandle, action: String) -> Result<(), String> {
         "reload" => "location.reload()",
         "stop" => "window.stop()",
         "back" => "history.back()",
+        "forward" => "history.forward()",
         _ => return Err("Unknown studio control".into()),
     };
     studio(&app)?.eval(script).map_err(|e| e.to_string())
@@ -132,7 +208,10 @@ pub fn bridge_script(action: &str, args: &Value) -> Result<String, String> {
         return Err("Unknown studio bridge action".into());
     }
     let args = args.as_array().ok_or("Bridge arguments must be an array")?;
-    let encoded: Vec<String> = args.iter().map(|a| serde_json::to_string(a).expect("json value serializes")).collect();
+    let encoded: Vec<String> = args
+        .iter()
+        .map(|a| serde_json::to_string(a).expect("json value serializes"))
+        .collect();
     Ok(format!(
         "(function(){{try{{return window.__dataforgeStudio ? window.__dataforgeStudio.{action}({}) : {{\"error\":\"bridge_unavailable\"}};}}catch(e){{return {{\"error\":String(e)}};}}}})()",
         encoded.join(",")
@@ -148,7 +227,9 @@ pub fn studio_call(app: AppHandle, action: String, args: Value) -> Result<Value,
             let _ = tx.send(result);
         })
         .map_err(|e| e.to_string())?;
-    let raw = rx.recv_timeout(Duration::from_secs(20)).map_err(|_| "The page did not respond in time".to_string())?;
+    let raw = rx
+        .recv_timeout(Duration::from_secs(20))
+        .map_err(|_| "The page did not respond in time".to_string())?;
     serde_json::from_str(&raw).map_err(|e| format!("Invalid bridge response: {e}"))
 }
 
@@ -159,12 +240,30 @@ mod tests {
     #[test]
     fn navigation_is_limited_to_allowed_hosts() {
         let hosts = vec!["example.org".to_string()];
-        assert!(url_allowed(&Url::parse("https://example.org/list?page=2").unwrap(), &hosts));
-        assert!(!url_allowed(&Url::parse("https://evil.example/").unwrap(), &hosts));
-        assert!(!url_allowed(&Url::parse("http://example.org/").unwrap(), &hosts));
-        assert!(!url_allowed(&Url::parse("https://user:pw@example.org/").unwrap(), &hosts));
-        assert!(!url_allowed(&Url::parse("file:///C:/Windows/win.ini").unwrap(), &hosts));
-        assert!(url_allowed(&Url::parse("http://127.0.0.1:8799/list").unwrap(), &hosts));
+        assert!(url_allowed(
+            &Url::parse("https://example.org/list?page=2").unwrap(),
+            &hosts
+        ));
+        assert!(!url_allowed(
+            &Url::parse("https://evil.example/").unwrap(),
+            &hosts
+        ));
+        assert!(!url_allowed(
+            &Url::parse("http://example.org/").unwrap(),
+            &hosts
+        ));
+        assert!(!url_allowed(
+            &Url::parse("https://user:pw@example.org/").unwrap(),
+            &hosts
+        ));
+        assert!(!url_allowed(
+            &Url::parse("file:///C:/Windows/win.ini").unwrap(),
+            &hosts
+        ));
+        assert!(url_allowed(
+            &Url::parse("http://127.0.0.1:8799/list").unwrap(),
+            &hosts
+        ));
     }
 
     #[test]
@@ -172,11 +271,17 @@ mod tests {
         let script = bridge_script("count", &json!(["a'); alert(1); ('"])).unwrap();
         assert!(script.contains(r#"window.__dataforgeStudio.count("a'); alert(1); ('")"#));
         assert!(bridge_script("eval", &json!([])).is_err());
+        assert!(bridge_script("networkData", &json!([])).is_ok());
+        assert!(bridge_script("suggestFlow", &json!([])).is_ok());
+        assert!(bridge_script("scrollPage", &json!([1])).is_ok());
         assert!(bridge_script("count", &json!({"x": 1})).is_err());
     }
 
     #[test]
     fn redaction_drops_query_strings() {
-        assert_eq!(redacted(&Url::parse("https://example.org/a?token=secret").unwrap()), "https://example.org/a");
+        assert_eq!(
+            redacted(&Url::parse("https://example.org/a?token=secret").unwrap()),
+            "https://example.org/a"
+        );
     }
 }

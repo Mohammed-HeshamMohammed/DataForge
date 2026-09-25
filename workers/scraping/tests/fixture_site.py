@@ -109,6 +109,18 @@ def make_handler(state: SiteState):
             if path == "/feed.xml":
                 items = "".join(f"<item><title>{p['name']}</title><link>{base}/product/{p['sku']}</link><guid>{p['sku']}</guid><pubDate>Mon, 0{1 + i % 9} Jun 2026 10:00:00 GMT</pubDate><description>&lt;b&gt;Buy&lt;/b&gt; {p['name']}</description></item>" for i, p in enumerate(PRODUCTS[:5]))
                 return self._send(200, f"<?xml version='1.0'?><rss version='2.0'><channel><title>Products</title>{items}</channel></rss>", "application/rss+xml")
+            if path == "/records.xml":
+                return self._send(200, "<?xml version='1.0'?><items><item><id>1</id><name>Alpha</name></item><item><id>2</id><name>Beta</name></item></items>", "application/xml")
+            if path == "/app-shell":
+                return self._send(200, "<html><head><script type='module' src='/assets/app.js'></script><script src='/assets/vendor.js'></script></head><body><div id='app'>Loading</div></body></html>")
+            if path == "/oai":
+                token = query.get("resumptionToken", [""])[0]
+                number = 2 if token else 1
+                continuation = "" if token else "<resumptionToken>page-2</resumptionToken>"
+                xml = ("<?xml version='1.0'?><OAI-PMH xmlns='http://www.openarchives.org/OAI/2.0/' xmlns:dc='http://purl.org/dc/elements/1.1/'>"
+                       f"<ListRecords><record><header><identifier>oai:fixture:{number}</identifier><datestamp>2026-09-0{number}</datestamp></header>"
+                       f"<metadata><dc:record><dc:title>Paper {number}</dc:title><dc:creator>Author {number}</dc:creator></dc:record></metadata></record>{continuation}</ListRecords></OAI-PMH>")
+                return self._send(200, xml, "application/xml")
             if path == "/llms.txt":
                 return self._send(200, f"# Fixture\n\n> Test site\n\n## Docs\n\n- [Guide]({base}/docs/guide.md): how to\n- [Article](/article)\n\n## Optional\n\n- [Extra](/docs/extra.md)\n", "text/plain")
             if path.startswith("/docs/"):

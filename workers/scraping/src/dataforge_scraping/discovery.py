@@ -152,6 +152,55 @@ def parse_feed(content: bytes, base_url: str) -> list[dict]:
     return entries
 
 
+def parse_oai_pmh(content: bytes, source_url: str, preset: dict) -> tuple[list[dict], str | None]:
+    """Parse one OAI-PMH ListRecords page. Resumption tokens stay opaque."""
+    try:
+        root = etree.fromstring(content, _PARSER)
+    except etree.XMLSyntaxError as error:
+        raise ValueError(f"Invalid OAI-PMH XML: {error}") from error
+    if root is None or etree.QName(root).localname != "OAI-PMH":
+        raise ValueError("Response is not an OAI-PMH document")
+
+    def descendants(node, name: str):
+        return [child for child in node.iter() if isinstance(child.tag, str) and etree.QName(child).localname == name]
+
+    errors = descendants(root, "error")
+    if errors:
+        message = " ".join(" ".join((node.text or "").split()) for node in errors).strip()
+        raise ValueError(f"OAI-PMH error: {message or errors[0].get('code', 'unknown')}")
+
+    from .extraction import _project_fields, _with_provenance
+
+    fields = (preset.get("extraction") or {}).get("fields", []) or []
+    records: list[dict] = []
+    for node in descendants(root, "record"):
+        header = next((part for part in node if isinstance(part.tag, str) and etree.QName(part).localname == "header"), None)
+        if header is None:
+            continue
+        record: dict[str, object] = {"deleted": header.get("status") == "deleted"}
+
+        def add(key: str, value: str) -> None:
+            if key in record:
+                current = record[key]
+                record[key] = current + [value] if isinstance(current, list) else [current, value]
+            else:
+                record[key] = value
+
+        for part in header:
+            if isinstance(part.tag, str) and (value := " ".join("".join(part.itertext()).split())):
+                add(etree.QName(part).localname, value)
+        metadata = next((part for part in node if isinstance(part.tag, str) and etree.QName(part).localname == "metadata"), None)
+        if metadata is not None:
+            for leaf in metadata.iter():
+                if isinstance(leaf.tag, str) and len(leaf) == 0 and (value := " ".join((leaf.text or "").split())):
+                    key = etree.QName(leaf).localname
+                    add(f"metadata_{key}" if key in record else key, value)
+        records.append(_with_provenance(_project_fields(record, fields, source_url, preset), source_url, preset))
+    token_node = next(iter(descendants(root, "resumptionToken")), None)
+    token = "".join(token_node.itertext()).strip() if token_node is not None else ""
+    return records, token or None
+
+
 def parse_llms_txt(text: str, base_url: str) -> list[dict]:
     """llms.txt: Markdown with H2 sections of `- [title](url): notes` links. A discovery hint only."""
     links, section = [], None

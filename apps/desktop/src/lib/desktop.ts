@@ -87,14 +87,15 @@ export const credentials = {
 export const studioHost = {
   open: (url: string, allowedHosts: string[], bounds: Bounds) => host<void>("studio_open", { url, allowedHosts, bounds }),
   setBounds: (bounds: Bounds) => host<void>("studio_set_bounds", { bounds }),
+  setVisible: (visible: boolean) => host<void>("studio_set_visible", { visible }),
   navigate: (url: string) => host<void>("studio_navigate", { url }),
-  control: (action: "reload" | "stop" | "back") => host<void>("studio_control", { action }),
+  control: (action: "reload" | "stop" | "back" | "forward") => host<void>("studio_control", { action }),
   close: () => host<void>("studio_close"),
-  call: <T>(action: "setMode" | "takePicks" | "pageInfo" | "count" | "extract" | "scrollStep" | "links" | "html", args: unknown[] = []) => host<T>("studio_call", { action, args }),
-  onEvent: async (handler: (event: { type: string; event?: string; url?: string }) => void) => {
+  call: <T>(action: "setMode" | "takePicks" | "pageInfo" | "count" | "extract" | "scrollStep" | "scrollPage" | "suggestFlow" | "links" | "html" | "click" | "networkData", args: unknown[] = []) => host<T>("studio_call", { action, args }),
+  onEvent: async (handler: (event: { type: string; event?: string; url?: string; path?: string; success?: boolean }) => void) => {
     if (!isTauri()) return () => {};
     const { listen } = await import("@tauri-apps/api/event");
-    return listen<{ type: string; event?: string; url?: string }>("studio-event", (e) => handler(e.payload));
+    return listen<{ type: string; event?: string; url?: string; path?: string; success?: boolean }>("studio-event", (e) => handler(e.payload));
   },
 };
 

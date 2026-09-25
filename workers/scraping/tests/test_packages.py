@@ -5,8 +5,9 @@ import json
 from pathlib import Path
 
 import pytest
+import httpx
 
-from dataforge_scraping.extraction import PolicyViolation, api_auth_headers, extract_document
+from dataforge_scraping.extraction import PolicyViolation, api_auth_headers, extract_document, extract_html_pages
 from dataforge_scraping.packages import generate_key, run_health_check, sign_package, verify_package
 from dataforge_scraping.presets import validate_preset
 
@@ -65,5 +66,42 @@ def test_api_credentials_only_for_declared_api_integrations() -> None:
     assert api_auth_headers(preset, "secret") == {"X-Api-Key": "secret"}
     with pytest.raises(PolicyViolation, match="credential"):
         api_auth_headers(preset, None)
+    preset["strategy"]["api_integration"] = {"auth": "basic"}
+    assert api_auth_headers(preset, "reader:p@ss") == {"Authorization": "Basic cmVhZGVyOnBAc3M="}
+    assert api_auth_headers(preset, '{"username":"reader","password":"p@ss"}') == {"Authorization": "Basic cmVhZGVyOnBAc3M="}
+    preset["url_scope"] = {"allowed_hosts": ["api.example.test"], "allowed_path_patterns": []}
+    preset["strategy"]["api_integration"] = {"auth": "oauth2_client_credentials", "token_url": "https://api.example.test/oauth/token"}
+    assert validate_preset(preset) == []
+    assert api_auth_headers(preset, '{"client_id":"dataforge","client_secret":"secret"}') == {}
     preset["strategy"]["api_integration"] = {"auth": "header", "header_name": "Cookie"}
     assert any("header_name" in e for e in validate_preset(preset))
+
+
+def test_oauth_client_credentials_are_exchanged_in_memory() -> None:
+    preset = {
+        "id": "internal.oauth_api", "version": "1.0.0", "display_name": "Internal OAuth API", "category": "internal", "page_type": "api_collection", "status": "active",
+        "policy": {"requires_user_authorization_acknowledgement": True, "robots_policy": "respect", "authentication": "forbidden", "captcha_or_access_challenge": "stop", "paywall_or_rate_limit": "stop"},
+        "request_limits": {"max_concurrency": 1, "min_delay_ms": 0, "max_pages_default": 1, "max_records_default": 10, "max_duration_seconds": 60},
+        "url_scope": {"allowed_hosts": ["api.internal.test"], "allowed_path_patterns": []},
+        "strategy": {"preferred": "api", "allowed": ["api"], "api_integration": {"auth": "oauth2_client_credentials", "token_url": "https://api.internal.test/oauth/token", "scope": "read"}},
+        "request": {"method": "GET", "url_template": "https://api.internal.test/items"},
+        "pagination": {"type": "none"}, "validation": {"unique_by": ["id"]},
+        "extraction": {"item_path": "items", "fields": [{"key": "id", "path": "id", "required": True}]},
+    }
+    assert validate_preset(preset) == []
+    seen: list[tuple[str, str | None]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append((request.url.path, request.headers.get("authorization")))
+        if request.url.path == "/oauth/token":
+            assert b"client_id=dataforge" in request.content and b"client_secret=secret" in request.content and b"scope=read" in request.content
+            return httpx.Response(200, json={"access_token": "short-lived-token", "token_type": "Bearer"})
+        if request.url.path == "/items":
+            return httpx.Response(200, json={"items": [{"id": "A-1"}]})
+        return httpx.Response(404, text="not found")
+
+    with httpx.Client(transport=httpx.MockTransport(handler)) as client:
+        result = extract_html_pages("", preset, credential='{"client_id":"dataforge","client_secret":"secret"}', client=client, purpose="internal_analysis")
+    assert result.records[0]["id"] == "A-1"
+    assert ("/items", "Bearer short-lived-token") in seen
+    assert "short-lived-token" not in json.dumps(result.records)

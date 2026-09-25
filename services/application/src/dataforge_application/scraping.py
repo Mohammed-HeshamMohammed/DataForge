@@ -207,6 +207,21 @@ def save_custom_preset(store: ProjectStore, presets_dir: Path, preset: dict) -> 
     return {"id": clean["id"], "version": clean["version"]}
 
 
+def save_detected_preset(store: ProjectStore, presets_dir: Path, preset: dict) -> dict:
+    """Reuse an identical detected preset or allocate the next immutable patch version."""
+    preset = {k: v for k, v in preset.items() if k not in ("source", "errors", "last_test", "health_status", "package", "declared_status")}
+    preset["id"] = str(preset.get("id", "custom.detected.source")).replace("custom.draft.", "custom.detected.")
+    rows = store._connection.execute("SELECT version, preset_json FROM custom_presets WHERE id = ? ORDER BY created_at", (preset["id"],)).fetchall()
+    signature = {k: preset.get(k) for k in ("url_scope", "strategy", "request", "discovery", "extraction", "pagination", "validation")}
+    for row in reversed(rows):
+        saved = json.loads(row["preset_json"])
+        if {k: saved.get(k) for k in signature} == signature:
+            return {"id": preset["id"], "version": row["version"], "reused": True}
+    patches = [int(row["version"].split(".")[-1]) for row in rows if str(row["version"]).count(".") == 2 and str(row["version"]).split(".")[-1].isdigit()]
+    preset["version"] = f"1.0.{max(patches, default=-1) + 1}"
+    return {**save_custom_preset(store, presets_dir, preset), "reused": False}
+
+
 def make_scrape_kind(presets_dir: Path) -> JobKind:
     def validate(store: ProjectStore, params: dict) -> dict:
         if params.get("policy_acknowledgement") is not True:
@@ -299,6 +314,7 @@ def make_scrape_kind(presets_dir: Path) -> JobKind:
                     incremental=bool(params.get("incremental")), work_dir=store.project_root / "engine" / "runs" / context.job_id,
                     resume_dir=store.project_root / "engine" / "resume" / params["resume_root"] if mode in ("crawl", "sitemap") else None,
                     deltafetch_dir=store.project_root / "engine" / "deltafetch" / (params.get("watch_id") or preset["id"]),
+                    proxy_url=sources.proxy_url(store),
                 )
             else:
                 result = extract_html_pages(
@@ -308,6 +324,7 @@ def make_scrape_kind(presets_dir: Path) -> JobKind:
                     credential=context.secrets.get("credential"), contact=settings["contact_identity"], cache_dir=sources.cache_dir(store),
                     capture=capture, purpose=params.get("purpose"), variables=params.get("variables"),
                     frontier_store=sources.frontier_store(store, context.job_id) if mode == "crawl" else None,
+                    proxy_url=sources.proxy_url(store),
                 )
         except Exception as error:
             store.fail_scrape_run(run_id, "policy_violation" if isinstance(error, PolicyViolation) else type(error).__name__, str(error))
@@ -418,7 +435,7 @@ def make_rendered_kind(presets_dir: Path) -> JobKind:
                 validate_url(page["url"], resolved)
             except PolicyViolation as error:
                 raise JobValidationError(f"{page['url']}: {error}") from error
-            decision = sources.check_navigation(page["url"], purpose)
+            decision = sources.check_navigation(store, page["url"], purpose)
             if not decision["allowed"]:
                 raise JobValidationError(f"{page['url']}: {decision['reason']}")
         if run_mode == "full" and preset["id"].startswith("custom."):
@@ -430,7 +447,7 @@ def make_rendered_kind(presets_dir: Path) -> JobKind:
             ).fetchone()
             if not tested:
                 raise JobValidationError("Run a successful 10-record test of this custom preset before a full run")
-        return {**params, "run_mode": run_mode, "purpose": purpose, "signals": sources.navigation_signals(purpose, [p["url"] for p in pages]),
+        return {**params, "run_mode": run_mode, "purpose": purpose, "signals": sources.navigation_signals(store, purpose, [p["url"] for p in pages]),
                 "resolved_preset": {k: v for k, v in resolved.items() if k not in ("errors", "health_status", "declared_status", "source", "package")}, "warnings": _status_warnings(preset)}
 
     def run(context: JobContext) -> dict:

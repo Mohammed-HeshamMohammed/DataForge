@@ -140,6 +140,10 @@ def test_json_import_and_mapping_proposals_are_conservative(tmp_path: Path) -> N
     assert proposals[1].role == "email"
     assert proposals[3].role is None
     assert proposals[3].confidence == "unmapped"
+    domain_proposals = propose_field_mappings(["APN", "Owner Mailing Address", "GitHub URL", "Job Title", "GTIN"])
+    assert [proposal.role for proposal in domain_proposals] == ["identifier", "mailing_address", "url", "name", "identifier"]
+    address_proposals = propose_field_mappings(["Building Name", "House Number", "Street", "Unit", "Neighborhood", "District", "City", "County", "Governorate", "Country", "Country Code", "Postal Code", "Latitude", "Longitude"])
+    assert [proposal.role for proposal in address_proposals] == ["building_name", "house_number", "street", "unit", "neighborhood", "district", "city", "county", "region", "country", "country_code", "postal_code", "latitude", "longitude"]
     store.close()
 
 

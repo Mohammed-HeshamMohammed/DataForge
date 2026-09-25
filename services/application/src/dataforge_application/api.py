@@ -51,6 +51,7 @@ class Service:
             "health.check": lambda p: health_check().to_dict(),
             "app.info": self._app_info,
             "project.create": lambda p: self._open(p.get("path", ""), p.get("name"), create=True),
+            "project.create_sample": self._create_sample,
             "project.open": lambda p: self._open(p.get("path", "")),
             "project.current": lambda p: self.project,
             "project.recent": lambda p: projects.recent_projects(),
@@ -80,6 +81,8 @@ class Service:
             "preset.export_custom": lambda p: scraping.export_custom_preset(self._store(), p["preset_id"], p["preset_version"]),
             "preset.import_custom": lambda p: scraping.import_custom_preset(self._store(), self.presets_dir, p["document"]),
             "scrape.create_job": lambda p: {"job_id": self._submit("scrape", p, self._secrets(p))},
+            "scrape.site_catalog": lambda p: sources.site_catalog(),
+            "scrape.detect_url": self._scrape_detect_url,
             "scrape.check_url": self._scrape_check_url,
             "scrape.stage_rendered": lambda p: {"job_id": self._submit("scrape_rendered", p)},
             "scrape.check_signals": lambda p: sources.check_signals(self._store(), p["url"], p.get("purpose") or sources.get_settings(self._store())["default_purpose"]),
@@ -177,8 +180,38 @@ class Service:
             return {"allowed": False, "reason": str(error), "skippable": False}
         if payload.get("purpose"):
             # Automated Studio navigation (collection runs) obeys the same site signals as HTTP jobs.
-            return sources.check_navigation(payload["url"], payload["purpose"])
+            return sources.check_navigation(self._store(), payload["url"], payload["purpose"])
         return {"allowed": True, "reason": None, "skippable": False}
+
+    def _scrape_detect_url(self, payload: dict) -> dict:
+        url = payload.get("url", "")
+        presets = scraping.list_presets(self._store(), self.presets_dir)
+        try:
+            detected = sources.detect_url(
+                self._store(), url, payload.get("purpose") or sources.get_settings(self._store())["default_purpose"], presets, scraping.validate_url,
+            )
+        except Exception as error:
+            profile = sources.identify_known_site(url)
+            if not profile:
+                raise
+            fallback = next((preset for preset in presets if preset.get("id") == "generic.html_list" and preset.get("version") == "1.1.0"), None)
+            if fallback is None:
+                raise
+            rendered = bool(profile.pop("requires_rendered"))
+            detected = {
+                "url": url, "content_type": "", "confidence": "high", "source": "website",
+                "preset_id": fallback["id"], "preset_version": fallback["version"], "draft_preset": None,
+                "requires_rendered": rendered, "detection_limited": True,
+                "reason": f"{profile['site_category'].replace('_', ' ').title()} profile matched. Automated page inspection stopped: {error}",
+                **profile,
+            }
+        draft = detected.pop("draft_preset", None)
+        if draft:
+            saved = scraping.save_detected_preset(self._store(), self.presets_dir, draft)
+            detected.update(preset_id=saved["id"], preset_version=saved["version"], created_preset=not saved["reused"])
+        else:
+            detected["created_preset"] = False
+        return detected
 
     def _app_info(self, payload: dict) -> dict:
         """Folders the desktop Help and File menus open. Nothing here is sensitive; paths stay on this computer."""
@@ -242,6 +275,26 @@ class Service:
             self.watch_scheduler.start()
         return {**project, "recovered_jobs": recovered}
 
+    def _create_sample(self, _payload: dict) -> dict:
+        """Create or reopen an idempotent, fully local getting-started project."""
+        root = projects.app_data_dir() / "samples" / "Getting Started"
+        create = not (root / projects.DATABASE_NAME).exists()
+        project = self._open(str(root), "Getting Started", create=create)
+        if not datasets.list_datasets(self._store(), self._project_id()):
+            sample = root / "sample-contacts.csv"
+            sample.write_text(
+                "Name,Phone,Organization,City,Email\n"
+                "Ada Lovelace,(512) 555-0182,Analytical Engines,Austin,ada@example.test\n"
+                "Ada Lovelace,512-555-0182,Analytical Engines,Austin,\n"
+                "Grace Hopper,(212) 555-0100,Compiler Works,New York,grace@example.test\n"
+                "G. Hopper,212-555-0100,Compiler Works,New York,\n"
+                "Alan Turing,,Computing Lab,Manchester,alan@example.test\n",
+                encoding="utf-8",
+            )
+            imported = datasets.import_file(self._store(), self._project_id(), sample, "Sample contacts")
+            project["sample_dataset_id"] = imported.dataset_id
+        return project
+
     def open_recent(self) -> None:
         recent = projects.recent_projects()
         if recent:
@@ -254,8 +307,8 @@ class Service:
     @staticmethod
     def _validate_import(store: ProjectStore, params: dict) -> dict:
         path = Path(str(params.get("path", "")))
-        if path.suffix.lower() not in (".csv", ".json", ".xlsx"):
-            raise JobValidationError("Supported import formats are CSV, JSON, and XLSX")
+        if path.suffix.lower() not in (".csv", ".json", ".jsonl", ".ndjson", ".xlsx", ".xml", ".parquet", ".docx", ".zip", ".gz"):
+            raise JobValidationError("Supported imports are CSV, JSON, JSONL, XLSX, XML, Parquet, DOCX, ZIP, and GZIP")
         if not path.is_absolute() or not path.is_file():
             raise JobValidationError("Import path must be an absolute path to an existing file")
         return {**params, "path": str(path.resolve())}

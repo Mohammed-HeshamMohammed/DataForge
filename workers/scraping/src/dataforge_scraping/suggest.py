@@ -70,7 +70,7 @@ def _heuristic_selectors(html: str) -> dict | None:
             continue
         signature, count = signatures.most_common(1)[0]
         members = [c for c in children if _part(c, False) == signature]
-        rich = sum(1 for m in members if m.find("a", href=True) and len(m.get_text(" ", strip=True)) > 10)
+        rich = sum(1 for m in members if m.find("a", href=True) and len(m.get_text(" ", strip=True)) > 2)
         score = rich * (2 if _classes(members[0]) else 1)
         if count >= 3 and rich >= 3 and (best is None or score > best[0]):
             best = (score, members[0], signature)

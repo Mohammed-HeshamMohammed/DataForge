@@ -56,6 +56,7 @@ def collect_with_scrapy(
     credential: str | None = None,
     resume_dir: Path | None = None,
     deltafetch_dir: Path | None = None,
+    proxy_url: str | None = None,
 ) -> ScrapeResult:
     """`resume_dir` keeps Scrapy's scheduler queue and seen-request filter (JOBDIR), so a cancelled or failed
     crawl continues where it stopped when run again with the same directory. `deltafetch_dir` backs incremental
@@ -67,7 +68,7 @@ def collect_with_scrapy(
     validate_url(start_url, preset)
     purpose = purpose or preset["policy"].get("purpose") or "internal_analysis"
     # Signals are resolved here with the OS-trusted httpx client, then applied identically by the child.
-    with make_client(preset, contact) as client:
+    with make_client(preset, contact, proxy_url=proxy_url) as client:
         checker = SignalChecker(client, purpose, preset["policy"].get("robots_policy", "respect"), include_local_signals)
         checker.check_url(start_url)
         for host in preset["url_scope"].get("allowed_hosts", []):
@@ -90,6 +91,8 @@ def collect_with_scrapy(
 
     creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     env = {**os.environ, "PYTHONIOENCODING": "utf-8", "SCRAPY_SETTINGS_MODULE": ""}
+    if proxy_url:
+        env.update({"HTTP_PROXY": proxy_url, "HTTPS_PROXY": proxy_url, "http_proxy": proxy_url, "https_proxy": proxy_url})
     process = subprocess.Popen(engine_command(job_path), stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL,
                                env=env, creationflags=creationflags, text=True, encoding="utf-8", errors="replace")
     lines: queue.Queue = queue.Queue()
@@ -117,7 +120,18 @@ def collect_with_scrapy(
     def set_control(command: str) -> None:
         temporary = control.with_suffix(".tmp")
         temporary.write_text(command, encoding="utf-8")
-        os.replace(temporary, control)
+        # On Windows the child can briefly hold the destination without delete
+        # sharing while read_text() is open. Keep the atomic hand-off, but retry
+        # that transient sharing violation instead of losing pause/cancel.
+        deadline = time.monotonic() + 2.0
+        while True:
+            try:
+                os.replace(temporary, control)
+                return
+            except PermissionError:
+                if time.monotonic() >= deadline:
+                    raise
+                time.sleep(0.02)
 
     try:
         while True:

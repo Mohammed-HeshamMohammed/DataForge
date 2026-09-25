@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { Navigate } from "../../app/App.tsx";
 import { call, isTauri, pickFile } from "../../lib/ipc.ts";
 import { useJob, useService } from "../../lib/hooks.ts";
@@ -7,7 +7,7 @@ import type { Dataset, Row } from "../../lib/types.ts";
 import { ConfirmButton, ErrorNote, JobProgress, PathInput } from "../../components/ui.tsx";
 import { MappingEditor } from "../../components/MappingEditor.tsx";
 
-const IMPORT_FILTERS = [{ name: "Data files", extensions: ["csv", "xlsx", "json"] }];
+const IMPORT_FILTERS = [{ name: "Data files", extensions: ["csv", "json", "jsonl", "ndjson", "xlsx", "xml", "parquet", "docx", "zip", "gz"] }];
 
 export function ImportForm({ onImported }: { onImported: (datasetId: string) => void }) {
   const [path, setPath] = useState("");
@@ -19,7 +19,8 @@ export function ImportForm({ onImported }: { onImported: (datasetId: string) => 
 
   return (
     <div>
-      <PathInput label="File (CSV, XLSX, or JSON)" value={path} onChange={setPath} placeholder="C:\data\listings.csv" onBrowse={isTauri() ? () => pickFile(IMPORT_FILTERS) : undefined} />
+      <PathInput label="Data file" value={path} onChange={setPath} placeholder="C:\data\listings.csv" onBrowse={isTauri() ? () => pickFile(IMPORT_FILTERS) : undefined} />
+      <p className="muted small">CSV, JSON/JSONL, XLSX, XML, Parquet, DOCX, ZIP, and GZIP are supported.</p>
       <p className="muted small">Files are processed locally. The original file is copied into the project unchanged and its hash is recorded.</p>
       <button
         type="button"
@@ -45,6 +46,9 @@ export function ImportForm({ onImported }: { onImported: (datasetId: string) => 
 export function Datasets({ navigate, initialDatasetId }: { navigate: Navigate; initialDatasetId?: string }) {
   const datasets = useService<Dataset[]>("dataset.list");
   const [selected, setSelected] = useState<string | null>(initialDatasetId ?? null);
+  useEffect(() => {
+    if (initialDatasetId) setSelected(initialDatasetId);
+  }, [initialDatasetId]);
   const dataset = datasets.data?.find((d) => d.id === selected) ?? null;
 
   return (
@@ -140,7 +144,7 @@ function RowSample({ datasetId }: { datasetId: string }) {
   const [revealed, setRevealed] = useState(false);
   const rows = useService<Row[]>("dataset.rows", { dataset_id: datasetId, offset, limit: 25 });
   const mapping = useService<{ mapping: Record<string, string> } | null>("dataset.mapping", { dataset_id: datasetId });
-  const sensitiveRoles = new Set(["phone", "email", "address", "mailing_address", "name", "first_name", "last_name"]);
+  const sensitiveRoles = new Set(["phone", "email", "address", "mailing_address", "building_name", "house_number", "street", "unit", "po_box", "neighborhood", "district", "city", "county", "region", "country", "country_code", "postal_code", "latitude", "longitude", "name", "first_name", "last_name"]);
   const columns = rows.data?.[0] ? Object.keys(rows.data[0].raw) : [];
   // Until a mapping exists every column is treated as potentially sensitive.
   const isSensitive = (column: string) => !mapping.data || sensitiveRoles.has(mapping.data.mapping[column] ?? "");

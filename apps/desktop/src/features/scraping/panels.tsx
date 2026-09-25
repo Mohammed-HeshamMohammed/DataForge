@@ -3,6 +3,7 @@ import { call, isTauri, pickFile } from "../../lib/ipc.ts";
 import { useJob, useService } from "../../lib/hooks.ts";
 import { formatTime, isActive } from "../../lib/format.ts";
 import { ErrorNote, JobProgress, PathInput } from "../../components/ui.tsx";
+import { CustomSelect } from "../../components/CustomSelect.tsx";
 import { PURPOSES } from "./sources.ts";
 import { ChangeList } from "./Scraping.tsx";
 
@@ -205,12 +206,12 @@ export function CreateWatch({ params, defaultName }: { params: Record<string, un
         </label>
         <label className="field">
           <span>Repeat</span>
-          <select value={interval} onChange={(e) => setInterval(e.target.value)}>
-            <option value="60">Every hour</option>
-            <option value="360">Every 6 hours</option>
-            <option value="1440">Every day</option>
-            <option value="10080">Every week</option>
-          </select>
+          <CustomSelect value={interval} onChange={setInterval} options={[
+            { value: "60", label: "Every hour" },
+            { value: "360", label: "Every 6 hours" },
+            { value: "1440", label: "Every day" },
+            { value: "10080", label: "Every week" },
+          ]} />
         </label>
       </div>
       <button type="button" className="btn btn-small" disabled={!name} onClick={() => void create()}>
@@ -252,10 +253,10 @@ export function ArchiveForm({ presets, purpose, onJob }: { presets: PresetOption
     <>
       <label className="field">
         <span>Archive</span>
-        <select value={archive} onChange={(e) => setArchive(e.target.value as typeof archive)}>
-          <option value="wayback">Wayback Machine (Internet Archive)</option>
-          <option value="common_crawl">Common Crawl</option>
-        </select>
+        <CustomSelect value={archive} onChange={(value) => setArchive(value as typeof archive)} options={[
+          { value: "wayback", label: "Wayback Machine (Internet Archive)" },
+          { value: "common_crawl", label: "Common Crawl" },
+        ]} />
       </label>
       {archive === "common_crawl" && (
         <p className="note note-warning small">Common Crawl's data host disallows automated fetching in robots.txt, so DataForge can list captures but stops before reading them.</p>
@@ -276,13 +277,13 @@ export function ArchiveForm({ presets, purpose, onJob }: { presets: PresetOption
       </div>
       <label className="field">
         <span>Extract with</span>
-        <select value={preset ? `${preset.id}@${preset.version}` : ""} onChange={(e) => setPresetKey(e.target.value)}>
-          {presets.map((p) => (
-            <option key={`${p.id}@${p.version}`} value={`${p.id}@${p.version}`}>
-              {p.display_name} — {p.id}@{p.version}
-            </option>
-          ))}
-        </select>
+        <CustomSelect
+          value={preset ? `${preset.id}@${preset.version}` : ""}
+          onChange={setPresetKey}
+          searchable={presets.length > 8}
+          searchPlaceholder="Search presets"
+          options={presets.map((p) => ({ value: `${p.id}@${p.version}`, label: p.display_name, description: `${p.id}@${p.version}` }))}
+        />
       </label>
       <label className="field inline">
         <span>Max captures</span>

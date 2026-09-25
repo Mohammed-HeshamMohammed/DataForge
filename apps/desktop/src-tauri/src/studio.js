@@ -12,6 +12,89 @@
   let picks = [];
   let overlay = null;
   let hovered = null;
+  const listenerDocuments = new WeakSet();
+  const networkResponses = [];
+  let networkBytes = 0;
+
+  /** Documents plus open shadow roots and same-origin frames, capped to avoid hostile DOM expansion. */
+  function scopes(start = document) {
+    const found = [];
+    const queue = [start];
+    const seen = new Set();
+    while (queue.length && found.length < 100) {
+      const scope = queue.shift();
+      if (!scope || seen.has(scope)) continue;
+      seen.add(scope);
+      found.push(scope);
+      for (const element of [...scope.querySelectorAll("*")].slice(0, 20000)) {
+        if (element.shadowRoot) queue.push(element.shadowRoot);
+        if (element.tagName === "IFRAME") {
+          try {
+            if (element.contentDocument) queue.push(element.contentDocument);
+          } catch {
+            // Cross-origin frames remain intentionally inaccessible.
+          }
+        }
+      }
+    }
+    return found;
+  }
+
+  function queryAll(css, within) {
+    const roots = scopes(within || document);
+    return [...new Set(roots.flatMap((scope) => [...scope.querySelectorAll(css)]))];
+  }
+
+  function safeUrl(raw) {
+    try {
+      const url = new URL(raw, location.href);
+      return url.origin === location.origin ? url.origin + url.pathname : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function rememberJson(rawUrl, text) {
+    const url = safeUrl(rawUrl);
+    if (!url || typeof text !== "string" || text.length > 1000000 || networkResponses.length >= 50 || networkBytes + text.length > 5000000) return;
+    try {
+      const data = JSON.parse(text);
+      networkResponses.push({ url, data });
+      networkBytes += text.length;
+    } catch {
+      // Only valid JSON is retained.
+    }
+  }
+
+  try {
+    const originalFetch = window.fetch;
+    window.fetch = function (...args) {
+      const pending = originalFetch.apply(this, args);
+      pending.then((response) => {
+        const type = response.headers.get("content-type") || "";
+        if (type.includes("json")) response.clone().text().then((text) => rememberJson(response.url, text)).catch(() => {});
+      }).catch(() => {});
+      return pending;
+    };
+    const originalOpen = XMLHttpRequest.prototype.open;
+    XMLHttpRequest.prototype.open = function (method, url, ...rest) {
+      this.__dataforgeUrl = String(url);
+      return originalOpen.call(this, method, url, ...rest);
+    };
+    const originalSend = XMLHttpRequest.prototype.send;
+    XMLHttpRequest.prototype.send = function (...args) {
+      this.addEventListener("loadend", () => {
+        try {
+          if ((this.getResponseHeader("content-type") || "").includes("json") && (!this.responseType || this.responseType === "text")) rememberJson(this.responseURL || this.__dataforgeUrl, this.responseText);
+        } catch {
+          // Some response types prohibit responseText access.
+        }
+      }, { once: true });
+      return originalSend.apply(this, args);
+    };
+  } catch {
+    // A page may freeze browser prototypes; DOM extraction still works.
+  }
 
   const isSensitive = (el) => !!el.closest("input, textarea, select, option, [contenteditable=''], [contenteditable='true'], [type=password]");
 
@@ -35,7 +118,7 @@
   function pathTo(el, root) {
     const parts = [];
     let current = el;
-    while (current && current !== root && current.nodeType === 1 && current !== document.documentElement) {
+    while (current && current !== root && current.nodeType === 1 && current !== el.ownerDocument.documentElement) {
       const part = segment(current);
       parts.unshift(part);
       if (part.includes("#")) break;
@@ -74,7 +157,7 @@
       if (target !== el && inner === "/") continue;
       const xpath = `.//${label.tagName.toLowerCase()}[normalize-space(.)='${text}']/following-sibling::${step}${inner}`;
       // The same label must appear in other repeated items, or it identifies one item rather than a field.
-      const siblings = recordRoot ? [...document.querySelectorAll(recordRoot)].slice(0, 10) : [];
+      const siblings = recordRoot ? queryAll(recordRoot).slice(0, 10) : [];
       const hits = siblings.filter((item) => nodeForXPath(item, xpath)).length;
       if (siblings.length > 1 && hits < 2) continue;
       return xpath;
@@ -83,7 +166,8 @@
   }
 
   function nodeForXPath(node, xpath) {
-    const result = document.evaluate(xpath, node, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+    const owner = node.ownerDocument || document;
+    const result = owner.evaluate(xpath, node, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
     return result.singleNodeValue instanceof Element ? result.singleNodeValue : null;
   }
 
@@ -106,7 +190,7 @@
       const selector = parent && parent !== document.body ? pathTo(parent) + " > " + generalized(current) : generalized(current);
       let count = 0;
       try {
-        count = document.querySelectorAll(selector).length;
+        count = queryAll(selector).length;
       } catch {
         count = 0;
       }
@@ -138,16 +222,16 @@
     Object.assign(box.style, { display: "block", left: rect.left + "px", top: rect.top + "px", width: rect.width + "px", height: rect.height + "px" });
   }
 
-  document.addEventListener("mousemove", (event) => {
+  function handleMove(event) {
     if (mode === "none") return;
     const target = event.target instanceof Element ? event.target : null;
     if (target && target !== hovered && !target.hasAttribute("data-dataforge-overlay")) {
       hovered = target;
       highlight(target);
     }
-  }, true);
+  }
 
-  document.addEventListener("click", (event) => {
+  function handleClick(event) {
     if (mode === "none") return;
     // Capture the selection without triggering the page's own click behaviour.
     event.preventDefault();
@@ -173,7 +257,19 @@
     picks.push(pick);
     mode = "none";
     highlight(null);
-  }, true);
+  }
+
+  function installListeners() {
+    for (const scope of scopes()) {
+      const owner = scope.nodeType === Node.DOCUMENT_NODE ? scope : scope.ownerDocument;
+      if (!owner || listenerDocuments.has(owner)) continue;
+      listenerDocuments.add(owner);
+      owner.addEventListener("mousemove", handleMove, true);
+      owner.addEventListener("click", handleClick, true);
+    }
+  }
+
+  installListeners();
 
   function valueFor(node, css) {
     let selector = css;
@@ -183,13 +279,13 @@
       selector = css.slice(0, match.index);
       attribute = match[2] || null;
     }
-    const target = selector.trim() ? node.querySelector(selector) : node;
+    const target = selector.trim() ? queryAll(selector, node)[0] : node;
     if (!target || isSensitive(target)) return null;
     if (attribute) {
       if (!SAFE_ATTRIBUTES.includes(attribute)) return null;
       const value = target.getAttribute(attribute);
       if (!value) return null;
-      if (attribute === "href" || attribute === "src") return new URL(value, location.href).href;
+      if (attribute === "href" || attribute === "src") return new URL(value, target.ownerDocument.defaultView.location.href).href;
       return value;
     }
     const text = (target.innerText || target.textContent || "").trim();
@@ -198,8 +294,9 @@
 
   window.__dataforgeStudio = Object.freeze({
     setMode(next, root) {
-      mode = ["none", "element", "repeated", "next", "detail"].includes(next) ? next : "none";
+      mode = ["none", "element", "repeated", "next", "detail", "load_more"].includes(next) ? next : "none";
       recordRoot = typeof root === "string" && root ? root : null;
+      installListeners();
       if (mode === "none") highlight(null);
       return { mode };
     },
@@ -209,8 +306,19 @@
       return out;
     },
     pageInfo() {
-      const html = document.documentElement.outerHTML.slice(0, 200000).toLowerCase();
-      const frames = [...document.querySelectorAll("iframe")];
+      const html = scopes().map((scope) => scope.nodeType === 9 ? scope.documentElement?.outerHTML || "" : scope.host?.outerHTML || "").join(" ").slice(0, 500000).toLowerCase();
+      const frames = queryAll("iframe");
+      const absoluteAsset = (value) => {
+        if (!value) return null;
+        try {
+          const asset = new URL(value, location.href);
+          return ["http:", "https:"].includes(asset.protocol) ? asset.href.slice(0, 2048) : null;
+        } catch {
+          return null;
+        }
+      };
+      const icon = document.querySelector("link[rel~='icon'][href]");
+      const preview = document.querySelector("meta[property='og:image'][content], meta[name='twitter:image'][content], meta[property='twitter:image'][content]");
       const inaccessibleFrames = frames.filter((f) => {
         try {
           return !f.contentDocument;
@@ -220,7 +328,9 @@
       }).length;
       return {
         url: location.href, title: document.title.slice(0, 200), ready_state: document.readyState,
-        challenge_detected: CHALLENGE.some((m) => html.includes(m)), password_fields: document.querySelectorAll("input[type=password]").length,
+        favicon_url: absoluteAsset(icon?.getAttribute("href")) || absoluteAsset("/favicon.ico"),
+        thumbnail_url: absoluteAsset(preview?.getAttribute("content")),
+        challenge_detected: CHALLENGE.some((m) => html.includes(m)), password_fields: queryAll("input[type=password]").length,
         inaccessible_frames: inaccessibleFrames,
       };
     },
@@ -232,15 +342,67 @@
       window.scrollTo(0, document.documentElement.scrollHeight);
       return { height: document.documentElement.scrollHeight, y: window.scrollY };
     },
+    scrollPage(direction) {
+      const amount = Math.max(240, Math.floor(window.innerHeight * 0.82));
+      window.scrollBy({ top: Number(direction) < 0 ? -amount : amount, left: 0, behavior: "smooth" });
+      return { height: document.documentElement.scrollHeight, y: window.scrollY };
+    },
+    suggestFlow() {
+      const visible = (node) => {
+        const style = node.ownerDocument.defaultView.getComputedStyle(node);
+        return style.display !== "none" && style.visibility !== "hidden" && node.getClientRects().length > 0 && !isSensitive(node);
+      };
+      const label = (node) => [node.textContent, node.getAttribute("aria-label"), node.getAttribute("title")].filter(Boolean).join(" ").trim().replace(/\s+/g, " ");
+      const anchors = queryAll("a[href]").filter(visible);
+      const next = anchors.find((node) => (node.getAttribute("rel") || "").split(/\s+/).includes("next"))
+        || anchors.find((node) => /^(next(?:\s+page)?|older|more|›|»|→)$/i.test(label(node)));
+      if (next) {
+        return { kind: "next_link", next_css: pathTo(next), load_more_css: null, can_scroll: document.documentElement.scrollHeight > window.innerHeight + 40, reason: "A visible next-page link was found." };
+      }
+      const controls = queryAll("button, [role=button]").filter((node) => visible(node) && !node.closest("form"));
+      const loadMore = controls.find((node) => /^(load more|show more|view more|more results|see more)$/i.test(label(node)));
+      if (loadMore) {
+        return { kind: "load_more", next_css: null, load_more_css: pathTo(loadMore), can_scroll: document.documentElement.scrollHeight > window.innerHeight + 40, reason: "A visible load-more button was found." };
+      }
+      const canScroll = document.documentElement.scrollHeight > window.innerHeight + 40;
+      const infiniteMarker = queryAll("[data-infinite-scroll], [data-infinite-scroller], .infinite-scroll, .infinite-scroller").some(visible);
+      return {
+        kind: infiniteMarker && canScroll ? "infinite_scroll" : "none",
+        next_css: null,
+        load_more_css: null,
+        can_scroll: canScroll,
+        reason: infiniteMarker && canScroll ? "The page identifies an infinite-scrolling result area." : canScroll ? "The page can be scrolled; no automatic next-page control was found." : "This page fits in the visible area.",
+      };
+    },
+    click(css) {
+      try {
+        const selector = String(css || "").replace(/::(?:text|attr\([\w-]+\))\s*$/, "");
+        const target = queryAll(selector).find((node) => {
+          const style = node.ownerDocument.defaultView.getComputedStyle(node);
+          const visible = style.display !== "none" && style.visibility !== "hidden" && node.getClientRects().length > 0;
+          const safeControl = node.matches("a[href], button:not([type=submit]), [role=button]") && !node.closest("form") && !isSensitive(node);
+          return visible && safeControl;
+        });
+        if (!target) return { clicked: false, error: "No visible non-form button matches that selector" };
+        target.click();
+        return { clicked: true, error: null };
+      } catch (error) {
+        return { clicked: false, error: String(error) };
+      }
+    },
+    networkData() {
+      return { responses: networkResponses.slice(0, 50), error: null };
+    },
     links(css) {
       try {
         const selector = css.replace(/::attr\(href\)\s*$/, "");
-        const urls = [...document.querySelectorAll(selector)]
+        const anchors = queryAll(selector)
           .map((node) => (node.matches("a[href]") ? node : node.querySelector("a[href]")))
-          .filter(Boolean)
-          .map((a) => a.getAttribute("href"))
-          .filter(Boolean)
-          .map((href) => new URL(href, location.href).href);
+          .filter(Boolean);
+        const urls = anchors
+          .map((anchor) => [anchor.getAttribute("href"), anchor.ownerDocument.defaultView.location.href])
+          .filter(([href]) => Boolean(href))
+          .map(([href, base]) => new URL(href, base).href);
         return { urls: [...new Set(urls)].slice(0, 1000), error: null };
       } catch (error) {
         return { urls: [], error: String(error) };
@@ -248,7 +410,7 @@
     },
     count(css) {
       try {
-        return { count: document.querySelectorAll(css).length, error: null };
+        return { count: queryAll(css).length, error: null };
       } catch (error) {
         return { count: 0, error: String(error) };
       }
@@ -256,7 +418,7 @@
     extract(config) {
       let roots;
       try {
-        roots = [...document.querySelectorAll(config.record_root)];
+        roots = queryAll(config.record_root);
       } catch (error) {
         return { error: "Invalid record root selector: " + String(error), records: [] };
       }
@@ -272,7 +434,7 @@
                 if (target && !isSensitive(target)) {
                   if (selector.attribute) {
                     const raw = SAFE_ATTRIBUTES.includes(selector.attribute) ? target.getAttribute(selector.attribute) : null;
-                    value = raw ? (selector.attribute === "href" || selector.attribute === "src" ? new URL(raw, location.href).href : raw) : null;
+                    value = raw ? (selector.attribute === "href" || selector.attribute === "src" ? new URL(raw, target.ownerDocument.defaultView.location.href).href : raw) : null;
                   } else {
                     value = (target.innerText || target.textContent || "").trim() || null;
                   }
@@ -294,9 +456,9 @@
       let nextUrl = null;
       if (config.next_css) {
         try {
-          const next = document.querySelector(config.next_css.replace(/::attr\(href\)\s*$/, ""));
+          const next = queryAll(config.next_css.replace(/::attr\(href\)\s*$/, ""))[0];
           const href = next && next.getAttribute("href");
-          nextUrl = href ? new URL(href, location.href).href : null;
+          nextUrl = href ? new URL(href, next.ownerDocument.defaultView.location.href).href : null;
         } catch {
           nextUrl = null;
         }

@@ -44,11 +44,22 @@ beforeEach(() => {
 });
 
 describe("review queue", () => {
+  it("explains the cleanup flow and provides an actionable empty state", async () => {
+    responses["dataset.list"] = [];
+    const { container } = render(<MatchTab />);
+    expect(await screen.findByRole("heading", { name: "Clean up duplicate records" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "No lists are ready yet" })).toBeTruthy();
+    expect(screen.getByText(/Strong IDs and contact details/)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Import your first file" }));
+    expect(screen.getByText(/CSV, JSON\/JSONL/i)).toBeTruthy();
+    expect(await accessibilityViolations(container)).toEqual([]);
+  });
+
   it("defaults focus to keep separate, masks sensitive values, and merges with chosen values", async () => {
     const { container } = render(<MatchTab initialDatasetId="d1" initialJobId="j1" />);
     await screen.findByRole("heading", { name: "Review matches" });
 
-    expect(document.activeElement?.textContent).toMatch(/^Keep separate/);
+    await waitFor(() => expect(document.activeElement?.textContent).toMatch(/^Keep separate/));
     const table = screen.getByRole("table", { name: /Record A compared with record B/ });
     expect(within(table).queryByText("2125550100")).toBeNull();
     expect(within(table).getByText(/people, row 2/)).toBeTruthy();
@@ -82,7 +93,8 @@ describe("review queue", () => {
     render(<MatchTab initialDatasetId="d1" initialJobId="j1" />);
     await screen.findByRole("heading", { name: "Review matches" });
     fireEvent.click(screen.getByText("More actions"));
-    fireEvent.change(screen.getByRole("combobox", { name: "Field" }), { target: { value: "Name" } });
+    fireEvent.click(screen.getByRole("combobox", { name: "Field" }));
+    fireEvent.click(screen.getByRole("option", { name: "Name" }));
     fireEvent.change(screen.getByRole("textbox", { name: "What is wrong" }), { target: { value: "nicknames" } });
     fireEvent.click(screen.getByRole("button", { name: "Mark bad mapping" }));
     await waitFor(() => expect(calls.find((c) => c.command === "match.flag_mapping")?.payload).toMatchObject({ column: "Name", note: "nicknames", decision_id: "dA" }));

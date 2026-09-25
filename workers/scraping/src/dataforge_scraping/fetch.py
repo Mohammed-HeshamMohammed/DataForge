@@ -57,8 +57,15 @@ def make_client(
     cache_dir: Path | None = None,
     transport: httpx.BaseTransport | None = None,
     timeout: float = 30.0,
+    proxy_url: str | None = None,
 ) -> httpx.Client:
-    base = transport or httpx.HTTPTransport(verify=_SSL_CONTEXT, retries=0)
+    if proxy_url:
+        parsed_proxy = urlparse(proxy_url)
+        if parsed_proxy.scheme not in ("http", "https") or not parsed_proxy.hostname or parsed_proxy.username or parsed_proxy.password or parsed_proxy.query or parsed_proxy.fragment:
+            raise ValueError("Proxy URL must be an http:// or https:// address without credentials, a query, or a fragment")
+    if transport is not None and proxy_url:
+        raise ValueError("A custom transport and proxy URL cannot be used together")
+    base = transport or httpx.HTTPTransport(verify=_SSL_CONTEXT, retries=0, proxy=proxy_url)
     if cache_dir is not None:
         import hishel
         from hishel.httpx import SyncCacheTransport

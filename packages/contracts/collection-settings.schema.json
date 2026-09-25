@@ -5,6 +5,7 @@
   "type": "object",
   "required": [
     "contact_identity",
+    "network_proxy",
     "http_cache",
     "warc_capture",
     "ai_suggestions",
@@ -26,6 +27,15 @@
           "type": "string",
           "maxLength": 200
         }
+      },
+      "additionalProperties": false
+    },
+    "network_proxy": {
+      "type": "object",
+      "required": ["enabled", "url"],
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "url": { "type": "string", "maxLength": 500 }
       },
       "additionalProperties": false
     },

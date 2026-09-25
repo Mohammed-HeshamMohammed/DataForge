@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { formatCount, stageLabel } from "../lib/format.ts";
 import type { Job, JobState } from "../lib/types.ts";
+import { describeError } from "../lib/errors.ts";
 
 const STATE_ICON: Record<JobState, string> = {
   draft: "○",
@@ -23,11 +24,16 @@ export function StateBadge({ state }: { state: JobState }) {
 
 export function ErrorNote({ message }: { message: string | null | undefined }) {
   if (!message) return null;
+  const error = describeError(message);
   return (
-    <p className="note note-error" role="alert">
-      <span aria-hidden="true">✕ </span>
-      {message}
-    </p>
+    <div className="note note-error error-note" role="alert">
+      <strong><span aria-hidden="true">✕ </span>{error.title}</strong>
+      <span>{error.nextStep}</span>
+      <details>
+        <summary>Technical details</summary>
+        <code>{error.technical}</code>
+      </details>
+    </div>
   );
 }
 

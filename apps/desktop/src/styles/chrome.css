@@ -310,17 +310,17 @@ kbd {
   margin: 0;
 }
 
-/* Collapsible sidebars (View → Toggle left / jobs sidebar) */
-.shell.hide-left {
-  grid-template-columns: minmax(0, 1fr) 17.5rem;
+/* Sidebars minimize to persistent rails so either side can be restored with one click. */
+.shell.minimize-left {
+  grid-template-columns: 2.75rem minmax(0, 1fr) 17.5rem;
 }
 
-.shell.hide-right {
-  grid-template-columns: 18.5rem minmax(0, 1fr);
+.shell.minimize-right {
+  grid-template-columns: 18.5rem minmax(0, 1fr) 2.75rem;
 }
 
-.shell.hide-left.hide-right {
-  grid-template-columns: minmax(0, 1fr);
+.shell.minimize-left.minimize-right {
+  grid-template-columns: 2.75rem minmax(0, 1fr) 2.75rem;
 }
 
 /* Single-row pane header: tabs on the left, status and actions on the right */
@@ -377,6 +377,26 @@ kbd {
   align-items: start;
 }
 
+.sample-project-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-lg);
+  margin: var(--spacing-lg) 0 var(--spacing-xl);
+  padding: var(--spacing-lg);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface-raised);
+}
+
+.sample-project-card h2,
+.sample-project-card p { margin: 0; }
+
+.sample-project-card p {
+  margin-top: var(--spacing-xs);
+  color: var(--color-text-muted);
+}
+
 /* Secondary navigation inside a tab */
 .subnav {
   display: flex;
@@ -414,7 +434,183 @@ kbd {
 }
 
 .source-strip {
+  margin-top: var(--spacing-sm);
+}
+
+.auto-detect {
+  display: grid;
+  grid-template-columns: minmax(13rem, 0.7fr) minmax(18rem, 1.3fr) auto;
+  gap: var(--spacing-md);
+  align-items: end;
   margin-bottom: var(--spacing-md);
+  padding: var(--spacing-md);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-raised);
+}
+
+.auto-detect h2,
+.auto-detect p {
+  margin: 0;
+}
+
+.auto-url-field {
+  margin: 0;
+}
+
+.auto-detection-result {
+  margin-top: 0;
+}
+
+.site-catalog {
+  min-width: 0;
+}
+
+.site-catalog-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--spacing-md);
+  margin-bottom: var(--spacing-md);
+}
+
+.site-catalog-header h2,
+.site-catalog-header p,
+.site-card h3,
+.site-card p {
+  margin: 0;
+}
+
+.site-catalog-count {
+  flex: 0 0 auto;
+  padding: 0.28rem 0.55rem;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 999px;
+  color: var(--color-text-muted);
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.site-catalog-filters {
+  display: grid;
+  grid-template-columns: minmax(15rem, 1fr) minmax(10rem, 15rem);
+  gap: var(--spacing-md);
+  margin-bottom: var(--spacing-md);
+  padding: var(--spacing-md);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-raised);
+}
+
+.site-catalog-filters .field {
+  margin: 0;
+}
+
+.site-catalog-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(18rem, 1fr));
+  gap: var(--spacing-md);
+}
+
+.site-card {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: var(--spacing-md);
+  padding: var(--spacing-md);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-raised);
+}
+
+.site-card-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--spacing-sm);
+}
+
+.site-card-heading h3 {
+  font-size: 1rem;
+}
+
+.site-card-heading p {
+  margin-top: 0.15rem;
+  overflow-wrap: anywhere;
+  color: var(--color-text-faint);
+  font-size: 0.76rem;
+}
+
+.site-category {
+  flex: 0 0 auto;
+  padding: 0.22rem 0.42rem;
+  border-radius: var(--radius-sm);
+  background: var(--color-selected);
+  color: var(--color-text-muted);
+  font-size: 0.7rem;
+  font-weight: 600;
+}
+
+.site-card-details {
+  display: grid;
+  gap: var(--spacing-sm);
+  margin: 0;
+}
+
+.site-card-details div {
+  display: grid;
+  gap: 0.12rem;
+}
+
+.site-card-details dt {
+  color: var(--color-text-faint);
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.site-card-details dd {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: 0.8rem;
+  line-height: 1.4;
+}
+
+.site-card-actions {
+  margin-top: auto;
+}
+
+.site-catalog-empty {
+  padding: var(--spacing-xl);
+  border: 1px dashed var(--color-border-subtle);
+  border-radius: var(--radius-md);
+  text-align: center;
+}
+
+.site-catalog-empty h3 {
+  margin: 0 0 var(--spacing-xs);
+}
+
+.advanced-section {
+  margin: 0 0 var(--spacing-md);
+  padding: var(--spacing-sm) var(--spacing-md);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-sunken);
+}
+
+.advanced-section > summary {
+  color: var(--color-text-muted);
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.advanced-section[open] > summary { margin-bottom: var(--spacing-md); }
+
+.method-catalog {
+  margin-top: var(--spacing-md);
+  color: var(--color-text-muted);
 }
 
 .settings-layout {
@@ -486,6 +682,18 @@ kbd {
     grid-template-columns: 1fr;
   }
 
+  .auto-detect {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .auto-detect > div:first-child {
+    grid-column: 1 / -1;
+  }
+
+  .site-catalog-filters {
+    grid-template-columns: 1fr;
+  }
+
   .work-grid > .panel {
     max-height: none;
   }
@@ -504,12 +712,46 @@ kbd {
 }
 
 @media (max-width: 1279px) {
-  .shell.hide-left {
-    grid-template-columns: minmax(0, 1fr) 15rem;
+  .shell.minimize-left {
+    grid-template-columns: 2.75rem minmax(0, 1fr) 15rem;
   }
 
-  .shell.hide-right {
-    grid-template-columns: 16.5rem minmax(0, 1fr);
+  .shell.minimize-right {
+    grid-template-columns: 16.5rem minmax(0, 1fr) 2.75rem;
+  }
+
+  .shell.minimize-left.minimize-right {
+    grid-template-columns: 2.75rem minmax(0, 1fr) 2.75rem;
+  }
+}
+
+@media (max-width: 1099px) {
+  .shell.minimize-right {
+    grid-template-columns: 16rem minmax(0, 1fr);
+  }
+
+  .shell.minimize-left,
+  .shell.minimize-left.minimize-right {
+    grid-template-columns: 2.75rem minmax(0, 1fr);
+  }
+
+  .sidebar-right.minimized {
+    min-height: 2.75rem;
+    max-height: 2.75rem;
+    display: flex;
+    grid-template-columns: none;
+  }
+}
+
+@media (max-width: 767px) {
+  .shell.minimize-left,
+  .shell.minimize-right,
+  .shell.minimize-left.minimize-right {
+    grid-template-columns: 1fr;
+  }
+
+  .sidebar-right.minimized {
+    grid-column: auto;
   }
 }
 

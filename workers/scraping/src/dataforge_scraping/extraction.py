@@ -5,6 +5,8 @@ import html
 import json
 import re
 import time
+import base64
+import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from decimal import Decimal, InvalidOperation
@@ -18,7 +20,7 @@ from .fetch import APP_USER_AGENT as USER_AGENT  # noqa: F401 - public alias
 from .fetch import LOCAL_HOSTS as _LOCAL_HOSTS
 
 TEST_MODE_MAX_RECORDS = 10
-EXTRACTION_MODES = ("selectors", "structured_data", "article", "document_tables", "api")
+EXTRACTION_MODES = ("selectors", "structured_data", "article", "document_tables", "api", "xml")
 
 
 @dataclass(frozen=True)
@@ -64,7 +66,31 @@ def api_auth_headers(preset: dict[str, object], credential: str | None) -> dict[
         return {"Authorization": f"Bearer {credential}"}
     if integration["auth"] == "query_param":
         return {}  # added to each in-scope request URL by the runtime, never to stored URLs
+    if integration["auth"] == "oauth2_client_credentials":
+        return {}  # exchanged for a short-lived bearer token by the runtime
+    if integration["auth"] == "basic":
+        username, password = credential_pair(credential)
+        encoded = base64.b64encode(f"{username}:{password}".encode("utf-8")).decode("ascii")
+        return {"Authorization": f"Basic {encoded}"}
     return {str(integration["header_name"]): credential}
+
+
+def credential_pair(credential: str) -> tuple[str, str]:
+    """Accept either a `username:password`/`client_id:secret` pair or a JSON object from the OS store."""
+    try:
+        parsed = json.loads(credential)
+    except json.JSONDecodeError:
+        parsed = None
+    if isinstance(parsed, dict):
+        username = str(parsed.get("username") or parsed.get("client_id") or "")
+        password = str(parsed.get("password") or parsed.get("client_secret") or "")
+    elif ":" in credential:
+        username, password = credential.split(":", 1)
+    else:
+        raise PolicyViolation("This credential must contain a username and password (or client ID and secret)")
+    if not username or not password:
+        raise PolicyViolation("This credential is missing its username/client ID or password/client secret")
+    return username, password
 
 
 def extract_document(text: str | bytes, source_url: str, preset: dict[str, object]) -> tuple[list[dict[str, object]], list[dict[str, object]], list[str]]:
@@ -88,6 +114,12 @@ def extract_document(text: str | bytes, source_url: str, preset: dict[str, objec
         candidates = [_feed_record(entry, source_url, preset) for entry in parse_feed(content, source_url)]
         valid, rejected, more = validate_candidates(candidates, preset)
         return valid, rejected, more
+    if (preset.get("discovery") or {}).get("mode") == "oai_pmh":
+        from .discovery import parse_oai_pmh
+
+        candidates, _ = parse_oai_pmh(content, source_url, preset)
+        valid, rejected, more = validate_candidates(candidates, preset)
+        return valid, rejected, more
     candidates = extract_page(body, content, content_type, source_url, preset, warnings)
     valid, rejected, more = validate_candidates(candidates, preset)
     return valid, rejected, list(dict.fromkeys(warnings + more))
@@ -107,7 +139,12 @@ def extract_page(body: str, content: bytes, content_type: str, url: str, preset:
     fields = extraction.get("fields", []) or []
     mode = extraction_mode(preset)
     if mode == "api":
-        return _extract_json_records(json.loads(body), url, extraction, fields, preset)
+        document = json.loads(body)
+        if isinstance(document, dict) and document.get("errors"):
+            raise ValueError("GraphQL response contains errors; review the query and endpoint permissions")
+        return _extract_json_records(document, url, extraction, fields, preset)
+    if mode == "xml":
+        return _extract_xml_records(content, url, extraction, fields, preset)
     if mode == "structured_data":
         from .structured import extract_structured_records
 
@@ -396,12 +433,75 @@ def _json_path(value: object, path: object) -> object:
         return value
     for part in path.split("."):
         if isinstance(value, dict):
-            value = value.get(part)
+            if part == "*":
+                value = next((item for item in value.values() if isinstance(item, list)), None)
+            else:
+                value = value.get(part)
         elif isinstance(value, list) and part.isdigit() and int(part) < len(value):
             value = value[int(part)]
         else:
             return None
     return value
+
+
+def _xml_name(tag: str) -> str:
+    return tag.rsplit("}", 1)[-1].split(":", 1)[-1]
+
+
+def _xml_record(element: ET.Element, depth: int = 0) -> dict[str, object]:
+    """Flatten one bounded XML element using namespace-independent names."""
+    record: dict[str, object] = {}
+    for key, value in element.attrib.items():
+        if len(record) >= 200:
+            break
+        record[f"@{_xml_name(key)}"] = value
+    for child in list(element):
+        if len(record) >= 200:
+            break
+        key = _xml_name(child.tag)
+        text = " ".join("".join(child.itertext()).split())
+        if list(child) and depth < 3:
+            for nested_key, value in _xml_record(child, depth + 1).items():
+                target = f"{key}.{nested_key}"
+                record[target] = f"{record[target]}, {value}" if target in record else value
+        elif text:
+            record[key] = f"{record[key]}, {text}" if key in record else text
+    own_text = (element.text or "").strip()
+    if own_text and not list(element):
+        record.setdefault("value", own_text)
+    return record
+
+
+def _extract_xml_records(content: bytes, source_url: str, extraction: dict, fields: list, preset: dict) -> list[dict[str, object]]:
+    """Extract repeated records from generic XML or a SOAP Body without resolving entities."""
+    if len(content) > 25_000_000:
+        raise ValueError("XML response is larger than the 25 MB safety limit")
+    lowered = content[:100_000].lower()
+    if b"<!doctype" in lowered or b"<!entity" in lowered:
+        raise ValueError("XML with DTD or entity declarations is not supported")
+    try:
+        root = ET.fromstring(content)
+    except ET.ParseError as error:
+        raise ValueError(f"Invalid XML response: {error}") from error
+    body = next((node for node in root.iter() if _xml_name(node.tag).lower() == "body"), root)
+    record_tag = str(extraction.get("record_tag") or "").strip()
+    if record_tag:
+        candidates = [node for node in body.iter() if _xml_name(node.tag) == record_tag]
+    else:
+        counts: dict[str, int] = {}
+        for parent in body.iter():
+            for child in list(parent):
+                name = _xml_name(child.tag)
+                counts[name] = counts.get(name, 0) + 1
+        repeated = [item for item in counts.items() if item[1] > 1]
+        chosen = max(repeated, key=lambda item: item[1])[0] if repeated else ""
+        candidates = [node for node in body.iter() if _xml_name(node.tag) == chosen] if chosen else [body]
+    records = []
+    for element in candidates[:100_000]:
+        projected = _project_fields(_xml_record(element), fields, source_url, preset)
+        if projected:
+            records.append(_with_provenance(projected, source_url, preset))
+    return records
 
 
 # --- transforms and typing -------------------------------------------------------------------------

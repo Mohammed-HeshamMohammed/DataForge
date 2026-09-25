@@ -16,6 +16,11 @@ vi.mock("../lib/ipc.ts", () => ({
 
 const { MappingEditor } = await import("../components/MappingEditor.tsx");
 
+function choose(label: string, option: string) {
+  fireEvent.click(screen.getByRole("combobox", { name: label }));
+  fireEvent.click(screen.getByRole("option", { name: new RegExp(`^${option}`, "i") }));
+}
+
 beforeEach(() => {
   calls.length = 0;
   Object.assign(responses, {
@@ -34,6 +39,17 @@ beforeEach(() => {
 });
 
 describe("mapping editor", () => {
+  it("does not overwrite an early edit when the saved mapping finishes loading", async () => {
+    let finishLoading!: (value: null) => void;
+    responses["dataset.mapping"] = new Promise<null>((resolve) => { finishLoading = resolve; });
+    render(<MappingEditor datasetId="d1" />);
+    await screen.findByText("Owner Mailing Address");
+    const role = screen.getByLabelText("Role for Owner Mailing Address") as HTMLButtonElement;
+    choose("Role for Owner Mailing Address", "Mailing address");
+    finishLoading(null);
+    await waitFor(() => expect(role.value).toBe("mailing_address"));
+  });
+
   it("masks sensitive samples, requires confirming ambiguous columns, and saves export exclusions", async () => {
     const onSaved = vi.fn();
     const { container } = render(<MappingEditor datasetId="d1" onSaved={onSaved} />);
@@ -41,11 +57,11 @@ describe("mapping editor", () => {
 
     expect(screen.queryByText("5125550182")).toBeNull(); // masked until revealed
     expect(screen.getByText(/shared office line/)).toBeTruthy(); // review report is visible
-    const save = screen.getByRole("button", { name: "Save mapping" }) as HTMLButtonElement;
+    const save = screen.getByRole("button", { name: "Save and continue" }) as HTMLButtonElement;
     expect(save.disabled).toBe(true);
-    expect(screen.getByText(/need your confirmation: Owner Mailing Address/)).toBeTruthy();
+    expect(screen.getByText(/uncertain suggestion: Owner Mailing Address/)).toBeTruthy();
 
-    fireEvent.change(screen.getByLabelText("Role for Owner Mailing Address"), { target: { value: "mailing_address" } });
+    choose("Role for Owner Mailing Address", "Mailing address");
     fireEvent.click(screen.getAllByRole("checkbox", { name: /Exclude/ })[2]);
     await waitFor(() => expect(save.disabled).toBe(false));
     fireEvent.click(save);
@@ -63,11 +79,23 @@ describe("mapping editor", () => {
   it("blocks saving when a positional role is pooled or no evidence field is mapped", async () => {
     render(<MappingEditor datasetId="d1" />);
     await screen.findByText("Owner Mailing Address");
-    fireEvent.change(screen.getByLabelText("Role for Phone"), { target: { value: "other" } });
+    choose("Role for Phone", "Keep, but do not compare");
     expect(await screen.findByText(/names alone cannot match safely/)).toBeTruthy();
-    fireEvent.change(screen.getByLabelText("Role for Owner Mailing Address"), { target: { value: "address" } });
-    fireEvent.change(screen.getByLabelText("Role for Notes"), { target: { value: "address" } });
+    choose("Role for Owner Mailing Address", "Home or contact address");
+    choose("Role for Notes", "Home or contact address");
     expect(await screen.findByText(/"address" is used by Owner Mailing Address, Notes/)).toBeTruthy();
-    expect((screen.getByRole("button", { name: "Save mapping" }) as HTMLButtonElement).disabled).toBe(true);
+    expect((screen.getByRole("button", { name: "Save and continue" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("changes role language for real-estate and software records", async () => {
+    render(<MappingEditor datasetId="d1" />);
+    await screen.findByText("Owner Mailing Address");
+    choose("What does one row represent?", "Real-estate leads");
+    fireEvent.click(screen.getByRole("combobox", { name: "Role for Owner Mailing Address" }));
+    expect(screen.getByRole("option", { name: /Owner mailing address/i })).toBeTruthy();
+    fireEvent.keyDown(screen.getByRole("listbox", { name: "Role for Owner Mailing Address" }), { key: "Escape" });
+    choose("What does one row represent?", "Software or repositories");
+    fireEvent.click(screen.getByRole("combobox", { name: "Role for Notes" }));
+    expect(screen.getByRole("option", { name: /Repository, package, or release ID/i })).toBeTruthy();
   });
 });

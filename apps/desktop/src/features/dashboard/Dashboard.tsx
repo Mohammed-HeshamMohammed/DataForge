@@ -43,7 +43,7 @@ export function Dashboard({ navigate }: { navigate: Navigate }) {
 
       {matchJobs.length > 0 && (
         <section className="panel">
-          <h2>Completed match jobs</h2>
+          <h2>Completed cleanup runs</h2>
           <ul className="plain-list">
             {matchJobs.slice(0, 5).map((job) => (
               <li key={job.id}>

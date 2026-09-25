@@ -145,6 +145,17 @@ describe("pane header", () => {
   });
 });
 
+describe("sidebars", () => {
+  it("keeps a restore control when the left sidebar is minimized", async () => {
+    const onToggle = vi.fn();
+    const { container } = render(<Sidebar project={project} summary={summary} navigate={() => {}} minimized onToggle={onToggle} />);
+    expect(container.querySelector(".sidebar.minimized")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Restore left sidebar" }));
+    expect(onToggle).toHaveBeenCalledOnce();
+    expect(await accessibilityViolations(container)).toEqual([]);
+  });
+});
+
 describe("shared components", () => {
   it("destructive confirmation explains consequences and focuses the safe choice", async () => {
     const onConfirm = vi.fn();
@@ -178,6 +189,7 @@ describe("shared components", () => {
 
 describe("styles", () => {
   const css = readFileSync("src/styles/shell.css", "utf-8");
+  const appSource = readFileSync("src/app/App.tsx", "utf-8");
 
   it("honours reduced motion and visible focus", () => {
     expect(css).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]*?transition: none !important/);
@@ -187,5 +199,11 @@ describe("styles", () => {
   it("defines narrow and compact layouts at the specified breakpoints", () => {
     expect(css).toContain("@media (max-width: 1023px)");
     expect(css).toContain("@media (max-width: 767px)");
+  });
+
+  it("keeps visited tab panels mounted instead of discarding their sessions", () => {
+    expect(appSource).toContain("visitedTabs");
+    expect(appSource).toContain("hidden={panelTab !== tab}");
+    expect(appSource).toContain('active={tab === "studio"}');
   });
 });

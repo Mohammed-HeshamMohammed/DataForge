@@ -12,10 +12,10 @@ from .signals import PURPOSES
 STATUSES = ("active", "degraded", "deprecated", "disabled")
 STRATEGIES = ("api", "http", "webview")
 FIELD_TYPES = ("string", "url", "decimal", "integer")
-PAGINATION_TYPES = ("none", "next_link", "page_parameter", "cursor", "infinite_scroll", "api_cursor", "detail_links")
-DISCOVERY_MODES = ("none", "sitemap", "feed", "crawl", "llms_txt")
+PAGINATION_TYPES = ("none", "next_link", "page_parameter", "cursor", "infinite_scroll", "api_cursor", "detail_links", "load_more")
+DISCOVERY_MODES = ("none", "sitemap", "feed", "crawl", "llms_txt", "oai_pmh")
 ENGINES = ("auto", "httpx", "scrapy")
-VARIABLE_TYPES = ("string", "integer", "number", "enum", "sparql", "path")
+VARIABLE_TYPES = ("string", "integer", "number", "enum", "sparql", "graphql", "path")
 _ID = re.compile(r"^[a-z0-9_]+(\.[a-z0-9_]+)+$")
 _SEMVER = re.compile(r"^\d+\.\d+\.\d+$")
 
@@ -70,12 +70,18 @@ def validate_preset(preset: dict) -> list[str]:
 
     integration = strategy.get("api_integration")
     if integration is not None:
-        if not isinstance(integration, dict) or integration.get("auth") not in ("bearer", "header", "query_param", None):
-            errors.append("strategy.api_integration.auth must be bearer, header, or query_param")
+        if not isinstance(integration, dict) or integration.get("auth") not in ("bearer", "header", "query_param", "basic", "oauth2_client_credentials", None):
+            errors.append("strategy.api_integration.auth must be bearer, header, query_param, basic, or oauth2_client_credentials")
         elif integration.get("auth") == "query_param" and not re.fullmatch(r"[A-Za-z_][\w.-]{0,40}", str(integration.get("parameter", ""))):
             errors.append("strategy.api_integration.parameter must name the query parameter for query_param auth")
         elif integration.get("auth") == "header" and str(integration.get("header_name", "")).lower() in ("", "cookie", "host", "set-cookie"):
             errors.append("strategy.api_integration.header_name must be a named API key header (not Cookie or Host)")
+        elif integration.get("auth") == "oauth2_client_credentials":
+            token = urlparse(str(integration.get("token_url") or ""))
+            if token.scheme != "https" or not token.hostname:
+                errors.append("strategy.api_integration.token_url must be a complete HTTPS URL for OAuth 2 client credentials")
+            elif token.hostname not in (scope if isinstance(scope, dict) else {}).get("allowed_hosts", []):
+                errors.append("strategy.api_integration.token_url must use an allowed host")
         elif integration.get("auth") and strategy.get("preferred") != "api":
             errors.append("credentials are only allowed for API strategy presets")
     if preset.get("status") == "deprecated" and not preset.get("successor"):
@@ -95,7 +101,7 @@ def validate_preset(preset: dict) -> list[str]:
 
     extraction = preset.get("extraction") if isinstance(preset.get("extraction"), dict) else {}
     mode = "api" if strategy.get("preferred") == "api" else extraction.get("mode", "selectors")
-    selector_free = mode in ("structured_data", "article", "document_tables") or (preset.get("discovery") or {}).get("mode") == "feed"
+    selector_free = mode in ("structured_data", "article", "document_tables", "xml") or (preset.get("discovery") or {}).get("mode") in ("feed", "oai_pmh")
     if mode not in EXTRACTION_MODES:
         errors.append(f"extraction.mode must be one of {EXTRACTION_MODES}")
     if strategy.get("preferred") == "api":
@@ -142,6 +148,13 @@ def validate_preset(preset: dict) -> list[str]:
         errors.append("infinite_scroll pagination requires the webview strategy")
     if kind == "infinite_scroll" and int(pagination.get("max_scrolls", 20)) > 100:
         errors.append("pagination.max_scrolls cannot exceed 100")
+    if kind == "load_more":
+        if "webview" not in allowed:
+            errors.append("load_more pagination requires the webview strategy")
+        if not isinstance((pagination.get("button") or {}).get("css"), str):
+            errors.append("pagination.button.css is required for load_more pagination")
+        if int(pagination.get("max_clicks", 20)) > 100:
+            errors.append("pagination.max_clicks cannot exceed 100")
 
     discovery = preset.get("discovery") if isinstance(preset.get("discovery"), dict) else {"mode": "none"}
     if discovery.get("mode", "none") not in DISCOVERY_MODES:

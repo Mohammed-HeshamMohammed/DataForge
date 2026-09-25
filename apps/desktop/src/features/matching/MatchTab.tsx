@@ -6,15 +6,24 @@ import type { Dataset, Job, MatchResults, ReviewItem } from "../../lib/types.ts"
 import { ConfirmButton, ErrorNote, JobProgress, Metric, StateBadge, useToast } from "../../components/ui.tsx";
 import { MappingEditor } from "../../components/MappingEditor.tsx";
 import { ImportForm } from "../datasets/Datasets.tsx";
+import { CustomSelect } from "../../components/CustomSelect.tsx";
 
 type Step = 1 | 2 | 3 | 4 | 5;
 const STEPS: { step: Step; label: string }[] = [
-  { step: 1, label: "Data" },
-  { step: 2, label: "Map fields" },
-  { step: 3, label: "Preview" },
-  { step: 4, label: "Review" },
-  { step: 5, label: "Export" },
+  { step: 1, label: "Choose data" },
+  { step: 2, label: "Explain columns" },
+  { step: 3, label: "Check duplicates" },
+  { step: 4, label: "Review uncertain pairs" },
+  { step: 5, label: "Export clean file" },
 ];
+
+const STEP_HELP: Record<Step, { title: string; body: string }> = {
+  1: { title: "Choose the list you want to clean", body: "Use one list to remove duplicates, or compare two lists to combine matching records." },
+  2: { title: "Explain what each column contains", body: "DataForge suggests meanings such as phone, property address, SKU, or repository URL. You only need to check them." },
+  3: { title: "Test the rules safely", body: "Preview likely duplicates before a full run. Your original rows are never changed." },
+  4: { title: "Decide the uncertain cases", body: "Strong matches are handled automatically. You only review pairs where the evidence is not clear." },
+  5: { title: "Download the cleaned result", body: "Export one combined file while keeping the source data and decisions available for later review." },
+};
 
 type Settings = { strictness: "conservative" | "balanced"; max_block_size: number; preview_size: number };
 const DEFAULT_SETTINGS: Settings = { strictness: "conservative", max_block_size: 200, preview_size: 10000 };
@@ -31,6 +40,16 @@ export function MatchTab({ initialDatasetId, initialJobId }: { initialDatasetId?
   const [compareId, setCompareId] = useState<string | null>(null);
   const [trustCompareFirst, setTrustCompareFirst] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (initialJobId) {
+      setFullJobId(initialJobId);
+      setStep(4);
+    } else if (initialDatasetId) {
+      setDatasetId(initialDatasetId);
+      setStep(2);
+    }
+  }, [initialDatasetId, initialJobId]);
 
   const dataset = datasets.data?.find((d) => d.id === datasetId) ?? null;
   const compareDataset = datasets.data?.find((d) => d.id === compareId) ?? null;
@@ -68,8 +87,9 @@ export function MatchTab({ initialDatasetId, initialJobId }: { initialDatasetId?
   return (
     <div className="match">
       <header className="match-header">
+        <h2>Clean up duplicate records</h2>
         <p className="muted">
-          {dataset ? `Dataset: ${dataset.name} — ${formatCount(dataset.row_count)} rows` : "No dataset selected"}
+          {dataset ? `${dataset.name} — ${formatCount(dataset.row_count)} rows selected` : "Find repeated people, leads, properties, products, jobs, or other records without learning matching jargon."}
           {full && (
             <>
               {" "}
@@ -93,6 +113,10 @@ export function MatchTab({ initialDatasetId, initialJobId }: { initialDatasetId?
             );
           })}
         </ol>
+        <div className="match-step-help" aria-live="polite">
+          <strong>{STEP_HELP[step].title}</strong>
+          <span>{STEP_HELP[step].body}</span>
+        </div>
       </header>
 
       <div className="match-grid">
@@ -186,13 +210,24 @@ export function MatchTab({ initialDatasetId, initialJobId }: { initialDatasetId?
           {step === 5 && fullJobId && fullResults.data && <ExportStep results={fullResults.data} onExported={() => void fullResults.reload()} />}
         </section>
 
-        <aside className="match-rail" aria-label="Job summary">
-          <h2>Job summary</h2>
-          <SummaryCounts dataset={dataset} results={fullResults.data ?? (previewStale ? null : previewResults.data)} />
-          <h3>History</h3>
-          {history.length === 0 && <p className="muted small">No match jobs for this dataset yet.</p>}
-          <ul className="plain-list">
-            {history.slice(0, 8).map((job) => (
+        <aside className="match-rail" aria-label={dataset ? "Cleanup summary" : "How cleanup works"}>
+          {!dataset ? (
+            <>
+              <h2>What DataForge will do</h2>
+              <ol className="match-how-list">
+                <li><strong>Understand the columns</strong><span>You confirm simple labels such as phone, property address, or product ID.</span></li>
+                <li><strong>Find likely duplicates</strong><span>Strong IDs and contact details are checked before fuzzy names.</span></li>
+                <li><strong>Keep you in control</strong><span>Uncertain pairs wait for your decision; original data stays untouched.</span></li>
+              </ol>
+            </>
+          ) : (
+            <>
+              <h2>Cleanup summary</h2>
+              <SummaryCounts dataset={dataset} results={fullResults.data ?? (previewStale ? null : previewResults.data)} />
+              <h3>Earlier runs</h3>
+              {history.length === 0 && <p className="muted small">No cleanup runs for this dataset yet.</p>}
+              <ul className="plain-list">
+                {history.slice(0, 8).map((job) => (
               <li key={job.id}>
                 <button
                   type="button"
@@ -209,13 +244,15 @@ export function MatchTab({ initialDatasetId, initialJobId }: { initialDatasetId?
                   }}
                 >
                   <span>
-                    {String(job.params.run_mode)} · mapping v{String(job.params.mapping_version)} <StateBadge state={job.state} />
+                    {job.params.run_mode === "full" ? "Full cleanup" : "Preview"} · column setup v{String(job.params.mapping_version)} <StateBadge state={job.state} />
                   </span>
                   <span className="muted small">{formatTime(job.created_at)}</span>
                 </button>
               </li>
-            ))}
-          </ul>
+                ))}
+              </ul>
+            </>
+          )}
         </aside>
       </div>
     </div>
@@ -230,12 +267,12 @@ function SummaryCounts({ dataset, results }: { dataset: Dataset | null; results:
   const d = results?.decisions ?? {};
   return (
     <div className="metrics vertical">
-      <Metric label="Input rows" value={results?.metrics.input_rows ?? dataset?.row_count} />
-      <Metric label="Candidate pairs" value={results?.metrics.candidate_pairs} />
-      <Metric label="Safe matches" value={results ? d.match ?? 0 : null} icon="✓" />
-      <Metric label="Needs review" value={results ? results.pending_review : null} icon="?" />
-      <Metric label="Kept separate" value={results ? d.non_match ?? 0 : null} icon="≠" />
-      {results?.run_mode === "full" && <Metric label="Canonical records" value={results.canonical_records} />}
+      <Metric label="Rows being cleaned" value={results?.metrics.input_rows ?? dataset?.row_count} />
+      <Metric label="Possible duplicate pairs" value={results?.metrics.candidate_pairs} />
+      <Metric label="Merged automatically" value={results ? d.match ?? 0 : null} icon="✓" />
+      <Metric label="Waiting for you" value={results ? results.pending_review : null} icon="?" />
+      <Metric label="Confirmed different" value={results ? d.non_match ?? 0 : null} icon="≠" />
+      {results?.run_mode === "full" && <Metric label="Clean records" value={results.canonical_records} />}
     </div>
   );
 }
@@ -263,13 +300,14 @@ function SourceStep({
   const shown = tab === "scrape" ? datasets.filter((d) => d.kind === "scrape") : datasets;
   return (
     <section>
-      <h2>Choose data</h2>
+      <h2>Choose a list</h2>
+      <p className="muted">Start with a recent collection, an existing dataset, or a spreadsheet/file from your computer.</p>
       <div className="segmented" role="tablist">
         {(
           [
-            ["scrape", "Recent scrape outputs"],
-            ["datasets", "Datasets"],
-            ["import", "Import file"],
+            ["scrape", "Recent collections"],
+            ["datasets", "Saved datasets"],
+            ["import", "Import a file"],
           ] as const
         ).map(([id, label]) => (
           <button key={id} type="button" role="tab" aria-selected={tab === id} onClick={() => setTab(id)}>
@@ -280,7 +318,11 @@ function SourceStep({
       {tab === "import" ? (
         <ImportForm onImported={onImported} />
       ) : shown.length === 0 ? (
-        <p className="muted">No data is ready to match yet. Import a file or complete a scrape first.</p>
+        <div className="match-empty-state">
+          <h3>No lists are ready yet</h3>
+          <p className="muted">Import a CSV, Excel, JSON, or another supported file. DataForge will show a sample and suggest what every column means.</p>
+          <button type="button" className="btn btn-primary" onClick={() => setTab("import")}>Import your first file</button>
+        </div>
       ) : (
         <div className="card-grid">
           {shown.map((d) => (
@@ -296,35 +338,33 @@ function SourceStep({
       )}
       {selected && (
         <fieldset className="scope">
-          <legend>Comparison scope</legend>
+          <legend>What do you want to do?</legend>
           <label className="toggle block">
-            <input type="radio" name="scope" checked={!compareId} onChange={() => onCompare(null)} /> Within this dataset
+            <input type="radio" name="scope" checked={!compareId} onChange={() => onCompare(null)} /> Remove duplicates inside this list
           </label>
           <label className="toggle block">
-            <input type="radio" name="scope" checked={!!compareId} disabled={datasets.length < 2} onChange={() => onCompare(datasets.find((d) => d.id !== selected)?.id ?? null)} /> Compare with another dataset
+            <input type="radio" name="scope" checked={!!compareId} disabled={datasets.length < 2} onChange={() => onCompare(datasets.find((d) => d.id !== selected)?.id ?? null)} /> Compare and combine two lists
           </label>
           {compareId && (
             <div className="split tight-2">
               <label className="field">
-                <span>Other dataset</span>
-                <select value={compareId} onChange={(e) => onCompare(e.target.value)}>
-                  {datasets.filter((d) => d.id !== selected).map((d) => (
-                    <option key={d.id} value={d.id}>
-                      {d.name} ({formatCount(d.row_count)} rows)
-                    </option>
-                  ))}
-                </select>
+                <span>Second list</span>
+                <CustomSelect value={compareId} onChange={onCompare} options={datasets.filter((dataset) => dataset.id !== selected).map((dataset) => ({
+                  value: dataset.id,
+                  label: dataset.name,
+                  description: `${formatCount(dataset.row_count)} rows`,
+                }))} />
               </label>
               <label className="field">
-                <span>Most trusted source</span>
-                <select value={trustCompareFirst ? "compare" : "primary"} onChange={(e) => onTrustCompareFirst(e.target.value === "compare")}>
-                  <option value="primary">{datasets.find((d) => d.id === selected)?.name}</option>
-                  <option value="compare">{datasets.find((d) => d.id === compareId)?.name}</option>
-                </select>
+                <span>Which list should win conflicts?</span>
+                <CustomSelect value={trustCompareFirst ? "compare" : "primary"} onChange={(value) => onTrustCompareFirst(value === "compare")} options={[
+                  { value: "primary", label: datasets.find((dataset) => dataset.id === selected)?.name ?? "Primary dataset" },
+                  { value: "compare", label: datasets.find((dataset) => dataset.id === compareId)?.name ?? "Other dataset" },
+                ]} />
               </label>
             </div>
           )}
-          <p className="muted small">The trusted source supplies the surviving record and wins field conflicts; other sources only fill empty fields.</p>
+          <p className="muted small">When both lists contain different values, DataForge keeps the value from your trusted list and uses the other list only to fill blanks.</p>
         </fieldset>
       )}
     </section>
@@ -354,32 +394,32 @@ function PreviewStep({
   const guardReasons = Object.entries((results?.metrics.guard_reasons ?? {}) as Record<string, number>).sort((a, b) => b[1] - a[1]);
   return (
     <section className="stack">
-      <h2>Preview matching</h2>
+      <h2>Check likely duplicates</h2>
       <fieldset disabled={running} className="settings">
-        <label className="field inline">
-          <span>Strictness</span>
-          <select value={settings.strictness} onChange={(e) => setSettings({ ...settings, strictness: e.target.value as Settings["strictness"] })}>
-            <option value="conservative">Conservative (auto-match ≥ 0.95)</option>
-            <option value="balanced">Balanced (auto-match ≥ 0.90)</option>
-          </select>
-        </label>
-        <label className="field inline">
-          <span>Preview size</span>
-          <input type="number" min={100} value={settings.preview_size} onChange={(e) => setSettings({ ...settings, preview_size: Number(e.target.value) })} />
-        </label>
-        <details>
-          <summary>Advanced settings</summary>
+        <details className="advanced-section">
+          <summary>Change matching settings</summary>
           <label className="field inline">
-            <span>Max block size</span>
+            <span>Automatic match safety</span>
+            <CustomSelect value={settings.strictness} onChange={(value) => setSettings({ ...settings, strictness: value as Settings["strictness"] })} options={[
+              { value: "conservative", label: "Safer", description: "Send uncertain pairs for review" },
+              { value: "balanced", label: "Flexible", description: "Accept more pairs automatically" },
+            ]} />
+          </label>
+          <label className="field inline">
+            <span>Rows to preview</span>
+            <input type="number" min={100} value={settings.preview_size} onChange={(e) => setSettings({ ...settings, preview_size: Number(e.target.value) })} />
+          </label>
+          <label className="field inline">
+            <span>Maximum candidate group size</span>
             <input type="number" min={2} max={5000} value={settings.max_block_size} onChange={(e) => setSettings({ ...settings, max_block_size: Number(e.target.value) })} />
           </label>
-          <p className="muted small">Candidate groups larger than this are not compared (they would require too many comparisons) and are reported so you can add a stronger field.</p>
+          <p className="muted small">Large candidate groups are skipped and reported when comparing every possible pair would be unsafe or slow.</p>
         </details>
       </fieldset>
       {(!preview || stale || preview.state !== "completed") && (
         <div className="row-actions">
           <button type="button" className="btn btn-primary" disabled={running} onClick={onPreview}>
-            {stale ? "Run preview again" : "Run preview"}
+            {stale ? "Check again" : "Check a sample"}
           </button>
           <span className="muted small">Analyzes the first {formatCount(Math.min(settings.preview_size, rowCount))} rows. Nothing is changed.</span>
         </div>
@@ -643,12 +683,13 @@ function ReviewQueue({ jobId, onChanged, onDone, onBadMapping }: { jobId: string
             <div className="split tight-3">
               <label className="field">
                 <span>Field</span>
-                <select value={flagColumn} onChange={(e) => setFlagColumn(e.target.value)}>
-                  <option value="">Choose a field…</option>
-                  {columns.map((c) => (
-                    <option key={c}>{c}</option>
-                  ))}
-                </select>
+                <CustomSelect
+                  ariaLabel="Field"
+                  value={flagColumn}
+                  onChange={setFlagColumn}
+                  placeholder="Choose a field…"
+                  options={[{ value: "", label: "Choose a field…" }, ...columns.map((column) => ({ value: column, label: column }))]}
+                />
               </label>
               <label className="field">
                 <span>What is wrong</span>
@@ -822,19 +863,14 @@ function GroupsPanel({ jobId, onChanged }: { jobId: string; onChanged: () => voi
                 {Object.entries(group.conflicts).map(([column, rowIds]) => (
                   <label key={column} className="field inline small">
                     <span>{column}</span>
-                    <select
+                    <CustomSelect
                       value={group.field_provenance[column]?.row_id ?? ""}
-                      onChange={(e) => void run("match.set_canonical_value", { cluster_id: group.cluster_id, column, row_id: e.target.value }, `Canonical ${column} updated.`)}
-                    >
-                      {rowIds.map((rowId) => {
+                      onChange={(rowId) => void run("match.set_canonical_value", { cluster_id: group.cluster_id, column, row_id: rowId }, `Canonical ${column} updated.`)}
+                      options={rowIds.map((rowId) => {
                         const member = group.members.find((m) => m.id === rowId);
-                        return (
-                          <option key={rowId} value={rowId}>
-                            {displayValue(member?.raw[column], sensitive.has(column), revealed)} (row {member?.row_number})
-                          </option>
-                        );
+                        return { value: rowId, label: displayValue(member?.raw[column], sensitive.has(column), revealed), description: `Row ${member?.row_number}` };
                       })}
-                    </select>
+                    />
                     {group.field_provenance[column]?.rule === "reviewer_choice" && <span className="tag">chosen</span>}
                   </label>
                 ))}

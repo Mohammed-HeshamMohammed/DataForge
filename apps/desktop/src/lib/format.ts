@@ -70,9 +70,21 @@ export const MATCH_ROLES = [
   "email",
   "address",
   "mailing_address",
+  "building_name",
+  "house_number",
+  "street",
+  "unit",
+  "po_box",
+  "neighborhood",
+  "district",
   "city",
+  "county",
   "region",
+  "country",
+  "country_code",
   "postal_code",
+  "latitude",
+  "longitude",
   "url",
 ] as const;
 
@@ -89,9 +101,9 @@ export function mappingProblems(mapping: Record<string, string>): string[] {
   const problems = [...seen.entries()]
     .filter(([, columns]) => columns.length > 1)
     .map(([role, columns]) => `"${role}" is used by ${columns.join(", ")}; choose one column or a more specific role.`);
-  const evidence = ["identifier", "phone", "email", "address", "mailing_address", "url"];
+  const evidence = ["identifier", "phone", "email", "address", "mailing_address", "house_number", "street", "postal_code", "url"];
   if (!Object.values(mapping).some((role) => evidence.includes(role))) {
-    problems.push("Map at least one identifier, phone, email, address, or URL column; names alone cannot match safely.");
+    problems.push("Map at least one identifier, contact, full address, street/house component, postal code, or URL; names alone cannot match safely.");
   }
   return problems;
 }

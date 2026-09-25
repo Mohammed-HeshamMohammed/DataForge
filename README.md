@@ -1,8 +1,8 @@
 # DataForge
 
-DataForge is a proposed local-first desktop platform for collecting permitted website data, turning it into structured datasets, matching and deduplicating records, reviewing uncertain decisions, and exporting traceable results.
+DataForge is a local-first Windows desktop application for collecting permitted website data, turning it into structured datasets, matching and deduplicating records, reviewing uncertain decisions, and exporting clean results.
 
-This repository contains the DataForge architecture and implementation specification pack plus the first executable foundation. The current implementation is intentionally small: it establishes versioned contracts, SQLite project/job persistence, and independently checkable desktop and worker boundaries.
+The application is functionally mature. Current work is focused on production packaging, first-run onboarding, plain-language workflows, recovery, accessibility, and clean-machine end-to-end testing for non-technical users. The active scope and release gates are in [DATAFORGE_MASTER_PLAN.md](DATAFORGE_MASTER_PLAN.md).
 
 ## What DataForge Will Do
 
@@ -68,6 +68,10 @@ Child WebView      Polars + RapidFuzz
 
 - **Desktop stack:** React/TypeScript in Tauri, with a Rust host and isolated Python workers.
 - **Rendered pages:** DataForge’s embedded child WebView is the only rendered-page surface. Selenium is not treated as an in-WebView runtime.
+- **One collection entry point:** Scrape Studio can launch every supported method, while XML/SOAP, APIs, sitemaps, feeds, crawls, repositories, documents, archives, bulk corpora, and local files open in their purpose-built workflow with the method already selected.
+- **Sign-in:** A user may sign in manually inside the visible, temporary Studio session. DataForge does not read, store, or submit page credentials and does not automate login forms.
+- **Authorized networking and API auth:** Collection workers support one fixed organization proxy plus OS-protected bearer, API-key, query-parameter, Basic, and OAuth 2 client credentials. OAuth access tokens remain memory-only.
+- **Internal compatibility:** Reviewed Studio selectors can be copied as plain Playwright or Selenium scripts for loopback, private-network, and internal-test hosts without bundling another browser engine.
 - **Scraping boundaries:** Use authorized APIs first, HTTP/HTML where permitted, and WebView rendering only when needed. Never bypass CAPTCHA, login, paywalls, access denials, rate limits, robots restrictions, or anti-bot controls.
 - **Data integrity:** Preserve immutable raw imports/scrapes. Matching creates derived canonical records and audit artifacts rather than overwriting sources.
 - **Matching safety:** Auto-merge only with strong evidence and no contradiction. Uncertain candidates require review.
@@ -75,23 +79,23 @@ Child WebView      Polars + RapidFuzz
 
 ## Planned Build Order
 
-1. Establish the desktop shell, local project storage, SQLite migrations, typed contracts, and durable job service.
-2. Build generic scraping presets, Scrape Studio, embedded WebView bridge, and staged dataset output.
-3. Build deterministic matching/deduplication, review queue, canonicalization, and audit exports.
-4. Add curated website presets, health checks, custom preset editor, and secure GitHub release updates.
-5. Add optional ML ranking and remote/shared deployment capabilities only after local workflows are measured and stable.
+1. Produce a repeatable packaged build and test it on clean Windows machines.
+2. Automate the complete packaged workflow: create, import or collect, map, match, review, export, restart, and update failure.
+3. Add first-run onboarding, sample data, plain-language defaults, and actionable recovery guidance.
+4. Complete accessibility, backup/restore, diagnostics, performance, and non-technical usability gates.
+5. Sign the installer and updater artifacts, then publish only after every release gate passes.
 
 ## Repository Status
 
-**All implementation-plan phases are built, and a Windows installer builds locally.**
+**The core application is implemented and its automated suites pass, but it is not yet production-ready.**
 
-- **Workflow:** create a project, then import CSV/XLSX/JSON, run a policy-gated HTTP/API scrape, or collect from rendered pages in Scrape Studio. Confirm a mapping, preview and run matching, review and group decisions, and export traceable results.
+- **Workflow:** create a project, then import CSV, JSON/JSONL, XLSX, XML, Parquet, DOCX, ZIP, or GZIP; run a policy-gated HTTP, XML/SOAP, JSON, or GraphQL collection; or collect dynamic pages in Scrape Studio. Confirm a mapping, preview and run matching, review and group decisions, and export traceable results.
 - **Preset operations:** health checks, signed packages, and rollback.
 - **Credentials:** the OS credential store holds API secrets.
 - **Review ranking:** ordering only.
 - **Updates:** signature-verified, installed only with your approval.
 
-The per-phase status and remaining release hardening are in [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md#implementation-status).
+The active product roadmap and production exit criteria are in [DATAFORGE_MASTER_PLAN.md](DATAFORGE_MASTER_PLAN.md). The older phase-by-phase implementation record remains in [IMPLEMENTATION_PLAN.md](IMPLEMENTATION_PLAN.md#implementation-status).
 
 ## Quick Start
 
@@ -101,7 +105,7 @@ npm run setup:desktop
 npm run dev:tauri
 ```
 
-Build the installer with `.\scripts\build-release.ps1`; installed users do not need Python. Development requires Python 3.11+, Node 20+, Rust/Cargo, and WebView2 on Windows. See [docs/development.md](docs/development.md).
+Build the installer with `.\scripts\build-release.ps1`; installed users will not need Python. On the current development machine, antivirus removes newly generated PyInstaller executables, so production packaging must be completed in an excluded build folder or a clean CI runner. Development requires Python 3.11+, Node 20+, Rust/Cargo, and WebView2 on Windows. See [docs/development.md](docs/development.md).
 
 ## Safety and Privacy
 

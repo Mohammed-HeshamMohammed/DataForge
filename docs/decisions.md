@@ -167,3 +167,24 @@ DataForge is a graduation project used in a research paper, so GPL, AGPL, LGPL, 
   At 1366×768 no tab needs a page scroll.
 - **View options:** sidebars can be hidden (Ctrl+B, Ctrl+J), compact density, native WebView zoom (Studio bounds are scaled to match), and full screen. These need the `set-fullscreen`, `is-fullscreen`, `set-webview-zoom`, and scoped `open-path` capabilities.
 
+## D28. Extend the existing engines instead of adding duplicate browser stacks
+
+DataForge keeps three execution paths: policy-controlled HTTP/httpx, Scrapy for large crawls, and the native embedded WebView for rendered pages. Missing capabilities are added to those paths rather than bundling Selenium, Playwright, Crawlee, or another browser runtime.
+
+- **Structured protocols:** XML/SOAP is a selector-free extraction mode; GraphQL reuses the API POST/JSON runtime and permits read-only queries only.
+- **One Studio entry point:** Scrape Studio's collection-method selector routes websites, APIs, XML/SOAP, sitemaps, feeds, crawls, repositories, documents, archives, bulk corpora, and local-file imports to their purpose-built workflow with the method already selected.
+- **Rendered pages:** the native WebView can query the top document, open Shadow DOM, and same-origin frames; it supports bounded infinite scroll, load-more buttons, detail links, same-origin JSON capture, and scoped downloads.
+- **Interactive authentication:** a user may sign in manually in the visible, incognito Studio WebView. The bridge never reads form values, cookies, storage, request headers, or hidden inputs; collection stays blocked while a password field or challenge is visible. DataForge never fills, stores, or submits credentials for a page.
+- **Downloaded data:** CSV, JSON/JSONL, XLSX, XML, Parquet, DOCX, ZIP, and GZIP enter through the normal immutable dataset importer. Archives must contain one supported file and obey compressed-size, expanded-size, ratio, and row limits.
+- **Safety boundary:** cross-origin frames, request headers, cookies, storage, form values, login automation, CAPTCHA solving, proxy rotation, fingerprint evasion, and out-of-scope downloads remain unavailable.
+
+**Revisit when:** a verified source requires a browser capability WebView2 cannot provide, and adding another runtime has a measurable production benefit greater than its installer size and maintenance cost.
+
+## D29. Authorized network and authentication interoperability
+
+- **Organization proxy:** collection workers can use one project-configured HTTP(S) proxy URL. The URL cannot contain credentials, and the route is never rotated or changed after a block. Scrape Studio continues to follow the operating system WebView proxy configuration.
+- **API authentication:** bearer tokens, named API-key headers, query parameters, HTTP Basic, and OAuth 2 client credentials use named secrets in the OS credential store. OAuth access tokens exist only in worker memory, the token endpoint must be HTTPS and in the preset host allow-list, and neither credentials nor tokens enter job parameters, logs, artifacts, or project files.
+- **Interactive authentication and MFA:** a user may complete sign-in and MFA personally in the visible incognito Studio WebView. The temporary session expires after 30 minutes and has an explicit end-session action that destroys the WebView and its cookies/storage.
+- **Challenge fallback:** CAPTCHA or bot-challenge detection still stops collection and links the user to the official-API workflow.
+- **Browser-tool compatibility:** for localhost, RFC 1918, and `.local`, `.internal`, or `.test` hosts, Studio can copy plain Playwright and Selenium extraction scripts from reviewed selectors. These scripts contain no credential handling, challenge solving, stealth, fingerprint modification, or proxy rotation. DataForge does not bundle or launch a second browser runtime.
+

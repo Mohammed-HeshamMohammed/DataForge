@@ -29,6 +29,7 @@ def test_normalization_preserves_meaningful_characters():
     assert email("not-an-email") is None
     assert phone("(512) 555-0182") == "+15125550182"
     assert phone("555-0182", default_region=None) == "5550182"
+    assert phone("020 7946 0018", default_region="GB") == "+442079460018"
     assert address("123 North Main Street Apt 4")["house_number"] == "123"
     assert address("123 North Main Street Apt 4")["street"] == "n main st"
     assert address("123 North Main Street Apt 4")["unit"] == "4"
@@ -45,6 +46,25 @@ def test_exact_phone_and_address_auto_match():
     ))
     assert decision_for(result, "r2", "r3")["decision"] == "match"
     assert result["metrics"]["multi_member_clusters"] == 1
+
+
+def test_split_international_address_components_form_matching_evidence():
+    mapping = {
+        "Owner": "name", "House": "house_number", "Street": "street", "Unit": "unit", "District": "district",
+        "City": "city", "County": "county", "Governorate": "region", "Country": "country", "Postal": "postal_code",
+        "Phone": "phone",
+    }
+    result = engine.run(request(
+        [
+            {"Owner": "Nadia Ali", "House": "12", "Street": "Tahrir Street", "Unit": "4", "District": "Dokki", "City": "Giza", "County": "Giza", "Governorate": "Giza", "Country": "Egypt", "Postal": "12611", "Phone": "+20 10 1234 5678"},
+            {"Owner": "Nadia Ali", "House": "12", "Street": "Tahrir St", "Unit": "4", "District": "Dokki", "City": "Giza", "County": "Giza", "Governorate": "Giza", "Country": "Egypt", "Postal": "12611", "Phone": "+201012345678"},
+        ],
+        mapping,
+        default_region="EG",
+    ))
+    decision = decision_for(result, "r2", "r3")
+    assert decision["decision"] == "match"
+    assert {item["field"] for item in decision["evidence"]} >= {"address", "region", "phone"}
 
 
 def test_name_and_region_similarity_alone_never_auto_merges():

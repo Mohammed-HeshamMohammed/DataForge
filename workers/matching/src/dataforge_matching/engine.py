@@ -36,7 +36,7 @@ def validate_request(request: dict) -> dict:
     if request.get("schema_version") != SCHEMA_VERSION:
         raise MatchRequestError(f"Unsupported match request schema_version {request.get('schema_version')!r}")
     mappings = request.get("mappings") or {"default": request.get("mapping") or {}}
-    evidence_roles = {"identifier", "phone", "email", "address", "mailing_address", "url"}
+    evidence_roles = {"identifier", "phone", "email", "address", "mailing_address", "house_number", "street", "postal_code", "url"}
     for name, mapping in mappings.items():
         unknown = sorted({role for role in mapping.values() if role not in ALL_ROLES})
         if unknown:
@@ -66,7 +66,7 @@ def _block_keys(n: dict) -> Iterable[str]:
             yield f"phone:{value}"
     for value in n["email"]:
         yield f"email:{value}"
-    locality = (n.get("postal_code") or "")[:3] or n.get("city", "")
+    locality = (n.get("postal_code") or "")[:3] or n.get("city", "") or n.get("county", "") or n.get("region", "")
     for role, prefix in (("address", "addr"), ("mailing_address", "maddr")):
         parsed = n.get(role)
         if parsed and parsed["house_number"] and parsed["street"]:
@@ -158,12 +158,16 @@ def compare(left: dict, right: dict) -> tuple[list[dict], float, int]:
         result = "exact" if similarity == 1.0 else "similar" if similarity >= 0.8 else "different"
         add("name", similarity, result, "supporting", f"Name similarity {similarity:.2f}")
 
-    if left.get("postal_code") and right.get("postal_code"):
-        same = left["postal_code"] == right["postal_code"]
-        add("region", float(same), "exact" if same else "different", "supporting", "Postal code agrees" if same else "Postal code differs")
-    elif left.get("city") and right.get("city"):
-        same = left["city"] == right["city"]
-        add("region", float(same), "exact" if same else "different", "supporting", "City agrees" if same else "City differs")
+    locality_comparisons = []
+    for field, label in (("postal_code", "Postal code"), ("city", "City"), ("county", "County"), ("region", "State or region"), ("country_code", "Country code"), ("country", "Country")):
+        if left.get(field) and right.get(field):
+            locality_comparisons.append((label, left[field] == right[field]))
+    if locality_comparisons:
+        similarity = sum(float(same) for _, same in locality_comparisons) / len(locality_comparisons)
+        agreeing = [label for label, same in locality_comparisons if same]
+        differing = [label for label, same in locality_comparisons if not same]
+        explanation = f"Location agrees on {', '.join(agreeing)}" if not differing else f"Location differs on {', '.join(differing)}"
+        add("region", similarity, "exact" if similarity == 1.0 else "different", "supporting", explanation)
 
     if left.get("url") and right.get("url"):
         same = left["url"] == right["url"]
