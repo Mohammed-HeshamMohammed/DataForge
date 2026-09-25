@@ -13,6 +13,7 @@ import { AboutDialog, ShortcutsDialog } from "../components/CommandPalette.tsx";
 import { Sidebar, type ProjectSummary } from "../components/Sidebar.tsx";
 import { PaneHeader } from "../components/PaneHeader.tsx";
 import { RightSidebar } from "../components/RightSidebar.tsx";
+import { StatusBar } from "../components/StatusBar.tsx";
 import { Dashboard } from "../features/dashboard/Dashboard.tsx";
 import { Datasets } from "../features/datasets/Datasets.tsx";
 import { MatchTab } from "../features/matching/MatchTab.tsx";
@@ -374,6 +375,7 @@ function Workspace({
 
   const shellClass = ["shell", layout.left ? "" : "minimize-left", layout.right ? "" : "minimize-right"].filter(Boolean).join(" ");
   return (
+    <>
     <div className={shellClass}>
       <Sidebar project={project} summary={summary.data} navigate={navigate} minimized={!layout.left} onToggle={onToggleLeft} />
       <main className="main-pane" aria-labelledby="pane-title">
@@ -406,5 +408,7 @@ function Workspace({
       </main>
       <RightSidebar navigate={navigate} onChanged={() => void summary.reload()} minimized={!layout.right} onToggle={onToggleRight} />
     </div>
+    <StatusBar project={project} summary={summary.data} navigate={navigate} version={APP_VERSION} />
+    </>
   );
 }

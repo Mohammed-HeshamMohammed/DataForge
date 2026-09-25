@@ -946,3 +946,136 @@ kbd {
     display: none;
   }
 }
+
+/* Sidebars are contained panels like the main pane, floating with gaps to each other and the window edges. */
+.shell {
+  padding: var(--spacing-sm) var(--spacing-lg) var(--spacing-lg);
+  gap: var(--spacing-lg);
+}
+
+.sidebar {
+  padding: var(--spacing-md);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-xl);
+  background: var(--color-surface-raised);
+}
+
+.sidebar .list-item,
+.sidebar .job-card,
+.sidebar .profile-card,
+.sidebar .info-box {
+  background: var(--color-surface-sunken);
+}
+
+.sidebar .list-item:hover {
+  background: var(--color-surface-hover);
+}
+
+.sidebar.minimized {
+  padding: var(--spacing-sm) 0.35rem;
+}
+
+/* IDE-style status bar */
+.statusbar {
+  flex: none;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-md);
+  padding: 0 var(--spacing-sm);
+  border-top: 1px solid var(--color-border-subtle);
+  background: var(--color-surface-raised);
+  color: var(--color-text-muted);
+  font-size: 0.75rem;
+  user-select: none;
+}
+
+.statusbar-group {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.statusbar-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 20px;
+  padding: 0 var(--spacing-sm);
+  border-radius: var(--radius-sm);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.statusbar-project {
+  max-width: 16rem;
+  color: var(--color-text);
+  font-weight: 600;
+}
+
+.statusbar-button {
+  font: inherit;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.statusbar-button:hover {
+  background: var(--color-surface-hover);
+  color: var(--color-text);
+}
+
+.statusbar-button:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -2px;
+}
+
+.statusbar-warn {
+  color: var(--color-status-warning);
+}
+
+.statusbar-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--color-text-faint);
+}
+
+.statusbar-dot-ok {
+  background: var(--color-status-success);
+}
+
+.statusbar-dot-down {
+  background: var(--color-status-critical);
+}
+
+.statusbar-spinner {
+  width: 10px;
+  height: 10px;
+  border: 2px solid var(--color-border-strong);
+  border-top-color: var(--color-accent);
+  border-radius: 50%;
+  animation: statusbar-spin 0.9s linear infinite;
+}
+
+@keyframes statusbar-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .statusbar-spinner {
+    animation: none;
+  }
+}
+
+@media (max-width: 899px) {
+  .statusbar-group:last-child .statusbar-item:nth-child(2) {
+    display: none;
+  }
+}
