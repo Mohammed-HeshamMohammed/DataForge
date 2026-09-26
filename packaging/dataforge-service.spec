@@ -24,6 +24,10 @@ for package in (
     binaries += package_binaries
     hiddenimports += package_hidden
 
+# dataforge_scraping is analysed from source (pathex), not installed, so collect_all above cannot find its data
+# files on a clean machine such as CI; ship them explicitly (schema.org mappings for structured-data detection).
+datas += [(str(root / "workers" / "scraping" / "src" / "dataforge_scraping" / "data"), "dataforge_scraping/data")]
+
 # Scrapy and Twisted import components by dotted path; their test suites are left out.
 for package in ("scrapy", "twisted"):
     hiddenimports += collect_submodules(package, filter=lambda name: ".test" not in name and "iocpreactor" not in name and ".conch" not in name)
