@@ -91,6 +91,11 @@ def collect_with_scrapy(
 
     creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
     env = {**os.environ, "PYTHONIOENCODING": "utf-8", "SCRAPY_SETTINGS_MODULE": ""}
+    if not getattr(sys, "frozen", False):
+        # The child imports `dataforge_scraping` by module name; a source checkout that is not pip-installed
+        # only has it on the parent's sys.path, which a subprocess does not inherit.
+        package_root = str(Path(__file__).resolve().parents[2])
+        env["PYTHONPATH"] = os.pathsep.join(part for part in (package_root, os.environ.get("PYTHONPATH")) if part)
     if proxy_url:
         env.update({"HTTP_PROXY": proxy_url, "HTTPS_PROXY": proxy_url, "http_proxy": proxy_url, "https_proxy": proxy_url})
     process = subprocess.Popen(engine_command(job_path), stdout=subprocess.PIPE, stderr=subprocess.PIPE, stdin=subprocess.DEVNULL,
