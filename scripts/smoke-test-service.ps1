@@ -20,7 +20,13 @@ $script:id = 0
 function Invoke-Service([string]$command, [hashtable]$payload = @{}) {
   $script:id++
   $process.StandardInput.WriteLine((@{ id = $script:id; schema_version = 1; command = $command; payload = $payload } | ConvertTo-Json -Compress -Depth 10))
-  $response = $process.StandardOutput.ReadLine() | ConvertFrom-Json
+  $line = $process.StandardOutput.ReadLine()
+  if ($null -eq $line) {
+    # The service exited without answering; its stderr says why.
+    $null = $process.WaitForExit(5000)
+    throw "$command got no response; the service exited (code $($process.ExitCode)). stderr:`n$($process.StandardError.ReadToEnd())"
+  }
+  $response = $line | ConvertFrom-Json
   if (-not $response.ok) { throw "$command failed: $($response.error.message)" }
   return $response.result
 }
