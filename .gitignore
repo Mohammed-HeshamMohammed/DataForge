@@ -22,7 +22,7 @@ build/
 
 
 # Real source data (contains personal information) - never commit
-Data/
+/Data/
 
 # Local tool and editor settings
 .claude/

@@ -1,0 +1,251 @@
+{
+  "schema_version": 1,
+  "notes": "schema.org type -> DataForge record fields. Paths use dots; lists take their first element. Field names match the matching roles proposed on import.",
+  "types": {
+    "LocalBusiness": {
+      "entity": "business",
+      "includes_subtypes": [
+        "Restaurant",
+        "Store",
+        "ProfessionalService",
+        "RealEstateAgent",
+        "AutomotiveBusiness",
+        "HealthAndBeautyBusiness",
+        "HomeAndConstructionBusiness",
+        "LodgingBusiness",
+        "FoodEstablishment",
+        "Dentist",
+        "MedicalBusiness",
+        "LegalService",
+        "FinancialService",
+        "Hotel",
+        "BarOrPub",
+        "CafeOrCoffeeShop",
+        "AutoDealer",
+        "AutoRepair",
+        "Plumber",
+        "Electrician",
+        "HVACBusiness",
+        "RoofingContractor",
+        "GeneralContractor",
+        "Attorney",
+        "AccountingService",
+        "InsuranceAgency",
+        "BankOrCreditUnion",
+        "Pharmacy",
+        "Physician",
+        "VeterinaryCare",
+        "ChildCare",
+        "GroceryStore",
+        "ClothingStore",
+        "HardwareStore",
+        "HomeGoodsStore",
+        "FurnitureStore",
+        "ElectronicsStore",
+        "BookStore",
+        "ShoppingCenter",
+        "SportsActivityLocation",
+        "ExerciseGym",
+        "TravelAgency",
+        "EmploymentAgency",
+        "MovingCompany",
+        "SelfStorage",
+        "LodgingBusiness"
+      ],
+      "fields": {
+        "name": "name",
+        "phone": "telephone",
+        "email": "email",
+        "url": "url",
+        "address": "address.streetAddress",
+        "city": "address.addressLocality",
+        "state": "address.addressRegion",
+        "postal_code": "address.postalCode",
+        "country": "address.addressCountry",
+        "latitude": "geo.latitude",
+        "longitude": "geo.longitude",
+        "rating": "aggregateRating.ratingValue",
+        "review_count": "aggregateRating.reviewCount",
+        "price_range": "priceRange",
+        "identifier": "@id"
+      }
+    },
+    "Organization": {
+      "entity": "business",
+      "includes_subtypes": [
+        "Corporation",
+        "NGO",
+        "EducationalOrganization",
+        "GovernmentOrganization",
+        "NewsMediaOrganization"
+      ],
+      "fields": {
+        "name": "name",
+        "phone": "telephone",
+        "email": "email",
+        "url": "url",
+        "logo": "logo",
+        "address": "address.streetAddress",
+        "city": "address.addressLocality",
+        "state": "address.addressRegion",
+        "postal_code": "address.postalCode",
+        "country": "address.addressCountry",
+        "identifier": "@id"
+      }
+    },
+    "Product": {
+      "entity": "product",
+      "includes_subtypes": [
+        "IndividualProduct",
+        "ProductModel",
+        "Vehicle",
+        "Car",
+        "ProductGroup",
+        "SomeProducts"
+      ],
+      "fields": {
+        "name": "name",
+        "sku": "sku",
+        "gtin": "gtin13",
+        "mpn": "mpn",
+        "brand": "brand.name",
+        "url": "url",
+        "image": "image",
+        "description": "description",
+        "price": "offers.price",
+        "price_currency": "offers.priceCurrency",
+        "low_price": "offers.lowPrice",
+        "availability": "offers.availability",
+        "rating": "aggregateRating.ratingValue",
+        "review_count": "aggregateRating.reviewCount",
+        "identifier": "@id"
+      }
+    },
+    "JobPosting": {
+      "entity": "job",
+      "fields": {
+        "title": "title",
+        "name": "hiringOrganization.name",
+        "url": "url",
+        "date_posted": "datePosted",
+        "valid_through": "validThrough",
+        "employment_type": "employmentType",
+        "city": "jobLocation.address.addressLocality",
+        "state": "jobLocation.address.addressRegion",
+        "postal_code": "jobLocation.address.postalCode",
+        "country": "jobLocation.address.addressCountry",
+        "salary_min": "baseSalary.value.minValue",
+        "salary_max": "baseSalary.value.maxValue",
+        "salary_currency": "baseSalary.currency",
+        "identifier": "identifier.value"
+      }
+    },
+    "RealEstateListing": {
+      "entity": "property",
+      "includes_subtypes": [
+        "Residence",
+        "SingleFamilyResidence",
+        "Apartment",
+        "House",
+        "Accommodation"
+      ],
+      "fields": {
+        "name": "name",
+        "url": "url",
+        "address": "address.streetAddress",
+        "city": "address.addressLocality",
+        "state": "address.addressRegion",
+        "postal_code": "address.postalCode",
+        "price": "offers.price",
+        "price_currency": "offers.priceCurrency",
+        "date_posted": "datePosted",
+        "rooms": "numberOfRooms",
+        "floor_size": "floorSize.value",
+        "latitude": "geo.latitude",
+        "longitude": "geo.longitude",
+        "identifier": "@id"
+      }
+    },
+    "Article": {
+      "entity": "article",
+      "includes_subtypes": [
+        "NewsArticle",
+        "BlogPosting",
+        "LiveBlogPosting",
+        "Report",
+        "ScholarlyArticle",
+        "TechArticle",
+        "OpinionNewsArticle",
+        "AnalysisNewsArticle",
+        "ReportageNewsArticle",
+        "ReviewNewsArticle",
+        "BackgroundNewsArticle",
+        "SocialMediaPosting",
+        "DiscussionForumPosting",
+        "MedicalScholarlyArticle",
+        "SatiricalArticle"
+      ],
+      "fields": {
+        "title": "headline",
+        "name": "name",
+        "author": "author.name",
+        "publisher": "publisher.name",
+        "date_published": "datePublished",
+        "date_modified": "dateModified",
+        "url": "url",
+        "image": "image",
+        "description": "description",
+        "identifier": "@id"
+      }
+    },
+    "Event": {
+      "entity": "event",
+      "includes_subtypes": [
+        "MusicEvent",
+        "SportsEvent",
+        "BusinessEvent",
+        "EducationEvent"
+      ],
+      "fields": {
+        "name": "name",
+        "start_date": "startDate",
+        "end_date": "endDate",
+        "url": "url",
+        "venue": "location.name",
+        "address": "location.address.streetAddress",
+        "city": "location.address.addressLocality",
+        "state": "location.address.addressRegion",
+        "postal_code": "location.address.postalCode",
+        "price": "offers.price",
+        "organizer": "organizer.name",
+        "identifier": "@id"
+      }
+    },
+    "Person": {
+      "entity": "person",
+      "fields": {
+        "name": "name",
+        "first_name": "givenName",
+        "last_name": "familyName",
+        "job_title": "jobTitle",
+        "email": "email",
+        "phone": "telephone",
+        "url": "url",
+        "organization": "worksFor.name",
+        "identifier": "@id"
+      }
+    },
+    "Book": {
+      "entity": "product",
+      "fields": {
+        "name": "name",
+        "author": "author.name",
+        "isbn": "isbn",
+        "url": "url",
+        "price": "offers.price",
+        "price_currency": "offers.priceCurrency",
+        "identifier": "@id"
+      }
+    }
+  }
+}
