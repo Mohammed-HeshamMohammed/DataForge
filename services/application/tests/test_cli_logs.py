@@ -42,3 +42,30 @@ def test_logs_are_redacted_and_written_to_a_rotating_file(tmp_path: Path, monkey
         handler.close()
         logs._file_logger.removeHandler(handler)
     monkeypatch.setattr(logs, "_file_logger", None)
+
+
+def test_stdio_service_speaks_utf8_even_when_the_pipe_defaults_to_cp1252(tmp_path: Path) -> None:
+    """Regression: the packaged service crashed on Windows because redirected pipes use the ANSI code page."""
+    import os
+    import subprocess
+    import sys
+
+    root = Path(__file__).resolve().parents[3]
+    sources = os.pathsep.join(str(root / rel / "src") for rel in ("services/application", "workers/matching", "workers/scraping"))
+    env = {**os.environ, "PYTHONPATH": sources, "DATAFORGE_APP_DATA": str(tmp_path / "appdata"), "PYTHONIOENCODING": "cp1252", "PYTHONUTF8": "0"}
+    requests = [
+        {"id": 1, "schema_version": 1, "command": "project.create", "payload": {"path": str(tmp_path / "project"), "name": "Encoding"}},
+        {"id": 2, "schema_version": 1, "command": "preset.list", "payload": {}},
+    ]
+    result = subprocess.run(
+        [sys.executable, "-c", "from dataforge_application.server import main; main()"],  # what packaging/service_entry.py does
+        input="".join(json.dumps(request) + "\n" for request in requests).encode("utf-8"),
+        capture_output=True, env=env, timeout=120, check=False,
+    )
+    lines = result.stdout.decode("utf-8").splitlines()
+    assert lines, result.stderr.decode("utf-8", "replace")[-1500:]
+    assert len(lines) == 2, result.stderr.decode("utf-8", "replace")[-1500:]
+    assert json.loads(lines[0])["ok"] is True
+    presets = json.loads(lines[1])
+    assert presets["ok"] is True, presets
+    assert any(ord(char) > 255 for char in lines[1]), "fixture no longer contains non-cp1252 text; pick another command"

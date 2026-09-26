@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -17,7 +18,10 @@ from .logs import log
 
 
 def serve_stdio(service: Service) -> None:
-    protocol_out = sys.stdout
+    # The host speaks UTF-8. Redirected Windows pipes otherwise default to the ANSI code page (cp1252), which
+    # cannot encode characters such as "→" that appear in preset text, and would crash the service mid-reply.
+    sys.stdin.reconfigure(encoding="utf-8")
+    protocol_out = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", write_through=True)
     sys.stdout = sys.stderr  # nothing but protocol lines may reach the host's stdout
     for line in sys.stdin:
         line = line.lstrip("﻿")  # some hosts prefix the first write with a UTF-8 byte order mark
