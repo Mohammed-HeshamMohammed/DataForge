@@ -74,7 +74,7 @@ def test_sitemap_job_full_run_on_scrapy_engine_with_warc_capture(service: Servic
     assert httpx_job["state"] == "completed", httpx_job
     assert httpx_job["result"]["warc_capture"] and Path(httpx_job["result"]["warc_capture"]).is_file()
     scrapy_job = scrape(service, preset_id="generic.sitemap_structured", preset_version="1.0.0", start_url=base + "/", run_mode="full", max_pages=30, engine="scrapy")
-    assert scrapy_job["state"] == "completed", scrapy_job
+    assert scrapy_job["state"] == "completed", scrapy_job.get("error") or scrapy_job
     assert scrapy_job["result"]["engine"] == "scrapy"
     skus = lambda job: sorted(r["sku"] for r in ok(service, "dataset.rows", dataset_id=job["result"]["dataset_id"], limit=100) for r in [r["raw"]] if r.get("sku"))  # noqa: E731
     assert skus(httpx_job) == skus(scrapy_job) and len(skus(httpx_job)) == 12
