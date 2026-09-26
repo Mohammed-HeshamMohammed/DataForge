@@ -33,7 +33,8 @@ export const TABS: { id: Tab; label: string; title: string }[] = [
   { id: "match", label: "Clean & Combine", title: "Clean & Combine" },
 ];
 
-export const APP_VERSION = "0.2.0";
+declare const __APP_VERSION__: string | undefined;
+export const APP_VERSION = typeof __APP_VERSION__ === "string" ? __APP_VERSION__ : "0.0.0-dev";
 
 type Layout = { left: boolean; right: boolean; compact: boolean };
 type AppInfo = { app_data_dir: string; logs_dir: string; docs_dir: string | null; plan_file: string | null; project_root: string | null };

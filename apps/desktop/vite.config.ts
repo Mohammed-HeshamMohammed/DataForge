@@ -1,8 +1,13 @@
+import { readFileSync } from "node:fs";
 import { defineConfig } from "vite";
+
+// The UI shows the same version the release workflow stamps into package.json.
+const appVersion: string = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8")).version;
 
 const host = process.env.TAURI_DEV_HOST;
 
 export default defineConfig({
+  define: { __APP_VERSION__: JSON.stringify(appVersion) },
   clearScreen: false,
   server: {
     port: 1420,

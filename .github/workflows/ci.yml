@@ -18,6 +18,8 @@ jobs:
         with:
           python-version: "3.13"
       - run: python -m pip install -r requirements-dev.txt
+      - name: Every version file agrees (release builds stamp one version everywhere)
+        run: python scripts/set-version.py --check
       - name: License gate for bundled Python dependencies
         run: python scripts/check-licenses.py
       - name: Application, scraping, and matching tests (migration, contract, golden-file, and property tests)

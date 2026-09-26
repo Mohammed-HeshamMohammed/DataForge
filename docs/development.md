@@ -64,7 +64,14 @@ The build:
 
 Updater artifacts are signed with `TAURI_SIGNING_PRIVATE_KEY`, taken from `%USERPROFILE%\.dataforge\keys\updater.key` locally or from environment secrets in CI.
 
-Pushing a `vX.Y.Z` tag runs `.github/workflows/release.yml`. It verifies the tag matches the app version, runs the tests, builds and signs the installer, writes `latest.json`, generates an SBOM, and publishes the GitHub Release. Prerelease tags (`v1.2.0-beta.1`) also update the rolling `beta` release used by the beta channel.
+Releases run from `.github/workflows/release.yml` in two ways:
+
+- **Tag:** push `vX.Y.Z` (or `vX.Y.Z-beta.1`) and the workflow builds and publishes that version.
+- **Manual:** GitHub > Actions > Release > Run workflow, then enter the version to build. Options: the branch or commit to build (default `main`), whether to publish a GitHub Release (creates tag `v<version>`; off keeps the installer as a workflow artifact only), whether to sign (off builds an unsigned installer with no auto-update manifest), and whether to run the tests first.
+
+The requested version is stamped into every version file at build time by `python scripts/set-version.py <version>`, so nothing needs to be bumped and committed first. `python scripts/set-version.py --check` (also run in CI) fails if the version files disagree, and the UI shows the version from `apps/desktop/package.json`. The workflow runs the tests, builds and signs the installer, writes `latest.json`, generates an SBOM, and publishes the release. Prerelease versions (`1.2.0-beta.1`) are marked as prereleases and also update the rolling `beta` release used by the beta channel. Unsigned builds are always marked as prereleases and never update the beta manifest.
+
+Signed builds run in the `release` GitHub environment (add required reviewers there and store `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` as environment secrets). Unsigned builds run in `release-unsigned`.
 
 ## Signed preset packages
 
