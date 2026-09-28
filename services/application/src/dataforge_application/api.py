@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Callable
 
 from . import SCHEMA_VERSION
-from . import datasets, matching, projects, scraping, sources
+from . import automation, datasets, matching, projects, scraping, sources
 from .contracts import health_check
 from .jobs import JobContext, JobKind, JobRunner, JobValidationError, fixture_job
 from .logs import log
@@ -64,6 +64,9 @@ class Service:
             "dataset.confirm_mapping": lambda p: asdict(datasets.confirm_mapping(self._store(), p["dataset_id"], p["mapping"], p.get("entity_type"), p.get("export_exclude"))),
             "dataset.mapping_flags": lambda p: matching.mapping_flags(self._store(), p["dataset_id"]),
             "dataset.delete": lambda p: datasets.delete_dataset(self._store(), p["dataset_id"]) or {"deleted": p["dataset_id"]},
+            "automation.list": lambda p: automation.list_workflows(self._store(), self._project_id()),
+            "automation.save": lambda p: automation.save_workflow(self._store(), self._project_id(), p),
+            "automation.delete": lambda p: automation.delete_workflow(self._store(), self._project_id(), p["workflow_id"]),
             "job.list": lambda p: [_job_dict(r) for r in self._store().list_jobs(self._project_id(), int(p.get("limit", 50)))],
             "job.get": self._job_get,
             "job.start_fixture": lambda p: {"job_id": self._submit("fixture", {"steps": int(p.get("steps", 8)), "step_seconds": float(p.get("step_seconds", 0.75))})},

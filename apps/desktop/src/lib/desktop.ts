@@ -91,12 +91,21 @@ export const studioHost = {
   navigate: (url: string) => host<void>("studio_navigate", { url }),
   control: (action: "reload" | "stop" | "back" | "forward") => host<void>("studio_control", { action }),
   close: () => host<void>("studio_close"),
-  call: <T>(action: "setMode" | "takePicks" | "pageInfo" | "count" | "extract" | "scrollStep" | "scrollPage" | "suggestFlow" | "links" | "html" | "click" | "networkData", args: unknown[] = []) => host<T>("studio_call", { action, args }),
+  call: <T>(action: "setMode" | "takePicks" | "pageInfo" | "count" | "extract" | "scrollStep" | "scrollPage" | "suggestFlow" | "links" | "html" | "click" | "networkData" | "automation", args: unknown[] = []) => host<T>("studio_call", { action, args }),
   onEvent: async (handler: (event: { type: string; event?: string; url?: string; path?: string; success?: boolean }) => void) => {
     if (!isTauri()) return () => {};
     const { listen } = await import("@tauri-apps/api/event");
     return listen<{ type: string; event?: string; url?: string; path?: string; success?: boolean }>("studio-event", (e) => handler(e.payload));
   },
+};
+
+export const automationHost = {
+  open: (url: string, allowedHosts: string[], bounds: Bounds) => host<void>("automation_open", { url, allowedHosts, bounds }),
+  setBounds: (bounds: Bounds) => host<void>("automation_set_bounds", { bounds }),
+  setVisible: (visible: boolean) => host<void>("automation_set_visible", { visible }),
+  navigate: (url: string) => host<void>("automation_navigate", { url }),
+  close: () => host<void>("automation_close"),
+  call: <T>(action: "setMode" | "takePicks" | "pageInfo" | "automation", args: unknown[] = []) => host<T>("automation_call", { action, args }),
 };
 
 export type UpdateInfo = { available: boolean; version?: string; current_version?: string; notes?: string | null; published_at?: string | null };

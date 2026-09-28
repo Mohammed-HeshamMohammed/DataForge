@@ -81,6 +81,9 @@ Studio bridge actions also include `scrollStep` and `links(css)` for infinite sc
 | `scrape.site_catalog` | — | `[{site_id, site_name, site_category, domains, recommended_method, suggested_fields, requires_rendered, example_url}]` |
 | `scrape.detect_url` | `url`, `purpose?` | `{url, content_type, confidence, source, preset_id, preset_version, requires_rendered, created_preset, reason}` plus site profile fields; falls back to a known-site profile with `detection_limited: true` when the page cannot be inspected |
 | `settings.update` | adds `network_proxy` `{enabled, url}` to `changes` | project settings; one credential-free fixed proxy for collection workers |
+| `automation.list` | — | saved row-driven browser workflows for the current project |
+| `automation.save` | `id?`, `name`, HTTPS `start_url`, `dataset_id?`, `steps` (`click`\|`fill`\|`wait`\|`read`) | validated workflow definition; fill values may use `{{column}}` templates |
+| `automation.delete` | `workflow_id` | `{deleted}` |
 
 Studio bridge picks add `fallback_xpaths` (label-anchored when a repeated caption exists, then structural); `extract` evaluates `{xpath, attribute?}` selectors. Presets may set `extraction.output: "text"` with `ocr: true` for document presets. Job kinds add `archive_query` and `bulk_import`. Contracts: `host-signals`, `scrape-result`, `record-diff`, `watch`, and `collection-settings` schemas in `packages/contracts/`. Stage names add `finding_captures`. Scrapy engine page events carry `engine: "scrapy"`.
 
@@ -96,7 +99,8 @@ API integrations may declare bearer, named-header, query-parameter, HTTP Basic, 
 | `credential_save` / `credential_delete` / `credential_list` | `name`, `secret` / `name` / — | OS credential store; values are never returned. |
 | `studio_open` | `url`, `allowedHosts`, `bounds` | Creates the incognito child WebView over `bounds` (CSS px). |
 | `studio_set_bounds` / `studio_navigate` / `studio_control` / `studio_close` | `bounds` / `url` / `reload\|stop\|back` / — | Navigation is re-checked against allowed hosts. |
-| `studio_call` | `action` (`setMode`, `takePicks`, `pageInfo`, `count`, `extract`, `scrollStep`, `links`), `args` array | Allow-listed bridge calls with JSON-encoded arguments. |
+| `studio_call` | `action` (`setMode`, `takePicks`, `pageInfo`, `count`, `extract`, `scrollStep`, `links`, `automation`), `args` array | Allow-listed bridge calls with JSON-encoded arguments. Automation permits guarded click/fill/read only; passwords, files, hidden controls, and form submit actions are blocked. |
+| `automation_open` / `automation_set_bounds` / `automation_set_visible` / `automation_navigate` / `automation_close` / `automation_call` | same constrained URL, bounds, and bridge inputs as Studio | Separate incognito child WebView and host allow-list for the Automation tab; it cannot reveal or replace the Scrape Studio session. Downloads are blocked. |
 | `update_check` / `update_install` | `repository` (`owner/name`), `channel` / — | GitHub-pinned endpoint; install verifies the signature, needs approval, and is refused during active jobs. |
 
 Events: `studio-event` with `{type: "page_load", event: "started"|"finished", url}` or `{type: "navigation_blocked", url}`. URLs are origin and path only.

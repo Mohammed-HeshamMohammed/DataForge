@@ -13,6 +13,7 @@ use tauri::{
 };
 
 const LABEL: &str = "scrape-studio";
+const AUTOMATION_LABEL: &str = "automation-studio";
 const BRIDGE_SCRIPT: &str = include_str!("studio.js");
 const BRIDGE_ACTIONS: &[&str] = &[
     "setMode",
@@ -27,10 +28,14 @@ const BRIDGE_ACTIONS: &[&str] = &[
     "html",
     "click",
     "networkData",
+    "automation",
 ];
 
 #[derive(Default)]
 pub struct StudioState(Mutex<Vec<String>>);
+
+#[derive(Default)]
+pub struct AutomationState(Mutex<Vec<String>>);
 
 #[derive(Deserialize, Clone, Copy)]
 pub struct Bounds {
@@ -75,6 +80,15 @@ fn parse_allowed(state: &StudioState, raw: &str) -> Result<Url, String> {
     let hosts = state.0.lock().map_err(|_| "studio state poisoned")?;
     if !url_allowed(&url, &hosts) {
         return Err("URL is outside the preset's allowed hosts".into());
+    }
+    Ok(url)
+}
+
+fn parse_automation_allowed(state: &AutomationState, raw: &str) -> Result<Url, String> {
+    let url = Url::parse(raw).map_err(|_| "Invalid URL".to_string())?;
+    let hosts = state.0.lock().map_err(|_| "automation state poisoned")?;
+    if !url_allowed(&url, &hosts) {
+        return Err("Navigation is outside this workflow's allowed HTTPS host".into());
     }
     Ok(url)
 }
@@ -143,6 +157,129 @@ pub fn studio_open(
         .add_child(builder, rect.position, rect.size)
         .map_err(|e| format!("Could not open Scrape Studio: {e}"))?;
     Ok(())
+}
+
+#[tauri::command(async)]
+pub fn automation_open(
+    app: AppHandle,
+    state: tauri::State<'_, AutomationState>,
+    url: String,
+    allowed_hosts: Vec<String>,
+    bounds: Bounds,
+) -> Result<(), String> {
+    if allowed_hosts.is_empty()
+        || allowed_hosts
+            .iter()
+            .any(|h| h.is_empty() || h.contains('/'))
+    {
+        return Err("Allowed hosts must be plain host names".into());
+    }
+    *state.0.lock().map_err(|_| "automation state poisoned")? = allowed_hosts.clone();
+    let url = parse_automation_allowed(&state, &url)?;
+    if let Some(existing) = app.get_webview(AUTOMATION_LABEL) {
+        let _ = existing.close();
+    }
+    let window = app.get_window("main").ok_or("Main window not found")?;
+    let nav_app = app.clone();
+    let load_app = app.clone();
+    let builder = WebviewBuilder::new(AUTOMATION_LABEL, WebviewUrl::External(url))
+        .initialization_script(BRIDGE_SCRIPT)
+        .incognito(true)
+        .disable_drag_drop_handler()
+        .on_navigation(move |target| {
+            let allowed = url_allowed(target, &allowed_hosts);
+            if !allowed {
+                let _ = nav_app.emit_to(
+                    "main",
+                    "automation-event",
+                    json!({ "type": "navigation_blocked", "url": redacted(target) }),
+                );
+            }
+            allowed
+        })
+        .on_page_load(move |_webview, payload| {
+            let event = match payload.event() {
+                PageLoadEvent::Started => "started",
+                PageLoadEvent::Finished => "finished",
+            };
+            let _ = load_app.emit_to(
+                "main",
+                "automation-event",
+                json!({ "type": "page_load", "event": event, "url": redacted(payload.url()) }),
+            );
+        })
+        .on_download(|_webview, _event| false);
+    let rect = bounds.rect();
+    window
+        .add_child(builder, rect.position, rect.size)
+        .map_err(|e| format!("Could not open Automation browser: {e}"))?;
+    Ok(())
+}
+
+fn automation(app: &AppHandle) -> Result<tauri::Webview, String> {
+    app.get_webview(AUTOMATION_LABEL)
+        .ok_or_else(|| "Automation browser is not open".to_string())
+}
+
+#[tauri::command(async)]
+pub fn automation_set_bounds(app: AppHandle, bounds: Bounds) -> Result<(), String> {
+    automation(&app)?
+        .set_bounds(bounds.rect())
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command(async)]
+pub fn automation_set_visible(app: AppHandle, visible: bool) -> Result<(), String> {
+    let Some(webview) = app.get_webview(AUTOMATION_LABEL) else {
+        return Ok(());
+    };
+    if visible {
+        webview.show()
+    } else {
+        webview.hide()
+    }
+    .map_err(|e| e.to_string())
+}
+
+#[tauri::command(async)]
+pub fn automation_navigate(
+    app: AppHandle,
+    state: tauri::State<'_, AutomationState>,
+    url: String,
+) -> Result<(), String> {
+    let url = parse_automation_allowed(&state, &url)?;
+    automation(&app)?.navigate(url).map_err(|e| e.to_string())
+}
+
+#[tauri::command(async)]
+pub fn automation_close(
+    app: AppHandle,
+    state: tauri::State<'_, AutomationState>,
+) -> Result<(), String> {
+    state
+        .0
+        .lock()
+        .map_err(|_| "automation state poisoned")?
+        .clear();
+    if let Some(webview) = app.get_webview(AUTOMATION_LABEL) {
+        webview.close().map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command(async)]
+pub fn automation_call(app: AppHandle, action: String, args: Value) -> Result<Value, String> {
+    let script = bridge_script(&action, &args)?;
+    let (tx, rx) = mpsc::channel();
+    automation(&app)?
+        .eval_with_callback(script, move |result| {
+            let _ = tx.send(result);
+        })
+        .map_err(|e| e.to_string())?;
+    let raw = rx
+        .recv_timeout(Duration::from_secs(20))
+        .map_err(|_| "The page did not respond in time".to_string())?;
+    serde_json::from_str(&raw).map_err(|e| format!("Invalid bridge response: {e}"))
 }
 
 fn studio(app: &AppHandle) -> Result<tauri::Webview, String> {

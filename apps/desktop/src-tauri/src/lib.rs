@@ -33,12 +33,16 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(sidecar::ServiceBridge::default())
         .manage(studio::StudioState::default())
+        .manage(studio::AutomationState::default())
         .manage(updates::PendingUpdate::default())
         .setup(|app| {
             // Packaged builds resolve the service and data files from the bundle, never the source checkout.
             if let Ok(resources) = app.path().resource_dir() {
                 if resources.join("service").is_dir() {
-                    *app.state::<sidecar::ServiceBridge>().resources.lock().expect("bridge lock") = Some(resources);
+                    *app.state::<sidecar::ServiceBridge>()
+                        .resources
+                        .lock()
+                        .expect("bridge lock") = Some(resources);
                 }
             }
             Ok(())
@@ -56,6 +60,12 @@ pub fn run() {
             studio::studio_control,
             studio::studio_close,
             studio::studio_call,
+            studio::automation_open,
+            studio::automation_set_bounds,
+            studio::automation_set_visible,
+            studio::automation_navigate,
+            studio::automation_close,
+            studio::automation_call,
             updates::update_check,
             updates::update_install,
         ])

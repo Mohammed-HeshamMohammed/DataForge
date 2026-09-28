@@ -390,6 +390,45 @@
         return { clicked: false, error: String(error) };
       }
     },
+    automation(step) {
+      try {
+        const kind = String(step?.type || "");
+        const selector = String(step?.selector || "");
+        if (!selector || !["click", "fill", "read"].includes(kind)) return { ok: false, error: "Unsupported workflow action" };
+        const target = queryAll(selector).find((node) => {
+          const style = node.ownerDocument.defaultView.getComputedStyle(node);
+          return style.display !== "none" && style.visibility !== "hidden" && node.getClientRects().length > 0;
+        });
+        if (!target) return { ok: false, error: "No visible element matches that selector" };
+        if (target.matches("input[type=password], input[type=file]") || target.closest("[data-dataforge-secret]")) {
+          return { ok: false, error: "Password, file, and secret fields are never automated" };
+        }
+        if (kind === "click") {
+          const safe = target.matches("a[href], button:not([type=submit]), [role=button], input[type=checkbox], input[type=radio]");
+          if (!safe || target.closest("form")?.querySelector("input[type=password]")) return { ok: false, error: "Only non-submit, non-secret controls can be clicked" };
+          target.click();
+          return { ok: true, value: null };
+        }
+        if (kind === "fill") {
+          if (!target.matches("input:not([type]), input[type=text], input[type=email], input[type=tel], input[type=url], input[type=search], input[type=number], textarea, [contenteditable=true]")) {
+            return { ok: false, error: "Fill targets must be ordinary text fields" };
+          }
+          const value = String(step?.value ?? "").slice(0, 10000);
+          if (target.isContentEditable) target.textContent = value;
+          else {
+            const prototype = target instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+            Object.getOwnPropertyDescriptor(prototype, "value")?.set?.call(target, value);
+          }
+          target.dispatchEvent(new Event("input", { bubbles: true }));
+          target.dispatchEvent(new Event("change", { bubbles: true }));
+          return { ok: true, value: null };
+        }
+        if (isSensitive(target)) return { ok: false, error: "Form values cannot be read" };
+        return { ok: true, value: (target.innerText || target.textContent || "").trim().slice(0, 10000) };
+      } catch (error) {
+        return { ok: false, error: String(error) };
+      }
+    },
     networkData() {
       return { responses: networkResponses.slice(0, 50), error: null };
     },

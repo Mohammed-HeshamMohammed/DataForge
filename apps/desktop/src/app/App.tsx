@@ -19,16 +19,18 @@ import { Datasets } from "../features/datasets/Datasets.tsx";
 import { MatchTab } from "../features/matching/MatchTab.tsx";
 import { DEFAULT_UPDATE_PREFS, Settings, type UpdatePrefs } from "../features/settings/Settings.tsx";
 import { Studio } from "../features/studio/Studio.tsx";
+import { Automation } from "../features/automation/Automation.tsx";
 import { ProjectGate } from "../features/onboarding/ProjectGate.tsx";
 import type { SourceKind } from "../features/scraping/sources.ts";
 
-export type Tab = "dashboard" | "scraping" | "studio" | "datasets" | "match" | "settings";
+export type Tab = "dashboard" | "scraping" | "studio" | "automation" | "datasets" | "match" | "settings";
 export type NavigationContext = { datasetId?: string; jobId?: string; url?: string; source?: SourceKind };
 export type Navigate = (tab: Tab, context?: NavigationContext) => void;
 
 export const TABS: { id: Tab; label: string; title: string }[] = [
   { id: "dashboard", label: "Overview", title: "Overview" },
   { id: "studio", label: "Scrape Studio", title: "Scrape Studio" },
+  { id: "automation", label: "Automation", title: "Automation" },
   { id: "datasets", label: "Datasets", title: "Datasets" },
   { id: "match", label: "Clean & Combine", title: "Clean & Combine" },
 ];
@@ -218,6 +220,7 @@ export function App() {
       { id: "run.match", label: "Clean duplicate records…", menu: "run", group: 1, enabled: hasProject, run: () => navigate("match") },
       { id: "run.collect", label: "New collection…", menu: "run", group: 1, enabled: hasProject, run: () => navigate("scraping") },
       { id: "run.studio", label: "Open Scrape Studio", menu: "run", group: 1, enabled: hasProject, run: () => navigate("studio") },
+      { id: "run.automation", label: "Open Automation", menu: "run", group: 1, enabled: hasProject, run: () => navigate("automation") },
       {
         id: "run.health", label: "Run preset health checks", menu: "run", group: 2, enabled: hasProject,
         run: async () => {
@@ -391,9 +394,9 @@ function Workspace({
             void summary.reload();
           }}
         />
-        {(["dashboard", "scraping", "studio", "datasets", "match", "settings"] as Tab[]).filter((panelTab) => mountedTabs.has(panelTab)).map((panelTab) => (
+        {(["dashboard", "scraping", "studio", "automation", "datasets", "match", "settings"] as Tab[]).filter((panelTab) => mountedTabs.has(panelTab)).map((panelTab) => (
           <div
-            className={panelTab === "studio" ? "pane-body pane-body-fill" : "pane-body"}
+            className={panelTab === "studio" || panelTab === "automation" ? "pane-body pane-body-fill" : "pane-body"}
             key={`${panelTab}-${refreshes[panelTab] ?? 0}-${refreshToken}`}
             hidden={panelTab !== tab}
             aria-hidden={panelTab !== tab}
@@ -401,6 +404,7 @@ function Workspace({
             {panelTab === "dashboard" && <Dashboard navigate={navigate} />}
             {panelTab === "scraping" && <Settings project={project} navigate={navigate} initialSection="scraping" initialSource={contexts.scraping?.source} onUpdateInfo={onUpdateInfo} />}
             {panelTab === "studio" && <Studio navigate={navigate} initialUrl={contexts.studio?.url} active={tab === "studio"} />}
+            {panelTab === "automation" && <Automation active={tab === "automation"} />}
             {panelTab === "datasets" && <Datasets navigate={navigate} initialDatasetId={contexts.datasets?.datasetId} />}
             {panelTab === "match" && <MatchTab initialDatasetId={contexts.match?.datasetId} initialJobId={contexts.match?.jobId} />}
             {panelTab === "settings" && <Settings project={project} navigate={navigate} onUpdateInfo={onUpdateInfo} />}
