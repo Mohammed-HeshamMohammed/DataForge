@@ -1,0 +1,551 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Amazon Search Collector</title>
+<style>
+  :root { --bg: #ffffff; --fg: #1d2125; --muted: #5b636b; --line: #d9dde1; --accent: #c45500; --code: #f3f4f6; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #16191c; --fg: #e8eaed; --muted: #a3aab1; --line: #33393f; --accent: #ff9f4a; --code: #22272c; }
+  }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.7 system-ui, "Segoe UI", Tahoma, sans-serif; }
+  main { max-width: 720px; margin: 0 auto; padding: 32px 16px 48px; }
+  h1 { font-size: 24px; margin: 0 0 4px; }
+  h2 { font-size: 18px; margin: 28px 0 8px; }
+  p.lead { color: var(--muted); margin: 0 0 24px; }
+  .bookmarklet { display: inline-block; padding: 10px 18px; border-radius: 8px; background: var(--accent); color: #fff;
+    font-weight: 600; text-decoration: none; cursor: grab; direction: ltr; }
+  ol, ul { padding-inline-start: 22px; }
+  li { margin-bottom: 8px; }
+  code, pre { background: var(--code); border-radius: 6px; direction: ltr; unicode-bidi: embed; }
+  code { padding: 1px 6px; font-size: 14px; }
+  pre { padding: 12px; overflow-x: auto; font-size: 13px; text-align: left; }
+  .box { border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin: 20px 0; }
+  button { font: inherit; padding: 6px 14px; border-radius: 6px; border: 1px solid var(--line); background: var(--code); color: var(--fg); cursor: pointer; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Amazon Search Collector</h1>
+  <p class="lead">بيجمع منتجات بحث Amazon وتفاصيل كل منتج، وبيطلّعهم في ملف CSV يفتح في Excel.</p>
+
+  <div class="box">
+    <p><strong>التثبيت:</strong> اسحب الزرار ده لشريط الـ bookmarks (لو الشريط مش ظاهر دوس <code>Ctrl+Shift+B</code>). لو عندك النسخة القديمة امسحها وحط دي مكانها.</p>
+    <p><a class="bookmarklet" id="bookmarklet" href="#">Amazon Collector</a></p>
+  </div>
+
+  <h2>1. جمع نتايج البحث</h2>
+  <ol>
+    <li>افتح صفحة نتايج البحث في Amazon ودوس على الـ bookmark. هيظهر صندوق تحت على اليمين.</li>
+    <li>اكتب عدد المنتجات اللي عايزه في خانة <strong>Target</strong> ودوس <strong>Collect pages</strong>. هيجيب صفحات البحث واحدة ورا التانية لوحده، بين كل صفحة والتانية 8 ثواني.</li>
+  </ol>
+
+  <h2>2. تفاصيل كل منتج</h2>
+  <ol>
+    <li>دوس <strong>Collect details</strong>. هيفتح المنتجات واحد واحد في الخلفية، بين كل منتج والتاني 10 ثواني، ويجيب: Product details و About this item و Features &amp; Specs و Product description والتفاصيل الإضافية والبائع والصور.</li>
+    <li>1,000 منتج بياخدوا حوالي 3 ساعات. سيب التاب مفتوح. لو قفلته أو دوست <strong>Stop</strong>، دوس الـ bookmark و <strong>Collect details</strong> تاني وهيكمّل من مكان ما وقف.</li>
+    <li>لو فتحت صفحة منتج بنفسك ودوست الـ bookmark، هيحفظ تفاصيل المنتج ده.</li>
+  </ol>
+
+  <div class="box">
+    <p><strong>لو Amazon رجّعت أي حاجة غير صفحة عادية</strong> (CAPTCHA، أو صفحة تحقق، أو خطأ)، الجمع بيقف فورًا ومش بيحاول تاني. استنى شوية وافتح amazon.eg عادي، وبعدين كمّل.</p>
+  </div>
+
+  <h2>3. التصدير</h2>
+  <ol>
+    <li>دوس <strong>Download CSV</strong>. الملف بيفتح في Excel على طول.</li>
+    <li>عشان تطلّع Excel منسق، فيه عمود لكل مواصفة (Material, Color, ...):
+      <pre>python scripts\amazon_creators_export.py --from-collector "%USERPROFILE%\Downloads\amazon_eg_1008_products_details.csv"</pre></li>
+  </ol>
+
+  <div class="box">
+    <p>كل حاجة بتتحفظ في المتصفح لحد ما تدوس <strong>Clear</strong>. لو بدأت بحث جديد، الصندوق هيسألك تبدأ مجموعة جديدة ولا تكمل على القديمة.</p>
+    <p>لو الـ bookmark مش شغال: افتح صفحة البحث ← <code>F12</code> ← Console ← الصق الكود ده ودوس Enter.</p>
+    <button type="button" id="copy">نسخ الكود</button> <span id="copied"></span>
+  </div>
+</main>
+
+<script type="text/plain" id="collector-source">
+(() => {
+  if (!/(^|\.)amazon\./.test(location.hostname)) {
+    alert('Amazon Collector: open an Amazon page first.');
+    return;
+  }
+  const VERSION = 3;
+  if (window.amazonCollector?.panel?.isConnected && window.amazonCollector.version === VERSION) {
+    window.amazonCollector.reopen();
+    return;
+  }
+  window.amazonCollector?.stop?.();
+  document.getElementById('amazon-collector-panel')?.remove();
+
+  const KEY = 'dataforgeAmazonCollector';
+  const SEARCH_DELAY = 8000;
+  const DETAIL_DELAY = 10000;
+  const FETCH_TIMEOUT = 45000;
+  const FETCH_TRIES = 3;
+  const COLUMNS = ['ASIN', 'Title', 'Brand', 'Price', 'Currency', 'List price', 'Rating', 'Ratings count',
+    'Badge', 'Sponsored', 'Delivery', 'Page', 'Position', 'Image', 'Product URL'];
+  const DETAIL_COLUMNS = ['Seller', 'Fulfilled by', 'Availability', 'Category path', 'Best Sellers Rank', 'About this item',
+    'Product details', 'Features & Specs', 'Additional details', 'Product description', 'From the manufacturer',
+    'All images', 'Details JSON', 'Details note', 'Details collected at'];
+
+  const westernDigits = s => (s || '').replace(/[٠-٩]/g, d => d.charCodeAt(0) - 0x0660)
+    .replace(/٫/g, '.').replace(/٬/g, ',');
+  const clean = s => westernDigits(s).replace(/[‎‏]/g, '').replace(/\s+/g, ' ').trim();
+  const textOf = element => {
+    if (!element) return '';
+    const copy = element.cloneNode(true);
+    copy.querySelectorAll('script, style, noscript').forEach(node => node.remove());
+    return clean(copy.textContent);
+  };
+  const text = (root, selector) => textOf(root.querySelector(selector));
+  const number = s => {
+    const match = clean(s).replace(/,/g, '').match(/\d+(?:\.\d+)?/);
+    return match ? Number(match[0]) : '';
+  };
+  const params = new URLSearchParams(location.search);
+  const signature = ['k', 'i', 'rh', 's'].map(name => params.get(name) || '').join('|');
+  const language = params.get('language');
+  const onSearchPage = () => document.querySelectorAll('div[data-component-type="s-search-result"][data-asin]').length > 0;
+  const productAsin = () => (location.pathname.match(/\/(?:dp|gp\/product)\/([A-Z0-9]{10})/) || [])[1];
+
+  let state = null;
+  try { state = JSON.parse(localStorage.getItem(KEY)); } catch (error) { state = null; }
+  if (onSearchPage() && state && state.signature !== signature && state.order.length &&
+      confirm('Amazon Collector: you have ' + state.order.length + ' products from another search.\n\nOK = start a new collection, Cancel = add to it.')) {
+    state = null;
+    indexedDB.deleteDatabase('amazonCollector');
+  }
+  state = state || { signature: onSearchPage() ? signature : '', items: {}, order: [], pages: [] };
+  const save = () => {
+    try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (error) { alert('Amazon Collector: could not save: ' + error.message); }
+  };
+
+  const database = new Promise((resolve, reject) => {
+    const request = indexedDB.open('amazonCollector', 1);
+    request.onupgradeneeded = () => request.result.createObjectStore('details');
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+  const store = async (mode, run) => {
+    const db = await database;
+    return new Promise((resolve, reject) => {
+      const transaction = db.transaction('details', mode);
+      const request = run(transaction.objectStore('details'));
+      transaction.oncomplete = () => resolve(request.result);
+      transaction.onerror = () => reject(transaction.error);
+    });
+  };
+  const detailKeys = async () => new Set(await store('readonly', s => s.getAllKeys()));
+
+  const cardsOf = doc => [...doc.querySelectorAll('div[data-component-type="s-search-result"][data-asin]')]
+    .filter(card => card.dataset.asin);
+  const deliveryOf = card => {
+    const box = card.querySelector('[data-cy="delivery-recipe"]');
+    if (!box) return '';
+    const rows = [...box.querySelectorAll('.a-row')].filter(row => !row.querySelector('.a-row'))
+      .map(row => textOf(row)).filter(Boolean);
+    return rows.length ? rows.join(' · ') : textOf(box);
+  };
+  const cardRow = (card, index, page) => {
+    const asin = card.dataset.asin;
+    const recipe = card.querySelector('[data-cy="title-recipe"]') || card;
+    const headings = [...recipe.querySelectorAll('h2')].map(h => textOf(h)).filter(Boolean);
+    const priceText = text(card, '.a-price:not(.a-text-price) .a-offscreen');
+    const countLabel = [...card.querySelectorAll('[data-cy="reviews-block"] [aria-label]')]
+      .map(element => clean(element.getAttribute('aria-label')))
+      .find(label => /\d/.test(label) && !/out of|stars|من 5|نجوم/.test(label)) || '';
+    return {
+      'ASIN': asin,
+      'Title': headings[headings.length - 1] || '',
+      'Brand': headings.length > 1 ? headings[0] : '',
+      'Price': number(priceText),
+      'Currency': (priceText.match(/[A-Z]{3}/) || [''])[0],
+      'List price': number(text(card, '.a-price.a-text-price .a-offscreen')),
+      'Rating': number(text(card, '.a-icon-alt')),
+      'Ratings count': number(countLabel),
+      'Badge': text(card, '.a-badge-text'),
+      'Sponsored': card.querySelector('.puis-sponsored-label-text') ? 'yes' : '',
+      'Delivery': deliveryOf(card),
+      'Page': page,
+      'Position': index + 1,
+      'Image': (card.querySelector('img.s-image')?.getAttribute('src') || '').replace(/\._[^/]*_\.(jpe?g|png|webp)$/i, '.$1'),
+      'Product URL': location.origin + '/dp/' + asin,
+    };
+  };
+  const addRow = row => {
+    const existing = state.items[row.ASIN];
+    if (!existing) {
+      state.items[row.ASIN] = row;
+      state.order.push(row.ASIN);
+      return 1;
+    }
+    if (existing.Sponsored && !row.Sponsored) state.items[row.ASIN] = row;
+    return 0;
+  };
+  const addSearchPage = (doc, page) => {
+    const added = cardsOf(doc).reduce((sum, card, index) => sum + addRow(cardRow(card, index, page)), 0);
+    if (!state.pages.includes(page)) state.pages.push(page);
+    state.pages.sort((a, b) => a - b);
+    save();
+    return added;
+  };
+  const lastPageOf = doc => Number([...doc.querySelectorAll('.s-pagination-item')].map(e => clean(e.textContent))
+    .filter(t => /^\d+$/.test(t)).pop()) || 0;
+
+  const pairs = rows => {
+    const seen = new Map();
+    rows.forEach(([key, value]) => {
+      key = clean(key).replace(/\s*:\s*$/, '');
+      value = clean(value).replace(/^:\s*/, '');
+      if (key && value && !seen.has(key)) seen.set(key, value);
+    });
+    return [...seen];
+  };
+  const lines = entries => entries.map(([key, value]) => key + ': ' + value).join('\n');
+  const productDetails = (doc, html) => {
+    const facts = pairs([
+      ...[...doc.querySelectorAll('#productFactsDesktopExpander .product-facts-detail')].map(row => {
+        const cells = row.querySelectorAll('.a-fixed-left-grid-col');
+        return [textOf(cells[0]), textOf(cells[1])];
+      }),
+      ...[...doc.querySelectorAll('#productOverview_feature_div tr')].map(tr => [textOf(tr.cells[0]), textOf(tr.cells[1])]),
+    ]);
+    const about = [...new Set([...doc.querySelectorAll('#productFactsDesktopExpander ul li, #feature-bullets ul li')]
+      .map(li => textOf(li)).filter(Boolean))];
+    const specs = [];
+    let section = '';
+    doc.querySelectorAll('#voyager-ns-desktop-side-sheet-main-section h1, #voyager-ns-desktop-side-sheet-main-section h2, #voyager-ns-desktop-side-sheet-main-section h3, #voyager-ns-desktop-side-sheet-main-section tr')
+      .forEach(element => {
+        if (element.tagName !== 'TR') section = textOf(element);
+        else if (element.cells.length >= 2) specs.push([section, textOf(element.cells[0]), textOf(element.cells[1])]);
+      });
+    doc.querySelectorAll('#productDetails_techSpec_section_1 tr, #productDetails_techSpec_section_2 tr, #productDetails_detailBullets_sections1 tr')
+      .forEach(tr => { if (tr.cells.length >= 2) specs.push(['Technical details', textOf(tr.cells[0]), textOf(tr.cells[1])]); });
+    const additional = pairs([...doc.querySelectorAll('#detailBullets_feature_div li, #detailBulletsWrapper_feature_div li')]
+      .map(li => [li, li.querySelector('span.a-text-bold')])
+      .filter(([, bold]) => bold)
+      .map(([li, bold]) => [textOf(bold), textOf(li).slice(textOf(bold).length)]))
+      .filter(([key]) => !/^(ASIN|Customer reviews?)$/i.test(key));
+    const specText = [];
+    let lastSection = null;
+    specs.forEach(([name, key, value]) => {
+      if (name !== lastSection) specText.push('[' + (name || 'Specifications') + ']');
+      lastSection = name;
+      specText.push(key + ': ' + value);
+    });
+    const merged = {};
+    [...facts, ...specs.map(([, key, value]) => [key, value]), ...additional].forEach(([key, value]) => {
+      if (key && value && !(key in merged) && key !== 'Best Sellers Rank') merged[key] = value;
+    });
+    const images = [...new Set((html.match(/"hiRes":"(https:[^"]+)"/g) || []).map(match => match.slice(9, -1)))].slice(0, 20);
+    return {
+      'Seller': text(doc, '#sellerProfileTriggerId') || text(doc, '#merchantInfoFeature_feature_div .offer-display-feature-text-message'),
+      'Fulfilled by': text(doc, '#fulfillerInfoFeature_feature_div .offer-display-feature-text-message'),
+      'Availability': text(doc, '#availability'),
+      'Category path': [...doc.querySelectorAll('#wayfinding-breadcrumbs_feature_div li a')].map(a => textOf(a)).join(' › '),
+      'Best Sellers Rank': (additional.find(([key]) => key === 'Best Sellers Rank') || ['', ''])[1],
+      'About this item': about.join('\n'),
+      'Product details': lines(facts),
+      'Features & Specs': specText.join('\n'),
+      'Additional details': lines(additional.filter(([key]) => key !== 'Best Sellers Rank')),
+      'Product description': text(doc, '#productDescription'),
+      'From the manufacturer': text(doc, '#aplus').slice(0, 3000),
+      'All images': images.join('\n'),
+      'Details JSON': JSON.stringify(merged),
+      'Details collected at': new Date().toISOString(),
+    };
+  };
+
+  let running = '';
+  let stopRequested = false;
+  let statusText = '';
+  let wake = null;
+  let inflight = null;
+  let slowedNote = '';
+  const reasonOf = error => error?.name === 'TimeoutError' ? 'no answer within ' + FETCH_TIMEOUT / 1000 + 's'
+    : 'network error (' + clean(String(error?.message || error)).slice(0, 80) + ')';
+  const fetchDocument = async url => {
+    const controller = new AbortController();
+    inflight = controller;
+    const timer = setTimeout(() => controller.abort(new DOMException('timed out', 'TimeoutError')), FETCH_TIMEOUT);
+    try {
+      const response = await fetch(url, { credentials: 'include', signal: controller.signal });
+      const html = await response.text();
+      return { response, html, doc: new DOMParser().parseFromString(html, 'text/html') };
+    } finally {
+      clearTimeout(timer);
+      inflight = null;
+    }
+  };
+  const pause = (ms, label) => new Promise(resolve => {
+    const until = Date.now() + ms;
+    setStatus(label + ' · next at ' + new Date(until).toLocaleTimeString() + slowedNote);
+    const finish = () => {
+      clearTimeout(timer);
+      wake = null;
+      if (Date.now() - until > 30000) slowedNote = ' · Chrome slowed this tab while it was hidden; keep it visible for full speed.';
+      resolve();
+    };
+    const timer = setTimeout(finish, ms);
+    wake = finish;
+  });
+  const fetchWithRetry = async (url, what, delay) => {
+    for (let attempt = 1; ; attempt += 1) {
+      try {
+        return await fetchDocument(url);
+      } catch (error) {
+        if (stopRequested || attempt >= FETCH_TRIES) throw error;
+        await pause(delay * attempt, what + ': ' + reasonOf(error) + ', trying again (' + (attempt + 1) + '/' + FETCH_TRIES + ')');
+        if (stopRequested) throw error;
+      }
+    }
+  };
+  const stop = () => {
+    stopRequested = true;
+    setStatus('Stopping…');
+    if (wake) wake();
+    if (inflight) inflight.abort();
+  };
+  const unexpected = (error, action) => 'Stopped by an unexpected error: ' + clean(String(error?.message || error)).slice(0, 120) +
+    '. Click ' + action + ' to continue.';
+  const blockedMessage = (where, response, doc) => 'Stopped at ' + where + ': Amazon answered HTTP ' + response.status +
+    ' "' + clean(doc.title).slice(0, 60) + '" instead of a normal page. Wait a while, open ' + location.hostname +
+    ' normally, then continue.';
+
+  const collectPages = async target => {
+    if (!onSearchPage()) return setStatus('Open a search results page to collect pages.');
+    running = 'pages';
+    stopRequested = false;
+    render();
+    try {
+      addSearchPage(document, Number(new URLSearchParams(location.search).get('page')) || 1);
+      let lastPage = lastPageOf(document) || 400;
+      for (let page = 1; page <= lastPage && state.order.length < target && !stopRequested; page += 1) {
+        if (state.pages.includes(page)) continue;
+        const url = new URL(location.href);
+        url.searchParams.set('page', page);
+        ['qid', 'ref', 'xpid'].forEach(name => url.searchParams.delete(name));
+        setStatus('Fetching search page ' + page + '…');
+        let fetched;
+        try {
+          fetched = await fetchWithRetry(url.pathname + url.search, 'Search page ' + page, SEARCH_DELAY);
+        } catch (error) {
+          if (stopRequested) break;
+          return setStatus('Stopped at search page ' + page + ': ' + reasonOf(error) + ', ' + FETCH_TRIES +
+            ' times. Check your connection, then click Collect pages to continue.');
+        }
+        const { response, doc } = fetched;
+        const cards = cardsOf(doc);
+        if (response.status !== 200 || doc.querySelector('form[action*="validateCaptcha"]') ||
+            (!cards.length && !doc.querySelector('[data-component-type="s-search-results"]'))) {
+          return setStatus(blockedMessage('search page ' + page, response, doc));
+        }
+        if (!cards.length) break;
+        const added = addSearchPage(doc, page);
+        lastPage = lastPageOf(doc) || lastPage;
+        render();
+        if (!doc.querySelector('.s-pagination-next') || doc.querySelector('.s-pagination-next.s-pagination-disabled')) break;
+        if (state.order.length < target) await pause(SEARCH_DELAY, 'Page ' + page + ': +' + added + ' products');
+      }
+      setStatus(stopRequested ? 'Stopped.' : 'Done: ' + state.order.length + ' products from ' + state.pages.length + ' pages.' + slowedNote);
+    } catch (error) {
+      setStatus(unexpected(error, 'Collect pages'));
+    } finally {
+      running = '';
+      render();
+    }
+  };
+
+  const collectDetails = async limit => {
+    running = 'details';
+    stopRequested = false;
+    render();
+    let done = new Set();
+    try {
+      done = await detailKeys();
+      const todo = state.order.filter(asin => !done.has(asin)).slice(0, limit || Infinity);
+      const suffix = language ? '?language=' + encodeURIComponent(language) : '';
+      let fetchMs = 0;
+      for (const [index, asin] of todo.entries()) {
+        if (stopRequested) break;
+        const perProduct = DETAIL_DELAY + (index ? fetchMs / index : 5000);
+        setStatus('Details ' + (done.size + 1) + '/' + state.order.length + ': ' + asin + ' · about ' +
+          Math.ceil((todo.length - index) * perProduct / 60000) + ' min left' + slowedNote);
+        const started = Date.now();
+        let fetched;
+        try {
+          fetched = await fetchWithRetry('/dp/' + asin + suffix, asin, DETAIL_DELAY);
+        } catch (error) {
+          if (stopRequested) break;
+          return setStatus('Stopped at ' + asin + ': ' + reasonOf(error) + ', ' + FETCH_TRIES +
+            ' times. Check your connection, then click Collect details to continue.');
+        }
+        fetchMs += Date.now() - started;
+        const { response, html, doc } = fetched;
+        let details;
+        if (response.status === 404) {
+          details = { 'Availability': 'Product page not found (404)', 'Details note': 'page not found', 'Details collected at': new Date().toISOString() };
+        } else if (response.status !== 200 || !doc.getElementById('productTitle')) {
+          return setStatus(blockedMessage(asin, response, doc));
+        } else {
+          try {
+            details = productDetails(doc, html);
+          } catch (error) {
+            details = { 'Details note': 'could not read the page: ' + clean(String(error?.message || error)).slice(0, 120), 'Details collected at': new Date().toISOString() };
+          }
+        }
+        await store('readwrite', s => s.put(details, asin));
+        done.add(asin);
+        render(done.size);
+        if (index < todo.length - 1) await pause(DETAIL_DELAY, 'Saved ' + asin);
+      }
+      setStatus(stopRequested ? 'Stopped. Click Collect details to continue.' : 'Done: details for ' + done.size + ' of ' + state.order.length + ' products.' + slowedNote);
+    } catch (error) {
+      setStatus(unexpected(error, 'Collect details'));
+    } finally {
+      running = '';
+      render(done.size);
+    }
+  };
+
+  const saveCurrentProduct = async () => {
+    const asin = productAsin();
+    if (!asin || !document.getElementById('productTitle')) return false;
+    if (!state.items[asin]) {
+      addRow({
+        'ASIN': asin, 'Title': text(document, '#productTitle'),
+        'Brand': text(document, '#bylineInfo').replace(/^(Brand|Visit the)\s*:?\s*/i, '').replace(/\s*Store$/i, ''),
+        'Price': number(text(document, '.priceToPay .a-offscreen') || text(document, '#corePrice_feature_div .a-offscreen')),
+        'Currency': (text(document, '.priceToPay .a-offscreen').match(/[A-Z]{3}/) || [''])[0],
+        'Rating': number(text(document, '#acrPopover .a-icon-alt')),
+        'Ratings count': number(text(document, '#acrCustomerReviewText')),
+        'Product URL': location.origin + '/dp/' + asin,
+      });
+      save();
+    }
+    await store('readwrite', s => s.put(productDetails(document, document.documentElement.outerHTML), asin));
+    return asin;
+  };
+
+  const csvRows = async () => {
+    const keys = await store('readonly', s => s.getAllKeys());
+    const values = await store('readonly', s => s.getAll());
+    const details = new Map(keys.map((key, index) => [key, values[index]]));
+    return state.order.map(asin => ({ ...state.items[asin], ...(details.get(asin) || {}) }));
+  };
+  const toCsv = async () => {
+    const rows = await csvRows();
+    const columns = rows.some(row => row['Details collected at']) ? COLUMNS.concat(DETAIL_COLUMNS) : COLUMNS;
+    const quote = value => {
+      let s = String(value ?? '');
+      if (/^[=+@]|^-\D/.test(s)) s = "'" + s;
+      return '"' + s.replace(/"/g, '""') + '"';
+    };
+    return { columns, csv: '﻿' + [columns, ...rows.map(row => columns.map(column => row[column]))]
+      .map(line => line.map(quote).join(',')).join('\r\n') };
+  };
+  const download = async () => {
+    const { columns, csv } = await toCsv();
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+    link.download = 'amazon_' + location.hostname.replace(/^www\.amazon\./, '').replace(/\./g, '_') + '_' +
+      state.order.length + '_products' + (columns.length > COLUMNS.length ? '_details' : '') + '.csv';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(link.href), 10000);
+  };
+  const clear = async () => {
+    localStorage.removeItem(KEY);
+    await store('readwrite', s => s.clear());
+    state = { signature: onSearchPage() ? signature : '', items: {}, order: [], pages: [] };
+  };
+
+  const panel = document.createElement('div');
+  panel.id = 'amazon-collector-panel';
+  panel.setAttribute('style', 'position:fixed;z-index:2147483647;right:16px;bottom:16px;width:340px;padding:12px 14px;' +
+    'background:#fff;color:#0f1111;border:1px solid #8d9096;border-radius:8px;box-shadow:0 4px 18px rgba(0,0,0,.25);' +
+    'font:14px/1.45 Arial,sans-serif;direction:ltr;text-align:left');
+  const heading = document.createElement('strong');
+  const summary = document.createElement('div');
+  const status = document.createElement('div');
+  status.setAttribute('style', 'margin-top:6px;color:#565959;font-size:12px;min-height:16px');
+  const setStatus = message => { statusText = message; status.textContent = message; };
+  const button = (label, onClick) => {
+    const element = document.createElement('button');
+    element.type = 'button';
+    element.textContent = label;
+    element.setAttribute('style', 'margin:8px 6px 0 0;padding:4px 10px;border:1px solid #8d9096;border-radius:6px;background:#f7f7f7;color:#0f1111;cursor:pointer;font:inherit');
+    element.addEventListener('click', onClick);
+    return element;
+  };
+  const target = document.createElement('input');
+  target.type = 'number';
+  target.min = '1';
+  target.value = '1000';
+  target.setAttribute('style', 'width:72px;margin:8px 6px 0 0;padding:3px 6px;border:1px solid #8d9096;border-radius:6px;font:inherit');
+  const targetLabel = document.createElement('span');
+  targetLabel.textContent = 'Target ';
+  const pagesButton = button('Collect pages', () => collectPages(Number(target.value) || 1000));
+  const detailsButton = button('Collect details', () => collectDetails());
+  const stopButton = button('Stop', stop);
+  const downloadButton = button('Download CSV', download);
+  const clearButton = button('Clear', async () => {
+    if (confirm('Delete the ' + state.order.length + ' collected products and their details?')) { await clear(); render(0); setStatus('Cleared.'); }
+  });
+  const closeButton = button('×', () => { panel.style.display = 'none'; });
+  let detailCount = 0;
+  const render = count => {
+    if (typeof count === 'number') detailCount = count;
+    heading.textContent = 'Amazon Collector: ' + state.order.length + ' products';
+    summary.textContent = 'Details: ' + detailCount + '/' + state.order.length + ' · search pages: ' +
+      (state.pages.length > 10 ? state.pages.slice(0, 3).join(', ') + ' … ' + state.pages.slice(-3).join(', ') : state.pages.join(', ') || 'none');
+    pagesButton.disabled = !!running || !onSearchPage();
+    detailsButton.disabled = !!running || !state.order.length;
+    stopButton.disabled = !running;
+    clearButton.disabled = !!running;
+    if (running) status.style.color = '#0f1111'; else status.style.color = '#565959';
+  };
+  const searchRow = document.createElement('div');
+  searchRow.append(targetLabel, target, pagesButton);
+  panel.append(heading, summary, searchRow, detailsButton, stopButton, downloadButton, clearButton, closeButton, status);
+  document.body.appendChild(panel);
+
+  const reopen = async () => {
+    panel.style.display = '';
+    if (running) return;
+    try {
+      if (onSearchPage()) {
+        const page = Number(new URLSearchParams(location.search).get('page')) || 1;
+        setStatus('This page (' + page + '): +' + addSearchPage(document, page) + ' new products.');
+      } else {
+        const asin = await saveCurrentProduct();
+        setStatus(asin ? 'Saved the details of ' + asin + '.' : 'Open a search results page or a product page.');
+      }
+      render((await detailKeys()).size);
+    } catch (error) {
+      setStatus(unexpected(error, 'the bookmark again'));
+    }
+  };
+  window.amazonCollector = {
+    version: VERSION, panel, reopen, collectPages, collectDetails, csv: toCsv, rows: csvRows, clear, stop,
+    status: () => ({ running, statusText, products: state.order.length, details: detailCount }),
+    parseSearch: doc => cardsOf(doc).map((card, index) => cardRow(card, index, 0)),
+    parseProduct: productDetails,
+  };
+  reopen();
+})();
+</script>
+<script>
+  const source = document.getElementById('collector-source').textContent.trim();
+  document.getElementById('bookmarklet').href = 'javascript:' + encodeURIComponent(source);
+  document.getElementById('copy').addEventListener('click', async () => {
+    await navigator.clipboard.writeText(source);
+    document.getElementById('copied').textContent = 'اتنسخ';
+  });
+</script>
+</body>
+</html>

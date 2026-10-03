@@ -1,0 +1,1081 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Real Estate Collector</title>
+<style>
+  :root { --bg: #ffffff; --fg: #1d2125; --muted: #5b636b; --line: #d9dde1; --accent: #1f6f43; --code: #f3f4f6; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #16191c; --fg: #e8eaed; --muted: #a3aab1; --line: #33393f; --accent: #3fae73; --code: #22272c; }
+  }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.7 system-ui, "Segoe UI", Tahoma, sans-serif; }
+  main { max-width: 720px; margin: 0 auto; padding: 32px 16px 48px; }
+  h1 { font-size: 24px; margin: 0 0 4px; }
+  h2 { font-size: 18px; margin: 28px 0 8px; }
+  p.lead { color: var(--muted); margin: 0 0 24px; }
+  .bookmarklet { display: inline-block; padding: 10px 18px; border-radius: 8px; background: var(--accent); color: #fff;
+    font-weight: 600; text-decoration: none; cursor: grab; direction: ltr; }
+  ol, ul { padding-inline-start: 22px; }
+  li { margin-bottom: 8px; }
+  code, pre { background: var(--code); border-radius: 6px; direction: ltr; unicode-bidi: embed; }
+  code { padding: 1px 6px; font-size: 14px; }
+  pre { padding: 12px; overflow-x: auto; font-size: 13px; text-align: left; white-space: pre-wrap; word-break: break-all; }
+  .box { border: 1px solid var(--line); border-radius: 10px; padding: 16px; margin: 20px 0; }
+  table { border-collapse: collapse; width: 100%; font-size: 14px; }
+  th, td { border-bottom: 1px solid var(--line); padding: 6px 8px; text-align: start; vertical-align: top; }
+  tr.group th { background: var(--code); font-size: 13px; }
+  .scroll { overflow-x: auto; }
+  p.note { color: var(--muted); font-size: 14px; margin: 0 0 8px; }
+  button { font: inherit; padding: 6px 14px; border-radius: 6px; border: 1px solid var(--line); background: var(--code); color: var(--fg); cursor: pointer; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Real Estate Collector</h1>
+  <p class="lead">collector واحد لمواقع العقارات الأمريكية: بيلاقي الإعلانات في أي صفحة بحث، ويجمع صفحات البحث وتفاصيل كل بيت، ويطلّعهم CSV.</p>
+
+  <div class="box">
+    <p><strong>التثبيت:</strong> اسحب الزرار ده لشريط الـ bookmarks (<code>Ctrl+Shift+B</code> لو الشريط مش ظاهر):</p>
+    <p><a class="bookmarklet" id="bookmarklet" href="#">Real Estate Collector</a></p>
+  </div>
+
+  <h2>المواقع</h2>
+  <p class="note">اتجربت على بحث Houston (ونيويورك وسياتل للمواقع المحلية) في أكتوبر 2026، بنفس الكود اللي في الـ bookmark. الرقم هو عدد البيوت في صفحة البحث الواحدة.</p>
+  <div class="scroll"><table>
+    <tr><th>الموقع</th><th>في الصفحة</th><th>Collect pages</th><th>ملاحظات</th></tr>
+    <tr class="group"><th colspan="4">بيع</th></tr>
+    <tr><td>HAR.com</td><td>120</td><td>✓ (3 صفحات = 326)</td><td>سنة البناء والأرض والحالة والنوع والـ brokerage من كروت البحث نفسها</td></tr>
+    <tr><td>Trulia</td><td>40</td><td>✓</td><td>التفاصيل اتجربت: سنة البناء، HOA، MLS، الحقائق</td></tr>
+    <tr><td>Coldwell Banker</td><td>24</td><td>✓</td><td></td></tr>
+    <tr><td>Weichert</td><td>21</td><td>✓</td><td>رقم MLS وسنة البناء</td></tr>
+    <tr><td>Estately</td><td>15</td><td>✓</td><td>الـ brokerage ومساحة الأرض</td></tr>
+    <tr><td>Opendoor</td><td>30 + نقط الخريطة</td><td>✓</td><td>نقط الخريطة من غير لينك</td></tr>
+    <tr><td>StreetEasy (نيويورك)</td><td>38</td><td>✓</td><td></td></tr>
+    <tr><td>Windermere (سياتل)</td><td>10</td><td>–</td><td>صفحات المكاتب</td></tr>
+    <tr><td>RE/MAX</td><td>24</td><td>الصفحة الأولى بس</td><td>الموقع بيحمّل الصفحات اللي بعدها جوه المتصفح: افتحها إنت والـ collector مفتوح وهو بيضيفها</td></tr>
+    <tr><td>Douglas Elliman، BHGRE، ERA، @properties، United Country</td><td>0–2</td><td>–</td><td>بيبنوا النتايج جوه المتصفح؛ اتصفح والـ collector بيضيف اللي الموقع بيحمّله</td></tr>
+    <tr class="group"><th colspan="4">إيجار</th></tr>
+    <tr><td>HotPads</td><td>40</td><td>✓</td><td>الإيجار من/إلى</td></tr>
+    <tr><td>ApartmentGuide</td><td>50</td><td>✓</td><td>الصور قليلة (الموقع بيحمّلها متأخر)</td></tr>
+    <tr><td>ApartmentFinder</td><td>74</td><td>✓</td><td></td></tr>
+    <tr><td>Trulia rentals</td><td>39</td><td>✓</td><td></td></tr>
+    <tr><td>Craigslist</td><td>349</td><td>✗ عن قصد</td><td>شروط استخدام Craigslist بتمنع الجمع الآلي، فبيقرا الصفحات اللي إنت بتفتحها بس، ومن غير تفاصيل</td></tr>
+    <tr class="group"><th colspan="4">أراضي، تجاري، مزادات، جديد</th></tr>
+    <tr><td>LandWatch</td><td>25</td><td>✓</td><td></td></tr>
+    <tr><td>RealtyTrac</td><td>18</td><td>✓</td><td>من غير عدد الغرف</td></tr>
+    <tr><td>Showcase (تجاري للإيجار)</td><td>22</td><td>✓</td><td>السعر هنا للقدم المربع في السنة</td></tr>
+    <tr><td>NewHomeSource</td><td>83</td><td>أحيانًا</td><td>ساعات بيرجّع صفحة حماية (403)، وساعتها الجمع بيقف</td></tr>
+    <tr><td>VRM Properties (بيوت الـ VA)</td><td>8 في Houston</td><td>✓</td><td>عقارات وزارة شؤون المحاربين القدامى (VA) المعروضة للبيع</td></tr>
+    <tr><td>Craigslist: real estate by owner</td><td>277</td><td>✗ عن قصد</td><td>بيوت بيعرضها ملاكها، والقراية للصفحة اللي إنت فاتحها بس</td></tr>
+    <tr><td>USDA REO</td><td colspan="3">16 بيت بس في أمريكا كلها دلوقتي (7 ولايات، ومفيش في Texas)</td></tr>
+    <tr><td>Fclosure</td><td colspan="3">خدمة مدفوعة بتقرا إخطارات الـ foreclosure في Texas وتطلّعها بأسماء المقترضين؛ لو عايزها، اشترك وصدّر من حسابك</td></tr>
+    <tr><td>مزادات الضرايب والـ foreclosure في Harris County</td><td colspan="3">بالسكريبت <code>public_records.py</code> مش بالـ bookmark (شوف تحت)</td></tr>
+    <tr class="group"><th colspan="4">رفضت الاختبار الآلي (Cloudflare أو صفحة تحقق)، ومااتجربتش</th></tr>
+    <tr><td colspan="4">Redfin، Realtor.com، Homes.com، Apartments.com، Movoto، Compass، Zumper، PadMapper، Rent.com، Apartment List، RentCafe، Rentals.com، ForRent، LoopNet، Crexi، CommercialCafe، LandSearch، Land.com، LandFlip، Point2Homes، Keller Williams، eXp، Berkshire Hathaway، Realty.com، Howard Hanna، Long &amp; Foster، Sotheby's، Hubzu، Foreclosure.com، HomeFinder، Avail، Furnished Finder، ForSaleByOwner.<br>
+      لو الموقع بيفتح عندك في Chrome عادي، الـ collector بيقرا الصفحة اللي قدامك ويضيف اللي الموقع بيحمّله وإنت بتتصفح. لو ظهرت صفحة تحقق وهو بيجيب صفحات في الخلفية، بيقف فورًا.</td></tr>
+    <tr class="group"><th colspan="4">مش متاحة</th></tr>
+    <tr><td>Xome</td><td colspan="3">بيقفل الزيارات من بره أمريكا</td></tr>
+    <tr><td>Century 21، HUD Home Store</td><td colspan="3">robots.txt بتاعهم مانع صفحات البحث: بيقرا الصفحة اللي إنت فاتحها بس</td></tr>
+    <tr><td>Zillow</td><td colspan="3">استخدم Zillow Collector، لأنه بيجيب 500 بيت من الخريطة</td></tr>
+  </table></div>
+
+  <h2>الاستخدام</h2>
+  <ol>
+    <li>افتح صفحة نتايج بحث في أي موقع، ودوس الـ bookmark. هيضيف البيوت اللي في الصفحة.</li>
+    <li>من اللحظة دي بيتابع: كل صفحة تفتحها أو فلتر تغيّره أو تحريك للخريطة، بيضيف البيوت اللي الموقع حمّلها. لو الصفحة بتعمل reload كامل (زي HAR)، دوس الـ bookmark تاني في الصفحة الجديدة؛ البيوت بتتجمع على بعض لنفس الموقع.</li>
+    <li><strong>Collect pages:</strong> بيجيب الصفحات اللي بعد كده لوحده، بين كل صفحة والتانية 10 ثواني، لو robots.txt بتاع الموقع سامح ولو الصفحة فيها البيانات.</li>
+    <li><strong>Collect details:</strong> بيفتح صفحة كل بيت في الخلفية، بين كل بيت والتاني 12 ثانية، ويكمّل الوصف والصور وسنة البناء والـ HOA و رقم الـ MLS.</li>
+    <li><strong>Download CSV</strong>، وبعدين حوّله لـ Excel منسق:
+      <pre>python scripts\collector_csv_to_excel.py "%USERPROFILE%\Downloads\real_estate_trulia_com_400_listings.csv"</pre></li>
+  </ol>
+
+  <h2>السجلات العامة في Harris County (Houston)</h2>
+  <p>سكريبت Python بيجيب من مواقع المقاطعة نفسها ويطلّع CSV و Excel منسق في Downloads:</p>
+  <pre>python scripts\public_records.py tax-sales --hcad "%USERPROFILE%\Downloads\hcad_2026"
+python scripts\public_records.py foreclosures --from 2026-11 --to 2026-12
+python scripts\public_records.py hcad --data "%USERPROFILE%\Downloads\hcad_2026" --zip 77009 77018 --absentee</pre>
+  <ul>
+    <li><strong>tax-sales:</strong> العقارات اللي داخلة مزاد الضرايب الجاي (Tax Office): العنوان والحالة وأقل مزايدة والقيمة المحكوم بيها وتاريخ الحكم ورقم حساب HCAD، ونسبة المزايدة للقيمة كمعادلة Excel. مع <code>--hcad</code> بيضيف سنة البناء والمساحة والغرف والقيمة السوقية. الـ resales مالهاش أقل مزايدة على صفحة المكتب.</li>
+    <li><strong>foreclosures:</strong> فهرس إخطارات الـ foreclosure عند County Clerk لكل شهر بيع: رقم المستند وتاريخ البيع والتسجيل ولينك الإخطار. العنوان جوه الإخطار نفسه (PDF متصوّر).</li>
+    <li><strong>hcad:</strong> سجل التقييم لكل عقارات المقاطعة (حوالي 1.6 مليون حساب) من ملفات hcad.org. بتفلتر بالـ ZIP ونوع العقار (<code>--class A1</code> بيت لعيلة واحدة)، والمالك اللي ساكن في مكان تاني (<code>--absentee</code>)، أو بره Texas، ومن غير homestead، وعدد سنين الملكية، وسنة البناء، والقيمة. Excel بيشيل لحد 50 ألف صف (<code>--limit</code>)، والـ CSV فيه الكل.</li>
+  </ul>
+  <p>السكريبت بيعرّف نفسه باسمه، وبيمشي على robots.txt، وبيستنى 5 ثواني بين كل طلب والتاني، وبيقف عند أي صفحة خطأ. قوايم المزادات والإخطارات مفيهاش أسماء. قايمة HCAD فيها اسم المالك وعنوان المراسلة زي ما المقاطعة بتنشرهم، ومن الإعفاءات بيظهر الـ homestead بس (من غير السن أو الإعاقة أو المحاربين القدامى).</p>
+
+  <div class="box">
+    <p>كل موقع ليه مجموعته لوحده. لو الموقع رجّع صفحة تحقق أو CAPTCHA أو خطأ، الجمع بيقف فورًا ومش بيحاول يعدّيها. وأسماء الوكلاء وتليفوناتهم وإيميلاتهم مش بتتجمع.</p>
+    <p>لو الـ bookmark مش شغال: <code>F12</code> ← Console ← الصق الكود ده ودوس Enter.</p>
+    <button type="button" id="copy">نسخ الكود</button> <span id="copied"></span>
+  </div>
+</main>
+
+<script type="text/plain" id="collector-source">
+(() => {
+  const VERSION = 4;
+  if (window.realEstateCollector?.panel?.isConnected && window.realEstateCollector.version === VERSION) {
+    window.realEstateCollector.reopen();
+    return;
+  }
+  window.realEstateCollector?.stop?.();
+  document.getElementById('real-estate-collector-panel')?.remove();
+
+  const KEY = 'realEstateCollector';
+  const SITE = location.hostname.replace(/^www\./, '');
+  const SEARCH_DELAY = 10000;
+  const DETAIL_DELAY = 12000;
+  const FETCH_TIMEOUT = 45000;
+  const FETCH_TRIES = 3;
+  /* sites whose terms of use forbid automated access: only the pages you open yourself are read */
+  const PAGE_ONLY = /(^|\.)craigslist\.org$/i.test(location.hostname);
+  const PAGE_ONLY_NOTE = SITE + '’s terms of use do not allow automated browsing, so the collector only reads the pages you open yourself.';
+  const COLUMNS = ['Site', 'Listing ID', 'Address', 'City', 'State', 'Zip', 'Status', 'Property type', 'Price', 'Price (max)', 'Beds', 'Baths',
+    'Living area (sqft)', 'Lot size', 'Year built', 'HOA fee', 'Days on market', 'Listed', 'Brokerage', 'MLS #', 'Latitude',
+    'Longitude', 'Image', 'Listing URL', 'Page', 'Description', 'Photos', 'Facts', 'Facts JSON', 'Details source', 'Details collected at'];
+  const PHONE = /(\+?1[-.\s]?)?\(?\d{3}\)?[-.\s]\d{3}[-.\s]\d{4}/g;
+  const EMAIL = /[\w.+-]+@[\w-]+\.[\w.-]+/g;
+  const scrub = s => String(s ?? '').replace(EMAIL, '[email removed]').replace(PHONE, '[phone removed]');
+  const clean = s => String(s ?? '').replace(/\s+/g, ' ').trim();
+
+  /* ---- listing finder: reads any site's embedded or loaded data and normalizes what looks like a listing ---- */
+  const PERSONAL = /^agent|agent(s|name|id|photo|image|phone|email|contact|license|first|last)|advertiser|phone|mobile|whatsapp|email|contact|owner|^user|username|person|^lead/i;
+  const KEYS = {
+    id: /^(propertyid|property_id|listingid|listing_id|zpid|typedhomeid|homeid|home_id|id|externalid|uuid)$/i,
+    address: /^(streetaddress|street_address|streetline|street|line|address1|addressline1|fulladdress|addressfull|formattedaddress|displayaddress|fulllocation|address)$/i,
+    city: /^(city|cityname|addresslocality|town|municipality)$/i,
+    state: /^(statecode|state_code|stateabbr|stateabbreviation|state|stateorprovince|addressregion|region)$/i,
+    zip: /^(zipcode|zip_code|zip|postalcode|postal_code|postcode)$/i,
+    price: /^(list_price|listprice|listingprice|price|askingprice|currentprice|unformattedprice|saleprice|lowprice|minprice|price_min|pricemin|minrent|rentmin|startingprice|pricefrom|rent|rentprice|monthlyrent|pricerange|rentrange|amount)$/i,
+    priceMax: /^(highprice|maxprice|price_max|pricemax|maxrent|rentmax|priceto)$/i,
+    status: /^(status|listingstatus|homestatus|mlsstatus|statustext|currentstatus|listing_status)$/i,
+    type: /^(propertytype|property_type|hometype|home_type|type|propertysubtype|uipropertytype|categoryname)$/i,
+    beds: /^(beds|bedrooms|numberofbedrooms|bedroomcount|bed|bedrooms_total|beds_max|bedsmin|bedrange|bedtext|bedcount|minbeds|beds_min)$/i,
+    baths: /^(baths|bathrooms|baths_consolidated|numberofbathroomstotal|bathroomstotal|bathroomcount|bath|baths_full|bathrange|bathtext|bathcount|minbaths)$/i,
+    size: /^(sqft|sqftmax|livingarea|living_area|floorspace|floorsize|buildingsize|size|area|squarefeet|square_feet|finishedsqft|squarefeettext|sqfttext|sqftrange|areatext)$/i,
+    lot: /^(lotsize|lot_size|lot_sqft|lotsqft|lotarea|lotsizesqft|lotareavalue)$/i,
+    year: /^(yearbuilt|year_built|built)$/i,
+    hoa: /^(hoa|hoafee|hoa_fee|monthlyhoafee|associationfee|hoadues)$/i,
+    dom: /^(dom|daysonmarket|days_on_market|daysonzillow|daysonsite|timeonmarket)$/i,
+    listed: /^(list_date|listdate|listingdate|listeddate|listed_at|datelisted|createdat|created_at|publishedat|onmarketdate|datepostedstring)$/i,
+    brokerage: /^(brokername|brokerage|brokeragename|listingbrokername|listingofficename|officename|office|branding|provider|listingprovider|brokerdisplayname|company|propertymanagementcompany|managementcompany|managedby)$/i,
+    mls: /^(mlsid|mls_id|mlsnumber|mls_number|mls)$/i,
+    lat: /^(lat|latitude)$/i,
+    lng: /^(lng|lon|long|longitude)$/i,
+    url: /^(href|url|detailurl|detail_url|permalink|homeurl|propertyurl|listingurl|canonicalurl|shareurl|link|seourl|urlpathname|pathname|detailpath|relativeurl|detailspath)$/i,
+    image: /^(primary_photo|primaryphoto|heroimage|imgsrc|image|imageurl|photo|mainphoto|coverphoto|thumbnail|thumb|mainimage|picture)$/i,
+    photos: /^(photos|images|media|photourls|imageurls|carouselphotos|gallery|pictures)$/i,
+    description: /^(description|remarks|publicremarks|marketingremarks|listingremarks|longdescription)$/i,
+  };
+  const STREET_KEYS = /^(streetaddress|street_address|streetline|street|line|address1|addressline1)$/i;
+  const NOT_TYPE = /^(large|medium|small|x?large|thumb(nail)?|image|photo|video|default|primary|main|hero|place|offer|organization|website|web ?page|listing|product|text|link|button|icon|item|unknown|other|null|none)$/i;
+  const LISTING_FIELDS = ['Listing ID', 'Address', 'City', 'State', 'Zip', 'Status', 'Property type', 'Price', 'Price (max)', 'Beds', 'Baths',
+    'Living area (sqft)', 'Lot size', 'Year built', 'HOA fee', 'Days on market', 'Listed', 'Brokerage', 'MLS #', 'Latitude', 'Longitude',
+    'Image', 'Listing URL', 'Description', 'Photos'];
+  const SIGNAL = ['id', 'address', 'city', 'zip', 'beds', 'baths', 'size', 'url', 'type', 'image', 'lat'];
+  const STATES = { alabama: 'AL', alaska: 'AK', arizona: 'AZ', arkansas: 'AR', california: 'CA', colorado: 'CO', connecticut: 'CT', delaware: 'DE',
+    'district of columbia': 'DC', florida: 'FL', georgia: 'GA', hawaii: 'HI', idaho: 'ID', illinois: 'IL', indiana: 'IN', iowa: 'IA', kansas: 'KS',
+    kentucky: 'KY', louisiana: 'LA', maine: 'ME', maryland: 'MD', massachusetts: 'MA', michigan: 'MI', minnesota: 'MN', mississippi: 'MS',
+    missouri: 'MO', montana: 'MT', nebraska: 'NE', nevada: 'NV', 'new hampshire': 'NH', 'new jersey': 'NJ', 'new mexico': 'NM', 'new york': 'NY',
+    'north carolina': 'NC', 'north dakota': 'ND', ohio: 'OH', oklahoma: 'OK', oregon: 'OR', pennsylvania: 'PA', 'puerto rico': 'PR',
+    'rhode island': 'RI', 'south carolina': 'SC', 'south dakota': 'SD', tennessee: 'TN', texas: 'TX', utah: 'UT', vermont: 'VT', virginia: 'VA',
+    washington: 'WA', 'west virginia': 'WV', wisconsin: 'WI', wyoming: 'WY' };
+  const stateCode = s => STATES[s.toLowerCase()] || (/^[a-z]{2}$/i.test(s) ? s.toUpperCase() : s);
+  const tidy = s => {
+    s = s.replace(/[\s,;]+$/, '');
+    return /[A-Z]{3}/.test(s) && s === s.toUpperCase() ? s.toLowerCase().replace(/\b[a-z]/g, c => c.toUpperCase()) : s;
+  };
+  const isObject = v => !!v && typeof v === 'object' && !Array.isArray(v);
+  const toNumber = v => {
+    if (typeof v === 'number') return Number.isFinite(v) ? v : null;
+    if (typeof v !== 'string') return null;
+    const m = v.replace(/,/g, '').match(/(\d+(?:\.\d+)?)\s*([kKmM])?(?![a-zA-Z])/);
+    if (!m) return null;
+    return Number(m[1]) * (m[2] ? (/k/i.test(m[2]) ? 1e3 : 1e6) : 1);
+  };
+  const text = v => typeof v === 'string' ? v.trim() : typeof v === 'number' ? String(v) : '';
+  const VALUE_KEYS = ['value', 'formattedValue', 'formattedPrice', 'formattedDimension', 'amount', 'price', 'name', 'label', 'displayValue',
+    'display', 'text', 'full', 'formatted', 'summary', 'href', 'url', 'min', 'low'];
+  const plain = v => {
+    if (typeof v === 'string' || typeof v === 'number') return text(v);
+    if (Array.isArray(v)) return v.map(plain).filter(Boolean).slice(0, 3).join(', ');
+    if (isObject(v)) {
+      for (const key of VALUE_KEYS) if (v[key] !== undefined && v[key] !== null && typeof v[key] !== 'boolean') { const out = plain(v[key]); if (out) return out; }
+      const flags = Object.entries(v).filter(([key, value]) => value === true && /^is/.test(key))
+        .map(([key]) => key.replace(/^is/, '').replace(/([a-z])([A-Z])/g, '$1 $2').toLowerCase().replace(/^./, c => c.toUpperCase()));
+      return flags.join(', ');
+    }
+    return '';
+  };
+  const find = (obj, pattern, accept = v => plain(v) !== '', depth = 4) => {
+    if (!isObject(obj)) return undefined;
+    for (const [key, value] of Object.entries(obj)) {
+      if (pattern.test(key) && !PERSONAL.test(key) && value !== null && value !== '' && accept(value)) return value;
+    }
+    if (depth > 1) {
+      for (const [key, value] of Object.entries(obj)) {
+        if (isObject(value) && !PERSONAL.test(key)) {
+          const found = find(value, pattern, accept, depth - 1);
+          if (found !== undefined) return found;
+        }
+      }
+    }
+    return undefined;
+  };
+  const numberOf = v => toNumber(typeof v === 'number' ? v : plain(v));
+  const imageUrl = v => {
+    if (typeof v === 'string') return /^(https?:)?\/\/\S+$/.test(v) && !/fallback|placeholder|no[-_]?(photo|image)|noimage/i.test(v) ? (v.startsWith('//') ? 'https:' + v : v) : '';
+    if (isObject(v)) {
+      for (const key of ['href', 'url', 'src', 'large', 'medium', 'full', 'original', 'main', 'mediumSrc', 'uri', 'link', 'small']) {
+        const out = imageUrl(v[key]);
+        if (out) return out;
+      }
+    }
+    return '';
+  };
+  const linkOf = (obj, base) => {
+    const value = find(obj, KEYS.url, v => {
+      const s = typeof v === 'string' ? v : isObject(v) ? (v.href || v.url || v.path || '') : '';
+      return typeof s === 'string' && (/^https?:\/\/[^/]+\/\S+/.test(s) || /^\/\S+/.test(s)) && !/\.(jpe?g|png|webp|gif)(\?|$)/i.test(s);
+    }, 2);
+    const s = isObject(value) ? (value.href || value.url || value.path) : value;
+    try { return s ? new URL(s, base).href : ''; } catch (error) { return ''; }
+  };
+  const CENTS = /^(listpricecents|list_price_cents|pricecents|price_cents|amountcents|amount_cents)$/i;
+  const priceOf = obj => {
+    const price = numberOf(find(obj, KEYS.price, v => numberOf(v) !== null && numberOf(v) > 0, 3));
+    if (price !== null) return price;
+    const cents = numberOf(find(obj, CENTS, v => numberOf(v) !== null && numberOf(v) > 0, 3));
+    return cents === null ? null : Math.round(cents) / 100;
+  };
+  const score = obj => {
+    if (!isObject(obj) || priceOf(obj) === null) return 0;
+    let hits = 0;
+    for (const name of SIGNAL) if (find(obj, KEYS[name]) !== undefined) hits += 1;
+    return hits >= 3 ? hits : 0;
+  };
+  /* list items often wrap the listing: schema.org {"@type": "ListItem", item}, GraphQL {node}, {listing}, {property} */
+  const unwrap = obj => {
+    if (!isObject(obj) || score(obj)) return obj;
+    for (const key of ['item', 'node', 'listing', 'property', 'home', 'result', 'data', 'attributes']) {
+      if (isObject(obj[key]) && score(obj[key])) return obj[key];
+    }
+    return obj;
+  };
+  const dateOf = v => {
+    if (v === undefined || v === null || v === '') return '';
+    const raw = typeof v === 'number' ? new Date(v < 1e12 ? v * 1000 : v) : new Date(plain(v));
+    return isNaN(raw) ? plain(v) : raw.toISOString().slice(0, 10);
+  };
+  const normalize = (obj, base) => {
+    const sizeValue = find(obj, KEYS.size, v => numberOf(v) !== null);
+    const photoHolder = find(obj, KEYS.photos, v => Array.isArray(v) && v.length > 0) ??
+      (isObject(find(obj, KEYS.photos, isObject)) ? Object.values(find(obj, KEYS.photos, isObject)).find(Array.isArray) : undefined);
+    const photos = Array.isArray(photoHolder) ? [...new Set(photoHolder.map(imageUrl).filter(Boolean))].slice(0, 60) : [];
+    /* a street line ("21619 Astipalia Dr") beats a one-line full address ("21619 Astipalia Dr Spring TX 77388") when the item has both */
+    const addressValue = find(obj, STREET_KEYS, v => typeof v === 'string' && /\d/.test(v), 2) ??
+      find(obj, KEYS.address, v => typeof v === 'string' || (isObject(v) && !!(v.streetAddress || v.line || v.street || plain(v))));
+    const address = isObject(addressValue) ? plain(addressValue.streetAddress || addressValue.line || addressValue.street || addressValue) : plain(addressValue);
+    const range = find(obj, /^(pricerange|rentrange)$/i, isObject);
+    const price = priceOf(obj);
+    const priceMax = numberOf(find(obj, KEYS.priceMax, v => numberOf(v) !== null, 3)) ?? (range ? toNumber(range.max ?? range.high) : null);
+    return {
+      'Listing ID': plain(find(obj, KEYS.id, v => typeof v === 'string' || typeof v === 'number', 2)),
+      'Address': tidy(address),
+      'City': tidy(plain(find(obj, KEYS.city, v => typeof v === 'string'))),
+      'State': stateCode(plain(find(obj, KEYS.state, v => typeof v === 'string' && v.length <= 20))),
+      'Zip': plain(find(obj, KEYS.zip, v => /^\d{5}/.test(String(plain(v))))).slice(0, 10),
+      'Status': plain(find(obj, KEYS.status, v => !/^\d+$/.test(plain(v)) && plain(v) !== '')),
+      'Property type': plain(find(obj, KEYS.type, v => (typeof v === 'string' && !NOT_TYPE.test(v)) || isObject(v))).replace(/_/g, ' ').toLowerCase().replace(/^./, c => c.toUpperCase()),
+      'Price': price ?? '',
+      'Price (max)': priceMax !== null && priceMax !== price ? priceMax : '',
+      'Beds': numberOf(find(obj, KEYS.beds, v => numberOf(v) !== null || /studio/i.test(plain(v)))) ?? (/studio/i.test(plain(find(obj, KEYS.beds))) ? 0 : ''),
+      'Baths': numberOf(find(obj, KEYS.baths, v => numberOf(v) !== null)) ?? '',
+      'Living area (sqft)': numberOf(sizeValue) ?? '',
+      'Lot size': plain(find(obj, KEYS.lot)),
+      'Year built': numberOf(find(obj, KEYS.year, v => { const n = numberOf(v); return n !== null && n > 1700 && n < 2100; })) ?? '',
+      'HOA fee': numberOf(find(obj, KEYS.hoa, v => numberOf(v) !== null)) ?? '',
+      'Days on market': numberOf(find(obj, KEYS.dom, v => numberOf(v) !== null && numberOf(v) >= 0)) ?? '',
+      'Listed': dateOf(find(obj, KEYS.listed)),
+      'Brokerage': plain(find(obj, KEYS.brokerage)),
+      'MLS #': plain(find(obj, KEYS.mls, v => typeof v === 'string' || typeof v === 'number' || isObject(v))),
+      'Latitude': numberOf(find(obj, KEYS.lat, v => numberOf(v) !== null, 5)) ?? '',
+      'Longitude': numberOf(find(obj, KEYS.lng, v => numberOf(v) !== null, 5)) ?? '',
+      'Image': imageUrl(find(obj, KEYS.image, v => !!imageUrl(v))) || photos[0] || '',
+      'Listing URL': linkOf(obj, base),
+      'Description': scrub(plain(find(obj, KEYS.description, v => plain(v).length > 60, 2))),
+      'Photos': photos.join('\n'),
+    };
+  };
+  const collections = root => {
+    const found = [];
+    const seen = new Set();
+    const walk = (value, depth) => {
+      if (!value || typeof value !== 'object' || seen.has(value) || depth > 18) return;
+      seen.add(value);
+      const objects = (Array.isArray(value) ? value : Object.values(value)).filter(isObject).map(unwrap);
+      if (objects.length >= 2) {
+        const scores = objects.slice(0, 60).map(score);
+        const good = scores.filter(Boolean).length;
+        if (good >= 2 && good >= scores.length * 0.6) {
+          found.push(objects.filter(score));
+          return;
+        }
+      }
+      for (const child of Array.isArray(value) ? value : Object.values(value)) walk(child, depth + 1);
+    };
+    walk(root, 0);
+    return found;
+  };
+  const bestListing = (sources, base, hint) => {
+    let best = null;
+    let bestScore = 0;
+    const seen = new Set();
+    const walk = (value, depth) => {
+      if (!value || typeof value !== 'object' || seen.has(value) || depth > 18) return;
+      seen.add(value);
+      const own = isObject(value) ? score(value) : 0;
+      if (own) {
+        const listing = normalize(value, base);
+        const matches = (hint.url && listing['Listing URL'] === hint.url) || (hint.id && listing['Listing ID'] === hint.id);
+        const total = own + (listing.Description ? 3 : 0) + (listing.Photos ? 2 : 0) + (matches ? 20 : 0);
+        if (total > bestScore) { best = { listing, raw: value }; bestScore = total; }
+      }
+      for (const child of Array.isArray(value) ? value : Object.values(value)) walk(child, depth + 1);
+    };
+    sources.forEach(source => walk(source, 0));
+    return best;
+  };
+  /* label/value pairs a listing page shows as facts: {formattedName, formattedValue}, {amenityName, amenityValues}, "Label: value" */
+  const LABEL_KEYS = ['formattedName', 'amenityName', 'label', 'name', 'title', 'displayName'];
+  const PAIR_VALUE_KEYS = ['formattedValue', 'amenityValues', 'value', 'values', 'displayValue', 'text'];
+  const NOT_FACTS = /gender identity|sexual orientation|^(env|guid|ssid)$|listed by|listing agent|agent|presented by|courtesy of|contact/i;
+  const factPairs = root => {
+    const pairs = new Map();
+    const seen = new Set();
+    const add = (label, value) => {
+      label = clean(label).replace(/:$/, '');
+      value = clean(value);
+      /* facts are labelled for people ("Year Built"); lowercase or camelCase labels are tracking and ad-targeting fields */
+      if (label && value && /^[A-Z]/.test(label) && label.length <= 40 && value.length <= 200 && !PERSONAL.test(label) &&
+          !NOT_FACTS.test(label) && !/^https?:/.test(value) && !pairs.has(label)) {
+        pairs.set(label, scrub(value));
+      }
+    };
+    const walk = (value, depth) => {
+      if (!value || typeof value !== 'object' || seen.has(value) || depth > 14 || pairs.size >= 150) return;
+      seen.add(value);
+      if (isObject(value)) {
+        const labelKey = LABEL_KEYS.find(key => typeof value[key] === 'string');
+        const valueKey = PAIR_VALUE_KEYS.find(key => key !== labelKey && value[key] !== undefined && value[key] !== null &&
+          (typeof value[key] !== 'object' || (Array.isArray(value[key]) && value[key].every(item => typeof item !== 'object'))));
+        if (labelKey && valueKey) add(value[labelKey], Array.isArray(value[valueKey]) ? value[valueKey].join(', ') : plain(value[valueKey]));
+      } else {
+        value.forEach(item => {
+          const match = typeof item === 'string' && item.match(/^([^:]{2,40}):\s*(.{1,200})$/);
+          if (match) add(match[1], match[2]);
+        });
+      }
+      for (const child of Array.isArray(value) ? value : Object.values(value)) walk(child, depth + 1);
+    };
+    walk(root, 0);
+    return pairs;
+  };
+  const FACT_FIELDS = [
+    ['Year built', /^(year built|built in|built)$/i, v => { const n = toNumber(v); return n > 1700 && n < 2100 ? n : ''; }],
+    ['HOA fee', /^(hoa|hoa fee|hoa dues|association fee|hoa\/month|monthly hoa fee)$/i, v => toNumber(v) ?? ''],
+    ['MLS #', /^(mls ?#|mls number|mls id|mls)$/i, v => v],
+    ['Days on market', /^days on (market|trulia|redfin|zillow|realtor\.com|site)$/i, v => toNumber(v) ?? ''],
+    ['Lot size', /^(lot size|lot area|lot size sq ?ft|lot size acres)$/i, v => v],
+    ['Living area (sqft)', /^(living area|square feet|sq ?ft|finished sq ?ft|total sq ?ft)$/i, v => toNumber(v) ?? ''],
+    ['Property type', /^(property type|home type|type)$/i, v => v],
+  ];
+  const parseJson = body => {
+    const trimmed = String(body || '').replace(/^\s*(\{\}&&|\)\]\}',?\s*|for\s*\(;;\);)/, '');
+    if (!/^\s*[[{]/.test(trimmed)) return null;
+    try { return JSON.parse(trimmed); } catch (error) { return null; }
+  };
+  /* Next.js App Router pages stream their data as "id:JSON" lines inside self.__next_f.push([1, "..."]) calls */
+  const flightSources = chunks => {
+    const out = [];
+    for (const line of chunks.join('').split('\n')) {
+      const colon = line.indexOf(':');
+      if (colon > 0 && colon < 8 && /^[[{]/.test(line.slice(colon + 1))) {
+        const value = parseJson(line.slice(colon + 1));
+        if (value) out.push(value);
+      }
+    }
+    return out;
+  };
+  /* fetched pages are parsed with scripting off, where an unclosed <noscript><iframe> (tag managers) swallows the rest of the page */
+  const parseHtml = html => new DOMParser().parseFromString(String(html).replace(/<noscript\b[\s\S]*?<\/noscript>/gi, ''), 'text/html');
+  const pageSources = doc => {
+    const sources = [];
+    const flight = [];
+    let liveFlight = false;
+    try { liveFlight = doc === document && Array.isArray(window.__next_f) && window.__next_f.length > 0; } catch (error) { }
+    doc.querySelectorAll('script').forEach(node => {
+      const type = node.getAttribute('type') || '';
+      if (node.id === '__NEXT_DATA__' || /application\/(ld\+)?json/i.test(type)) {
+        const value = parseJson(node.textContent);
+        if (value) sources.push(value);
+      } else if (!liveFlight && node.textContent.includes('self.__next_f.push(')) {
+        for (const m of node.textContent.matchAll(/self\.__next_f\.push\((\[[\s\S]*?\])\)\s*;?\s*(?=self\.__next_f|$)/g)) {
+          const entry = parseJson(m[1]);
+          if (Array.isArray(entry) && typeof entry[1] === 'string') flight.push(entry[1]);
+        }
+      }
+    });
+    if (doc === document) {
+      try { (window.__next_f || []).forEach(entry => { if (Array.isArray(entry) && typeof entry[1] === 'string') flight.push(entry[1]); }); } catch (error) { }
+      for (const name of ['__NUXT__', '__INITIAL_STATE__', '__PRELOADED_STATE__', '__APOLLO_STATE__', '__REDUX_STATE__', '__INITIAL_DATA__']) {
+        try { if (window[name] && typeof window[name] === 'object') sources.push(window[name]); } catch (error) { }
+      }
+    }
+    return sources.concat(flightSources(flight));
+  };
+  /* many sites spell the address in the listing link: /21619-Astipalia-Dr-Spring-TX-77388 or /2316-gentry-st-w-1-houston-tx-77009/ */
+  const STREET_END = /^(st|street|dr|drive|ave|avenue|av|rd|road|ln|lane|ct|court|blvd|boulevard|way|pl|place|cir|circle|pkwy|parkway|ter|terrace|trl|trail|loop|hwy|highway|sq|square|pt|point|xing|crossing|run|pass|row|walk|bnd|bend|cv|cove|holw|hollow|gln|glen|grv|grove|hl|hill|hts|heights|lndg|landing|mdw|mdws|park|path|pike|rdg|ridge|vw|view|vis|vista|fwy|freeway|expy|plz|plaza|aly|alley|byp|cswy|ests?|estates|mnr|manor|ovlk|overlook|spg|spgs|springs|trce|trace|tpke|turnpike)$/i;
+  const addressFromUrl = row => {
+    if (row.Address || !row['Listing URL']) return row;
+    let path;
+    try { path = decodeURIComponent(new URL(row['Listing URL']).pathname); } catch (error) { return row; }
+    const m = path.match(/\/(\d+[a-z]?(?:[-_][\w.#]+?)+?)[-_]([a-z]{2})[-_](\d{5})(?=[\/_.-]|$)/i);
+    if (!m || !STATES[m[2].toLowerCase()] && !Object.values(STATES).includes(m[2].toUpperCase())) return row;
+    const words = m[1].split(/[-_]+/);
+    let end = -1;
+    words.forEach((word, index) => { if (index > 0 && index < words.length - 1 && STREET_END.test(word)) end = index; });
+    if (end < 0) end = words.length - 2;
+    while (end + 1 < words.length - 1 && /^([nsew]|ne|nw|se|sw|apt|unit|ste|#?\d+[a-z]?)$/i.test(words[end + 1])) end += 1;
+    const title = list => list.map(word => /^\d/.test(word) ? word : word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()).join(' ');
+    row.Address = title(words.slice(0, end + 1));
+    if (!row.City) row.City = title(words.slice(end + 1));
+    if (!row.State) row.State = m[2].toUpperCase();
+    if (!row.Zip) row.Zip = m[3];
+    return row;
+  };
+  const squash = s => String(s ?? '').toLowerCase().replace(/[^a-z0-9]/g, '');
+  const placeKeys = item => squash(item.Address) ? [item.Zip, item.City].filter(Boolean).map(part => squash(item.Address) + '|' + squash(part)) : [];
+  const placeIndex = items => {
+    const index = new Map();
+    for (const item of items) for (const key of placeKeys(item)) if (!index.has(key)) index.set(key, item);
+    return index;
+  };
+  const fillBlanks = (target, source, fields) => {
+    for (const field of fields || Object.keys(source)) if (source[field] !== '' && source[field] !== undefined && (target[field] === '' || target[field] === undefined)) target[field] = source[field];
+  };
+  /* every object on the page that carries a link and an address, listing or not (schema.org Residence without a price, map pins) */
+  const linkedObjects = (sources, base) => {
+    const found = [];
+    const walk = (value, depth) => {
+      if (!value || typeof value !== 'object' || depth > 10 || found.length > 2000) return;
+      if (Array.isArray(value)) return value.forEach(child => walk(child, depth + 1));
+      const keys = Object.keys(value);
+      if (keys.some(key => KEYS.url.test(key)) && keys.some(key => KEYS.address.test(key))) {
+        const row = normalize(value, base);
+        if (row['Listing URL']) found.push(row);
+      }
+      Object.values(value).forEach(child => walk(child, depth + 1));
+    };
+    sources.forEach(source => walk(source, 0));
+    return found;
+  };
+  const listingsIn = (sources, base) => {
+    const byKey = new Map();
+    for (const source of sources) {
+      for (const collection of collections(source)) {
+        for (const item of collection) {
+          const listing = normalize(item, base);
+          const key = listing['Listing URL'] || listing['Listing ID'] || listing.Address;
+          if (!key) continue;
+          const existing = byKey.get(key);
+          if (!existing) byKey.set(key, listing);
+          else for (const [field, value] of Object.entries(listing)) if (value !== '' && existing[field] === '') existing[field] = value;
+        }
+      }
+    }
+    /* the same home from two sources (say JSON-LD without a link and the search data with one): fold the linkless copy in */
+    const all = [...byKey.values()];
+    const linked = placeIndex(all.filter(item => item['Listing URL']));
+    const kept = all.filter(item => {
+      const target = !item['Listing URL'] && placeKeys(item).map(key => linked.get(key)).find(Boolean);
+      if (!target) return true;
+      fillBlanks(target, item);
+      return false;
+    });
+    /* homes still without a link: borrow it (and a photo) from any object on the page at the same address, e.g. a schema.org Residence */
+    if (kept.some(item => !item['Listing URL'])) {
+      const places = placeIndex(linkedObjects(sources, base));
+      for (const item of kept) {
+        const source = !item['Listing URL'] && placeKeys(item).map(key => places.get(key)).find(Boolean);
+        if (source) fillBlanks(item, source, ['Listing URL', 'Image', 'Zip', 'Latitude', 'Longitude']);
+      }
+    }
+    return kept.map(addressFromUrl);
+  };
+  /* sites without listing data in JSON: repeated cards (4+ alike) that each show a $ price and a link */
+  const PRICE_TEXT = /\$\s?\d{1,3}(?:,\d{3})+(?:\.\d+)?|\$\s?\d+(?:\.\d+)?\s?[KkMm]\b|\$\s?\d{3,}(?:\.\d+)?/;
+  const signatureOf = element => element.tagName + '.' + (element.getAttribute('class') || '').trim().split(/\s+/).slice(0, 2).join('.');
+  const PRICE_RANGE = new RegExp('(' + PRICE_TEXT.source + ')\\s*(?:-|–|—|to)\\s*(' + PRICE_TEXT.source + ')', 'i');
+  const NOT_LISTING_LINK = /(^|[\/_])(agents?|brokers?|offices?|realtors?|realestateagents|profiles?|teams?|contact|login|sign-?in|register|share|mortgage|lenders?|advertise|privacy|terms|help|schools?|reviews?|report)([\/_.-]|$)/i;
+  const LISTING_LINK = /home-?details?|propert|listing|for-?sale|for-?rent|rental|apartment|condo|house|homes?\/|\d{5,}|-[a-z]{2}-\d{5}/i;
+  const NOT_PHOTO_PART = '[class*="agent" i],[class*="realtor" i],[class*="avatar" i],[class*="logo" i],[class*="icon" i],[class*="badge" i],[class*="headshot" i]';
+  const NOT_PHOTO_URL = /\.svg(\?|$)|\/(icons?|logos?|avatars?|agents?|realtors?|badges?|sprites?)\/|logo|avatar|headshot|placeholder|no[-_]?photo/i;
+  const STATUS_TEXT = /\b(coming soon|for sale|for rent|for lease|under contract|contingent|pending|sold|leased|off market|new construction|auction|foreclosure)\b/i;
+  const TYPE_TEXT = /\b(single[- ]family|multi[- ]family|condo(?:minium)?|townho(?:use|me)|duplex|triplex|fourplex|mobile home|manufactured home|apartment|co-?op|vacant land|lots? & land|farm|ranch)\b/i;
+  const ID_ATTRIBUTES = ['data-listing-id', 'data-listingid', 'data-property-id', 'data-propertyid', 'data-pid', 'data-zpid', 'data-mlsid', 'data-id'];
+  /* text with a comma where block elements meet, so <p>7715 Cloverlake Court</p><p>Houston, TX</p> reads as an address */
+  const BLOCK = /^(P|DIV|BR|LI|H[1-6]|TR|TD|DT|DD|SECTION|ARTICLE|HEADER|FOOTER|ADDRESS|UL|OL)$/;
+  const blockText = element => {
+    let out = '';
+    for (const node of element.childNodes) {
+      if (node.nodeType === 3) out += node.data;
+      else if (node.nodeType === 1 && !/^(SCRIPT|STYLE|TEMPLATE|SVG)$/i.test(node.nodeName)) out += BLOCK.test(node.nodeName) ? '\u0001' + blockText(node) + '\u0001' : blockText(node);
+    }
+    return out;
+  };
+  const lineOf = element => clean(blockText(element).replace(/\s*\u0001[\s\u0001]*/g, ', ')).replace(/^,\s*|,\s*$/g, '');
+  const titleCase = s => s.toLowerCase().replace(/(^|[\s-])[a-z]/g, c => c.toUpperCase());
+  const photoOf = (card, base) => {
+    for (const element of card.querySelectorAll('img, source, [style*="background-image"], [data-src], [data-bg], [data-background-image]')) {
+      const part = element.closest(NOT_PHOTO_PART);
+      if (part && part !== card && card.contains(part)) continue;
+      const style = (element.getAttribute('style') || '').match(/background-image\s*:\s*url\(\s*['"]?([^'")]+)/i);
+      const source = element.getAttribute('data-src') || element.getAttribute('data-lazy-src') || element.getAttribute('data-bg') ||
+        element.getAttribute('data-background-image') || element.getAttribute('src') ||
+        (element.getAttribute('data-srcset') || element.getAttribute('srcset') || '').trim().split(/\s/)[0] || (style && style[1]) || '';
+      if (!source || source.startsWith('data:') || NOT_PHOTO_URL.test(source)) continue;
+      try { return new URL(source, base).href; } catch (error) { }
+    }
+    return '';
+  };
+  /* the card's own page: on-site links, scored up for listing-like paths and for carrying the street address, down for agent/office pages */
+  const listingLinkOf = (card, base, street) => {
+    const domainOf = host => host.split('.').slice(-2).join('.');
+    const site = domainOf(new URL(base).hostname);
+    const links = new Map();
+    for (const anchor of card.querySelectorAll('a[href]')) {
+      let url;
+      try { url = new URL(anchor.getAttribute('href'), base); } catch (error) { continue; }
+      if (!/^https?:$/.test(url.protocol) || domainOf(url.hostname) !== site || url.pathname.length < 2) continue;
+      url.hash = '';
+      const entry = links.get(url.href) || { url, score: NOT_LISTING_LINK.test(url.pathname) ? -10 : LISTING_LINK.test(url.pathname) ? 3 : 0 };
+      entry.score += 1 + (street && clean(anchor.textContent).includes(street) ? 5 : 0);
+      links.set(url.href, entry);
+    }
+    const best = [...links.values()].sort((a, b) => b.score - a.score)[0];
+    return best && best.score > -5 ? best.url : null;
+  };
+  const cardListings = (doc, base) => {
+    const cards = new Set();
+    for (const element of doc.querySelectorAll('body *')) {
+      if (element.children.length > 3) continue;
+      const own = clean(element.textContent);
+      if (own.length > 40 || !PRICE_TEXT.test(own)) continue;
+      for (let card = element.parentElement, level = 0; card && card.parentElement && level < 8; card = card.parentElement, level += 1) {
+        const signature = signatureOf(card);
+        if ([...card.parentElement.children].filter(child => signatureOf(child) === signature).length >= 4 && card.querySelector('a[href]')) {
+          cards.add(card);
+          break;
+        }
+      }
+    }
+    const rows = new Map();
+    for (const card of cards) {
+      const all = clean(card.textContent);
+      const range = all.match(PRICE_RANGE);
+      const price = toNumber((range ? range[1] : (all.match(PRICE_TEXT) || [''])[0]).replace(/\$\s?/, ''));
+      const texts = [...card.querySelectorAll('*')].filter(e => clean(e.textContent).length < 140).map(lineOf).sort((a, b) => a.length - b.length);
+      const line = texts.find(t => /,\s*[A-Z]{2}\s+\d{5}/.test(t)) || texts.find(t => /^[^,]{3,80},\s*[A-Za-z .'-]{2,40},\s*[A-Z]{2}$/.test(t)) || '';
+      const parts = line.match(/^(.*?),\s*([A-Za-z .'-]+?),?\s*([A-Z]{2})(?:\s+(\d{5}))?\b/);
+      const heading = [...card.querySelectorAll('h1,h2,h3,h4,[class*="title" i],[class*="address" i]')].map(lineOf)
+        .find(text => text.length < 200 && !text.startsWith('$') && (text.split(' ').length >= 3 || /\d/.test(text))) || '';
+      const street = parts ? parts[1] : /^\d+[A-Za-z]?\s+(?!(?:bed|br|bd|bath|ba|stor|car|unit|acre)\w*\b)[A-Za-z]/i.test(heading) ? heading.slice(0, 120) : '';
+      const link = listingLinkOf(card, base, street || heading.slice(0, 40));
+      if (!price || !link || rows.has(link.href)) continue;
+      const full = all.match(/(\d+)\s*full(?:\s*(?:&|and|,)\s*(\d+)\s*half)?\s*baths?/i);
+      const lot = all.match(/([\d.,]+)\s*(acres?)\b|([\d,]+)\s*(?:lot\s*sq\.?\s?ft|sq\.?\s?ft\.?\s*lot)/i);
+      const hoa = all.match(/\$\s?([\d,]+)\s*(?:\/\s*mo(?:nth)?\.?)?\s*HOA|HOA(?:\s*(?:fee|dues))?:?\s*\$\s?([\d,]+)/i);
+      const id = (link.pathname.match(/(\d{5,})(?:\.html?)?\/?$/) || [])[1] || ID_ATTRIBUTES.map(name => card.getAttribute(name)).find(Boolean) || '';
+      const brokerage = [...card.querySelectorAll('a[href*="broker" i], a[href*="office" i], [class*="brokerage" i], [class*="broker-name" i]')]
+        .map(element => clean(element.textContent)).find(text => text.length > 2 && text.length < 80) || '';
+      const row = Object.fromEntries(LISTING_FIELDS.map(field => [field, '']));
+      Object.assign(row, {
+        'Listing ID': id,
+        'Address': scrub(tidy(street)), 'City': parts ? tidy(parts[2]) : '', 'State': parts ? parts[3] : '', 'Zip': parts && parts[4] || '',
+        'Status': titleCase((all.match(STATUS_TEXT) || [''])[0]),
+        'Property type': titleCase((all.match(TYPE_TEXT) || [''])[0]),
+        'Price': price,
+        'Price (max)': range ? toNumber(range[2].replace(/\$\s?/, '')) ?? '' : '',
+        'Beds': toNumber((all.match(/(\d+(?:\.\d+)?)\s*(?:bd|bds|bed|beds|bedrooms?|br|bdrms?)\b/i) || [])[1]) ?? (/\bstudio\b/i.test(all) ? 0 : ''),
+        'Baths': full ? Number(full[1]) + (full[2] ? Number(full[2]) / 2 : 0) : toNumber((all.match(/(\d+(?:\.\d+)?)\s*(?:ba|bath|baths|bathrooms?)\b/i) || [])[1]) ?? '',
+        'Living area (sqft)': toNumber((all.match(/([\d,]+)\s*(?:sq\.?\s?ft|sqft|square feet|ft²)/i) || [])[1]) ?? '',
+        'Lot size': lot ? (lot[1] ? lot[1] + ' ' + lot[2].toLowerCase() : lot[3] + ' sqft') : '',
+        'Year built': toNumber((all.match(/(?:built in|year built:?)\s*((?:18|19|20)\d\d)\b|\b((?:18|19|20)\d\d)\s*year built/i) || []).slice(1).find(Boolean)) ?? '',
+        'HOA fee': hoa ? toNumber(hoa[1] || hoa[2]) ?? '' : '',
+        'Days on market': toNumber((all.match(/(\d+)\s*days? on (?:market|site|[\w.]+\.com)/i) || [])[1]) ?? '',
+        'Brokerage': scrub(brokerage),
+        'MLS #': (all.match(/MLS\s*(?:#|number|no\.?|id)?\s*:?\s*#?\s*([A-Z]{0,4}\d[\dA-Z-]{3,})/i) || [])[1] || '',
+        'Image': photoOf(card, base),
+        'Listing URL': link.href,
+        'Description': heading && heading !== street && !line.includes(heading) ? scrub(heading).slice(0, 300) : '',
+      });
+      rows.set(link.href, addressFromUrl(row));
+    }
+    return [...rows.values()];
+  };
+  const listingsOnPage = (doc, base) => {
+    const sources = pageSources(doc);
+    const found = listingsIn(sources, base);
+    if (found.length >= 3 && found.every(item => item.Image && item['Listing URL'])) return found;
+    const cards = cardListings(doc, base);
+    const byUrl = new Map(cards.map(card => [card['Listing URL'], card]));
+    const byPlace = placeIndex(cards);
+    for (const item of found) {
+      const card = byUrl.get(item['Listing URL']) || placeKeys(item).map(key => byPlace.get(key)).find(Boolean);
+      if (card) fillBlanks(item, card, ['Listing URL', 'Image']);
+    }
+    if (found.length >= 3) return found;
+    const fresh = cards.filter(card => !found.some(item => item['Listing URL'] === card['Listing URL']));
+    const extras = linkedObjects(sources, base);
+    const extraByUrl = new Map(extras.map(row => [row['Listing URL'], row]));
+    const extraByPlace = placeIndex(extras);
+    for (const card of fresh) {
+      const extra = extraByUrl.get(card['Listing URL']) || placeKeys(card).map(key => extraByPlace.get(key)).find(Boolean);
+      if (extra) fillBlanks(card, extra);
+    }
+    return found.concat(fresh);
+  };
+  const PAGE_PATTERNS = [/[?&](?:page|pg|p|pagenumber|currentpage)=(\d+)/i, /\/(\d+)_p\/?/, /\/p_(\d+)\/?/, /\/(?:page|pg)-(\d+)/i, /\/p(\d+)\/?$/, /\/(\d{1,3})\/?$/];
+  const pageNumberOf = href => {
+    const url = new URL(href, location.href);
+    const tail = url.pathname + url.search;
+    for (const pattern of PAGE_PATTERNS) { const m = tail.match(pattern); if (m) return Number(m[1]); }
+    return 1;
+  };
+  const nextPageUrl = (doc, current) => {
+    const here = new URL(current);
+    const number = pageNumberOf(current);
+    const declared = doc.querySelector('link[rel="next"][href], a[rel="next"][href]');
+    if (declared) { try { return new URL(declared.getAttribute('href'), current).href; } catch (error) { } }
+    for (const anchor of doc.querySelectorAll('a[aria-label*="next" i][href], a[title*="next" i][href]')) {
+      try {
+        const url = new URL(anchor.getAttribute('href'), current);
+        if (url.origin === here.origin && pageNumberOf(url.href) === number + 1) return url.href;
+      } catch (error) { }
+    }
+    const base = here.pathname.replace(/\/((\d+)_p|p_\d+|(page|pg)-\d+|p\d+|\d{1,3})\/?$/i, '/').replace(/\/?$/, '/');
+    for (const anchor of doc.querySelectorAll('a[href]')) {
+      let url;
+      try { url = new URL(anchor.getAttribute('href'), current); } catch (error) { continue; }
+      if (url.origin !== here.origin || url.href === here.href) continue;
+      const tail = url.pathname + url.search;
+      if (!(url.pathname + '/').startsWith(base) && url.pathname !== here.pathname) continue;
+      if (PAGE_PATTERNS.some(pattern => { const m = tail.match(pattern); return m && Number(m[1]) === number + 1; })) return url.href;
+    }
+    return null;
+  };
+
+  /* ---- robots.txt ---- */
+  const robots = fetch('/robots.txt', { credentials: 'omit' }).then(r => (r.ok ? r.text() : '')).then(body => {
+    const rules = [];
+    let agents = [];
+    let inRules = false;
+    body.split(/\r?\n/).forEach(raw => {
+      const match = raw.replace(/#.*/, '').trim().match(/^(user-agent|allow|disallow)\s*:\s*(.*)$/i);
+      if (!match) return;
+      const field = match[1].toLowerCase();
+      const value = match[2].trim();
+      if (field === 'user-agent') {
+        if (inRules) { agents = []; inRules = false; }
+        agents.push(value.toLowerCase());
+      } else {
+        inRules = true;
+        if (agents.includes('*') && value) {
+          const pattern = '^' + value.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\\\$$/, '$');
+          rules.push({ allow: field === 'allow', length: value.length, regex: new RegExp(pattern) });
+        }
+      }
+    });
+    return rules;
+  }).catch(() => []);
+  const allowed = async href => {
+    const url = new URL(href, location.href);
+    const path = url.pathname + url.search;
+    let best = null;
+    (await robots).forEach(rule => {
+      if (rule.regex.test(path) && (!best || rule.length > best.length || (rule.length === best.length && rule.allow))) best = rule;
+    });
+    return !best || best.allow;
+  };
+
+  /* ---- storage ---- */
+  let state = null;
+  try { state = JSON.parse(localStorage.getItem(KEY)); } catch (error) { state = null; }
+  state = state || { items: {}, order: [], pages: [] };
+  const save = () => {
+    try { localStorage.setItem(KEY, JSON.stringify(state)); } catch (error) { setStatus('Could not save: ' + error.message); }
+  };
+  const database = new Promise((resolve, reject) => {
+    const request = indexedDB.open('realEstateCollector', 1);
+    request.onupgradeneeded = () => request.result.createObjectStore('details');
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+  const store = async (mode, run) => {
+    const db = await database;
+    return new Promise((resolve, reject) => {
+      const transaction = db.transaction('details', mode);
+      const request = run(transaction.objectStore('details'));
+      transaction.oncomplete = () => resolve(request.result);
+      transaction.onerror = () => reject(transaction.error);
+    });
+  };
+  const detailKeys = async () => new Set(await store('readonly', s => s.getAllKeys()));
+  const keyOf = listing => listing['Listing URL'] || listing['Listing ID'] || [listing.Address, listing.Zip].filter(Boolean).join(' ');
+  const addListings = (listings, page) => {
+    let added = 0;
+    for (const listing of listings) {
+      const key = keyOf(listing);
+      if (!key) continue;
+      const row = { Site: SITE, ...listing, Page: page };
+      const existing = state.items[key];
+      if (!existing) {
+        state.items[key] = row;
+        state.order.push(key);
+        added += 1;
+      } else {
+        for (const [field, value] of Object.entries(row)) if (value !== '' && (existing[field] === '' || existing[field] === undefined)) existing[field] = value;
+      }
+    }
+    if (added) save();
+    return added;
+  };
+
+  /* ---- fetching with a timeout, retries on network errors, and Stop ---- */
+  let running = '';
+  let stopRequested = false;
+  let statusText = '';
+  let wake = null;
+  let inflight = null;
+  let slowedNote = '';
+  const reasonOf = error => error?.name === 'TimeoutError' ? 'no answer within ' + FETCH_TIMEOUT / 1000 + 's'
+    : 'network error (' + clean(String(error?.message || error)).slice(0, 80) + ')';
+  const fetchDocument = async url => {
+    const controller = new AbortController();
+    inflight = controller;
+    const timer = setTimeout(() => controller.abort(new DOMException('timed out', 'TimeoutError')), FETCH_TIMEOUT);
+    try {
+      const response = await fetch(url, { credentials: 'include', signal: controller.signal });
+      const html = await response.text();
+      return { response, html, doc: parseHtml(html) };
+    } finally {
+      clearTimeout(timer);
+      inflight = null;
+    }
+  };
+  const pause = (ms, label) => new Promise(resolve => {
+    const until = Date.now() + ms;
+    setStatus(label + ' · next at ' + new Date(until).toLocaleTimeString() + slowedNote);
+    const finish = () => {
+      clearTimeout(timer);
+      wake = null;
+      if (Date.now() - until > 30000) slowedNote = ' · Chrome slowed this tab while it was hidden; keep it visible for full speed.';
+      resolve();
+    };
+    const timer = setTimeout(finish, ms);
+    wake = finish;
+  });
+  const fetchWithRetry = async (url, what, delay) => {
+    for (let attempt = 1; ; attempt += 1) {
+      try {
+        return await fetchDocument(url);
+      } catch (error) {
+        if (stopRequested || attempt >= FETCH_TRIES) throw error;
+        await pause(delay * attempt, what + ': ' + reasonOf(error) + ', trying again (' + (attempt + 1) + '/' + FETCH_TRIES + ')');
+        if (stopRequested) throw error;
+      }
+    }
+  };
+  const stop = () => {
+    stopRequested = true;
+    setStatus('Stopping…');
+    if (wake) wake();
+    if (inflight) inflight.abort();
+  };
+  const unexpected = (error, action) => 'Stopped by an unexpected error: ' + clean(String(error?.message || error)).slice(0, 120) +
+    '. Click ' + action + ' to continue.';
+  const looksBlocked = (response, doc) => response.status !== 200 ||
+    /captcha|human verification|are you a robot|access denied|request blocked|press & hold|unusual traffic/i.test(clean(doc.title) + ' ' + clean(doc.body?.textContent).slice(0, 400));
+  const blockedMessage = (where, response, doc) => 'Stopped at ' + where + ': the site answered HTTP ' + response.status + ' "' +
+    clean(doc.title).slice(0, 60) + '" instead of a normal page. Wait a while, open ' + SITE + ' normally, then continue.';
+
+  const collectPages = async target => {
+    running = 'pages';
+    stopRequested = false;
+    render();
+    try {
+      const keyOf = item => item['Listing URL'] || item['Listing ID'] || item.Address;
+      const first = listingsOnPage(document, location.href);
+      let previous = new Set(first.map(keyOf));
+      setStatus('This page: +' + addListings(first, pageNumberOf(location.href)) + ' listings.');
+      if (PAGE_ONLY) return setStatus('This page: ' + state.order.length + ' listings in total. ' + PAGE_ONLY_NOTE);
+      let url = nextPageUrl(document, location.href);
+      const visited = new Set([location.href]);
+      while (url && !visited.has(url) && state.order.length < target && !stopRequested) {
+        visited.add(url);
+        if (!(await allowed(url))) return setStatus('Stopped: ' + SITE + '’s robots.txt does not allow fetching ' + new URL(url).pathname +
+          '. Go through the pages yourself; each one you open is added.');
+        const page = pageNumberOf(url);
+        setStatus('Fetching page ' + page + '…');
+        let fetched;
+        try {
+          fetched = await fetchWithRetry(url, 'Page ' + page, SEARCH_DELAY);
+        } catch (error) {
+          if (stopRequested) break;
+          return setStatus('Stopped at page ' + page + ': ' + reasonOf(error) + ', ' + FETCH_TRIES + ' times. Check your connection, then click Collect pages to continue.');
+        }
+        const { response, doc } = fetched;
+        if (looksBlocked(response, doc)) return setStatus(blockedMessage('page ' + page, response, doc));
+        const found = listingsOnPage(doc, url);
+        if (!found.length) return setStatus('Page ' + page + ' has no listing data in its HTML (this site builds results in the browser). ' +
+          'Open the pages yourself; each one is added while the collector is open.');
+        if (found.filter(item => previous.has(keyOf(item))).length >= found.length * 0.8) return setStatus('Page ' + page + ' came back with the same listings as the page before: ' +
+          SITE + ' loads its next pages in the browser. Open them yourself; with the collector open, the listings they load are added.');
+        previous = new Set(found.map(keyOf));
+        const added = addListings(found, page);
+        render();
+        url = nextPageUrl(doc, url);
+        if (url && state.order.length < target) await pause(SEARCH_DELAY, 'Page ' + page + ': +' + added + ' listings');
+      }
+      setStatus(stopRequested ? 'Stopped.' : 'Done: ' + state.order.length + ' listings.' + (url ? '' : ' No further pages.') + slowedNote);
+    } catch (error) {
+      setStatus(unexpected(error, 'Collect pages'));
+    } finally {
+      running = '';
+      render();
+    }
+  };
+
+  const collectDetails = async limit => {
+    running = 'details';
+    stopRequested = false;
+    render();
+    let done = new Set();
+    try {
+      if (PAGE_ONLY) return setStatus('Details are not collected on ' + SITE + '. ' + PAGE_ONLY_NOTE);
+      done = await detailKeys();
+      const todo = state.order.filter(key => {
+        if (done.has(key)) return false;
+        try { return new URL(state.items[key]['Listing URL']).origin === location.origin; } catch (error) { return false; }
+      }).slice(0, limit || Infinity);
+      if (!todo.length) return setStatus('No listings of ' + SITE + ' left without details.');
+      let fetchMs = 0;
+      for (const [index, key] of todo.entries()) {
+        if (stopRequested) break;
+        const row = state.items[key];
+        const perListing = DETAIL_DELAY + (index ? fetchMs / index : 4000);
+        setStatus('Details ' + (done.size + 1) + '/' + state.order.length + ' · about ' +
+          Math.ceil((todo.length - index) * perListing / 60000) + ' min left' + slowedNote);
+        let details;
+        if (!(await allowed(row['Listing URL']))) {
+          details = { 'Details source': 'skipped: robots.txt disallows this page', 'Details collected at': new Date().toISOString() };
+        } else {
+          const started = Date.now();
+          let fetched;
+          try {
+            fetched = await fetchWithRetry(row['Listing URL'], 'Listing', DETAIL_DELAY);
+          } catch (error) {
+            if (stopRequested) break;
+            return setStatus('Stopped: ' + reasonOf(error) + ', ' + FETCH_TRIES + ' times. Check your connection, then click Collect details to continue.');
+          }
+          fetchMs += Date.now() - started;
+          const { response, doc } = fetched;
+          if (response.status === 404 || response.status === 410) {
+            details = { 'Details source': 'listing page not found (' + response.status + ')', 'Details collected at': new Date().toISOString() };
+          } else if (looksBlocked(response, doc)) {
+            return setStatus(blockedMessage('a listing page', response, doc));
+          } else {
+            try {
+              const best = bestListing(pageSources(doc), row['Listing URL'], { url: row['Listing URL'], id: row['Listing ID'] });
+              const found = { ...(best ? best.listing : {}) };
+              const pairs = factPairs(best ? best.raw : pageSources(doc));
+              for (const [field, pattern, convert] of FACT_FIELDS) {
+                const label = [...pairs.keys()].find(name => pattern.test(name));
+                const value = label === undefined ? '' : convert(pairs.get(label));
+                if (value !== '' && (found[field] === '' || found[field] === undefined)) found[field] = value;
+              }
+              if (!found['MLS #']) found['MLS #'] = (clean(doc.title).match(/MLS\s*#?\s*:?\s*([A-Z0-9-]{4,})/i) || [])[1] || '';
+              if (pairs.size) {
+                found['Facts'] = [...pairs].map(([label, value]) => label + ': ' + value).join('\n');
+                found['Facts JSON'] = JSON.stringify(Object.fromEntries(pairs));
+              }
+              details = Object.fromEntries(Object.entries(found).filter(([field, value]) => value !== '' &&
+                (['Description', 'Photos', 'Facts', 'Facts JSON'].includes(field) || row[field] === '' || row[field] === undefined)));
+              details['Details source'] = best ? 'listing page' : 'no listing data in the page';
+            } catch (error) {
+              details = { 'Details source': 'could not read the page: ' + clean(String(error?.message || error)).slice(0, 120) };
+            }
+            details['Details collected at'] = new Date().toISOString();
+          }
+        }
+        await store('readwrite', s => s.put(details, key));
+        done.add(key);
+        render(done.size);
+        if (index < todo.length - 1) await pause(DETAIL_DELAY, 'Saved ' + (row.Address || key).slice(0, 40));
+      }
+      setStatus(stopRequested ? 'Stopped. Click Collect details to continue.' : 'Done: details for ' + done.size + ' of ' + state.order.length + ' listings.' + slowedNote);
+    } catch (error) {
+      setStatus(unexpected(error, 'Collect details'));
+    } finally {
+      running = '';
+      render(done.size);
+    }
+  };
+
+  /* ---- CSV ---- */
+  const csvRows = async () => {
+    const keys = await store('readonly', s => s.getAllKeys());
+    const values = await store('readonly', s => s.getAll());
+    const details = new Map(keys.map((key, index) => [key, values[index]]));
+    return state.order.map(key => ({ ...state.items[key], ...(details.get(key) || {}) }));
+  };
+  const toCsv = async () => {
+    const rows = await csvRows();
+    const quote = value => {
+      let s = String(value ?? '');
+      if (/^[=+@]|^-\D/.test(s)) s = "'" + s;
+      return '"' + s.replace(/"/g, '""') + '"';
+    };
+    return '﻿' + [COLUMNS, ...rows.map(row => COLUMNS.map(column => row[column]))].map(line => line.map(quote).join(',')).join('\r\n');
+  };
+  const download = async () => {
+    const link = document.createElement('a');
+    link.href = URL.createObjectURL(new Blob([await toCsv()], { type: 'text/csv;charset=utf-8' }));
+    link.download = 'real_estate_' + SITE.replace(/[^\w-]+/g, '_') + '_' + state.order.length + '_listings.csv';
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(link.href), 10000);
+  };
+  const clear = async () => {
+    localStorage.removeItem(KEY);
+    await store('readwrite', s => s.clear());
+    state = { items: {}, order: [], pages: [] };
+  };
+
+  /* ---- panel ---- */
+  const panel = document.createElement('div');
+  panel.id = 'real-estate-collector-panel';
+  panel.setAttribute('style', 'position:fixed;z-index:2147483647;right:16px;bottom:16px;width:340px;padding:12px 14px;' +
+    'background:#fff;color:#1d2125;border:1px solid #9aa3ab;border-radius:8px;box-shadow:0 4px 18px rgba(0,0,0,.25);' +
+    'font:14px/1.45 Arial,sans-serif;direction:ltr;text-align:left');
+  const title = document.createElement('strong');
+  const summary = document.createElement('div');
+  const status = document.createElement('div');
+  status.setAttribute('style', 'margin-top:6px;color:#5b636b;font-size:12px;min-height:16px');
+  const setStatus = message => { statusText = message; status.textContent = message; };
+  const button = (label, onClick) => {
+    const element = document.createElement('button');
+    element.type = 'button';
+    element.textContent = label;
+    element.setAttribute('style', 'margin:8px 6px 0 0;padding:4px 10px;border:1px solid #9aa3ab;border-radius:6px;background:#f5f6f7;color:#1d2125;cursor:pointer;font:inherit');
+    element.addEventListener('click', onClick);
+    return element;
+  };
+  const target = document.createElement('input');
+  target.type = 'number';
+  target.min = '1';
+  target.value = '500';
+  target.setAttribute('style', 'width:72px;margin:8px 6px 0 0;padding:3px 6px;border:1px solid #9aa3ab;border-radius:6px;font:inherit');
+  const targetLabel = document.createElement('span');
+  targetLabel.textContent = 'Target ';
+  const pagesButton = button('Collect pages', () => collectPages(Number(target.value) || 500));
+  const detailsButton = button('Collect details', () => collectDetails());
+  const stopButton = button('Stop', stop);
+  const downloadButton = button('Download CSV', download);
+  const clearButton = button('Clear', async () => {
+    if (confirm('Delete the ' + state.order.length + ' collected listings of ' + SITE + ' and their details?')) { await clear(); render(0); setStatus('Cleared.'); }
+  });
+  const closeButton = button('×', () => { panel.style.display = 'none'; });
+  let detailCount = 0;
+  const render = count => {
+    if (typeof count === 'number') detailCount = count;
+    title.textContent = 'Real Estate Collector: ' + state.order.length + ' listings';
+    summary.textContent = SITE + ' · details: ' + detailCount + '/' + state.order.length;
+    pagesButton.disabled = !!running;
+    detailsButton.disabled = !!running || !state.order.length;
+    stopButton.disabled = !running;
+    clearButton.disabled = !!running;
+  };
+  const searchRow = document.createElement('div');
+  searchRow.append(targetLabel, target, pagesButton);
+  panel.append(title, summary, searchRow, detailsButton, stopButton, downloadButton, clearButton, closeButton, status);
+  document.body.appendChild(panel);
+
+  /* ---- follow what the site loads while you browse (no requests of its own) ---- */
+  const LISTING_HINT = /"(?:price|list_price|listPrice|unformattedPrice|listingPrice|askingPrice)"\s*:/;
+  const follow = (body, type) => {
+    if (!body || body.length > 15e6 || !LISTING_HINT.test(body)) return;
+    const sources = /x-component/i.test(type || '') ? flightSources([body]) : [parseJson(body)].filter(Boolean);
+    if (!sources.length) return;
+    const added = addListings(listingsIn(sources, location.href), 'browsing');
+    if (added) {
+      render();
+      if (!running) setStatus('Added ' + added + ' listings from what ' + SITE + ' just loaded. Open more pages or move the map to add more.');
+    }
+  };
+  window.realEstateCollectorFollow = follow;
+  if (!window.realEstateCollectorWatching) {
+    window.realEstateCollectorWatching = true;
+    const pageFetch = window.fetch;
+    window.fetch = function (input, init) {
+      const result = pageFetch.apply(this, arguments);
+      result.then(response => {
+        const type = response.headers.get('content-type') || '';
+        if (/json|javascript|text\/plain|x-component/i.test(type)) return response.clone().text().then(body => window.realEstateCollectorFollow?.(body, type));
+      }).catch(() => {});
+      return result;
+    };
+    const send = XMLHttpRequest.prototype.send;
+    XMLHttpRequest.prototype.send = function () {
+      this.addEventListener('load', () => {
+        try {
+          const body = this.responseType === '' || this.responseType === 'text' ? this.responseText
+            : this.responseType === 'json' ? JSON.stringify(this.response) : '';
+          window.realEstateCollectorFollow?.(body, this.getResponseHeader('content-type'));
+        } catch (error) { }
+      });
+      return send.apply(this, arguments);
+    };
+  }
+
+  const reopen = async () => {
+    panel.style.display = '';
+    if (running) return;
+    try {
+      const added = addListings(listingsOnPage(document, location.href), pageNumberOf(location.href));
+      setStatus(added || state.order.length
+        ? 'This page: +' + added + ' listings. Open more pages, or click Collect pages to fetch the next ones.'
+        : 'No listings in this page’s data yet. Browse the search results; listings the site loads are added.');
+      render((await detailKeys()).size);
+    } catch (error) {
+      setStatus(unexpected(error, 'the bookmark again'));
+    }
+  };
+  window.realEstateCollector = {
+    version: VERSION, panel, reopen, collectPages, collectDetails, csv: toCsv, rows: csvRows, clear, allowed, stop,
+    status: () => ({ running, statusText, listings: state.order.length, details: detailCount }),
+    engine: { listingsIn, listingsOnPage, cardListings, pageSources, flightSources, bestListing, factPairs, nextPageUrl, pageNumberOf, parseJson, normalize },
+  };
+  reopen();
+})();
+</script>
+<script>
+  const source = document.getElementById('collector-source').textContent.trim();
+  document.getElementById('bookmarklet').href = 'javascript:' + encodeURIComponent(source);
+  document.getElementById('copy').addEventListener('click', async () => {
+    await navigator.clipboard.writeText(source);
+    document.getElementById('copied').textContent = 'اتنسخ';
+  });
+</script>
+</body>
+</html>
