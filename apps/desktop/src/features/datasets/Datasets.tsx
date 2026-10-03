@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import type { Navigate } from "../../app/App.tsx";
-import { call, isTauri, pickFile } from "../../lib/ipc.ts";
+import { call, isTauri, pickFile, pickSaveFile } from "../../lib/ipc.ts";
+import { openPath, revealInFolder } from "../../lib/desktop.ts";
 import { useJob, useService } from "../../lib/hooks.ts";
 import { displayValue, formatCount, formatTime, isActive } from "../../lib/format.ts";
 import type { Dataset, Row } from "../../lib/types.ts";
@@ -8,6 +9,45 @@ import { ConfirmButton, ErrorNote, JobProgress, PathInput } from "../../componen
 import { MappingEditor } from "../../components/MappingEditor.tsx";
 
 const IMPORT_FILTERS = [{ name: "Data files", extensions: ["csv", "json", "jsonl", "ndjson", "xlsx", "xml", "parquet", "docx", "zip", "gz"] }];
+
+/** Exports a dataset as a formatted workbook: Summary with live formulas, a filterable table, Details, and Photos. */
+export function WorkbookExport({ datasetId, datasetName }: { datasetId: string; datasetName: string }) {
+  const [jobId, setJobId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const job = useJob(jobId);
+  const running = !!job && isActive(job.state);
+  const saved = job?.state === "completed" ? String(job.result?.path ?? "") : "";
+  const start = async () => {
+    setError(null);
+    try {
+      const fileName = `${datasetName.replace(/[\\/:*?"<>|]+/g, " ").trim() || "dataset"}.xlsx`;
+      const path = await pickSaveFile(fileName, [{ name: "Excel workbook", extensions: ["xlsx"] }]);
+      if (!path) return;
+      const started = await call<{ job_id: string }>("dataset.export_workbook", { dataset_id: datasetId, path: path.toLowerCase().endsWith(".xlsx") ? path : `${path}.xlsx` });
+      setJobId(started.job_id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  };
+  return (
+    <>
+      <button type="button" className="btn" disabled={!isTauri() || running} onClick={() => void start()} title={isTauri() ? undefined : "Exporting needs the desktop app"}>
+        {running ? "Exporting…" : "Export to Excel"}
+      </button>
+      {(saved || error || job?.state === "failed") && (
+        <div className="note small" role="status">
+          {saved ? (
+            <>
+              Saved {formatCount(Number(job?.result?.rows ?? 0))} rows to {saved}.{" "}
+              <button type="button" className="btn btn-small" onClick={() => void openPath(saved)}>Open</button>{" "}
+              <button type="button" className="btn btn-small" onClick={() => void revealInFolder(saved)}>Show in folder</button>
+            </>
+          ) : <ErrorNote message={error ?? job?.error ?? "The workbook could not be written"} />}
+        </div>
+      )}
+    </>
+  );
+}
 
 export function ImportForm({ onImported }: { onImported: (datasetId: string) => void }) {
   const [path, setPath] = useState("");
@@ -109,6 +149,7 @@ export function Datasets({ navigate, initialDatasetId }: { navigate: Navigate; i
               <button type="button" className="btn btn-primary" onClick={() => navigate("match", { datasetId: dataset.id })}>
                 Match & deduplicate
               </button>
+              <WorkbookExport datasetId={dataset.id} datasetName={dataset.name} />
               <ConfirmButton
                 label="Delete dataset"
                 danger

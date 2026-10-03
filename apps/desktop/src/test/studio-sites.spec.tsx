@@ -35,6 +35,8 @@ vi.mock("../lib/ipc.ts", () => ({
 vi.mock("../lib/desktop.ts", () => ({
   copyText: vi.fn(async () => {}),
   getZoom: () => 1,
+  loadSetting: <T,>(_key: string, fallback: T) => fallback,
+  saveSetting: vi.fn(),
   studioHost: {
     call: vi.fn(async () => ({})),
     close: vi.fn(async () => {}),

@@ -1834,6 +1834,32 @@ fieldset.scope legend {
   font-size: 0.8rem;
 }
 
+.studio-collector .row-actions {
+  margin-top: var(--spacing-sm);
+}
+
+.studio-collector-preview {
+  width: 100%;
+  margin-top: var(--spacing-sm);
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.studio-collector-preview th,
+.studio-collector-preview td {
+  overflow: hidden;
+  padding: 2px var(--spacing-xs);
+  border-bottom: 1px solid var(--color-border-subtle);
+  text-align: start;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.studio-collector-preview th {
+  color: var(--color-text-muted);
+  font-weight: 600;
+}
+
 .studio-steps {
   display: grid;
   gap: var(--spacing-sm);

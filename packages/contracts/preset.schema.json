@@ -205,7 +205,14 @@
             "article",
             "document_tables",
             "api",
-            "xml"
+            "xml",
+            "collector"
+          ]
+        },
+        "collector": {
+          "enum": [
+            "listings",
+            "products"
           ]
         }
       }

@@ -23,6 +23,10 @@ Command names match `^[a-z_]+\.[a-z_]+$` (enforced by the host). Unknown additiv
 | `dataset.profile` | `dataset_id` | columns with null rate, distinct count, samples, proposed role, confidence |
 | `dataset.mapping` / `dataset.confirm_mapping` | `dataset_id`, `mapping`, `entity_type` | latest mapping / new immutable version |
 | `dataset.delete` | `dataset_id` | `{deleted}` |
+| `dataset.export_workbook` | `dataset_id`, `path` (absolute, `.xlsx`) | `{job_id}` (job result: `path`, `rows`, `columns`, `sheets`): Summary with live formulas, table, Details, Photos |
+| `records.tax_sales` | `policy_acknowledgement`, `purpose`, `hcad_dir?` | `{job_id}` (job result: `dataset_id`, `rows`): Harris County Tax Office delinquent-tax sale list |
+| `records.foreclosures` | `policy_acknowledgement`, `purpose`, `from`, `to` (`YYYY-MM`, at most 12 months) | `{job_id}`: Harris County Clerk trustee foreclosure notice index |
+| `records.hcad` | `policy_acknowledgement`, `purpose`, `data_dir`, filters (`zip`, `property_class`, `absentee`, `out_of_state`, `no_homestead`, `owner_type`, `owned_years`, `built_before`, `min_value`, `max_value`; at least one) | `{job_id}`: HCAD appraisal roll filtered from the bulk files |
 | `job.list` / `job.get` | `limit` / `job_id`, `after_event_id?` | jobs / job with ordered events |
 | `job.pause` / `job.resume` / `job.cancel` / `job.retry` | `job_id` | `{job_id}` |
 | `job.start_fixture` | `steps?`, `step_seconds?` | `{job_id}` |

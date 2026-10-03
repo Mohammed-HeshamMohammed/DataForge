@@ -1,0 +1,29 @@
+[
+  {
+    "site": "amazon.com",
+    "asin": "B0TEST0001",
+    "title": "Acme Kettle 1.7L",
+    "brand": "Acme",
+    "price": "29.99",
+    "currency": "USD",
+    "list_price": "39.99",
+    "rating": "4.5",
+    "ratings_count": "1234",
+    "page": "1",
+    "position": "1",
+    "image": "https://m.media-amazon.com/images/I/kettle.jpg",
+    "product_url": "https://www.amazon.com/dp/B0TEST0001"
+  },
+  {
+    "site": "amazon.com",
+    "asin": "B0TEST0002",
+    "title": "Acme Toaster 2-Slice",
+    "price": "24.50",
+    "rating": "4.1",
+    "ratings_count": "87",
+    "sponsored": "yes",
+    "page": "1",
+    "position": "2",
+    "product_url": "https://www.amazon.com/dp/B0TEST0002"
+  }
+]

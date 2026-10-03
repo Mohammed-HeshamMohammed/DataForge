@@ -7,6 +7,7 @@ import { isActive } from "../../lib/format.ts";
 import { ErrorNote, JobProgress } from "../../components/ui.tsx";
 import { CustomSelect } from "../../components/CustomSelect.tsx";
 import { ScrapeResult } from "../scraping/Scraping.tsx";
+import { ListingCollector } from "./ListingCollector.tsx";
 import { PURPOSES, SOURCES, enrichSiteCatalog, formatSiteCategory, type SiteCatalogEntry, type SiteCatalogVariant, type SourceKind } from "../scraping/sources.ts";
 
 type Selector = { css?: string; xpath?: string; attribute?: string };
@@ -186,7 +187,7 @@ export function Studio({ navigate, initialUrl = "", active = true }: { navigate:
         return { key: `${site.site_id}::${variant.id}`, site, variant };
       });
   }, [homeChoices, supportedSites]);
-  const bases = (presets.data ?? []).filter((p) => p.strategy.allowed.includes("webview") && p.status !== "disabled" && p.status !== "deprecated" && !((p.extraction as { mode?: string })?.mode ?? "").match(/structured_data|article|document_tables/));
+  const bases = (presets.data ?? []).filter((p) => p.strategy.allowed.includes("webview") && p.status !== "disabled" && p.status !== "deprecated" && !((p.extraction as { mode?: string })?.mode ?? "").match(/structured_data|article|document_tables|collector/));
   const structuredPreset = (presets.data ?? []).find((p) => p.id === "generic.structured_data");
   const [structured, setStructured] = useState<{ url: string; types: Record<string, number>; suggested_type: string | null } | null>(null);
   const [recommendation, setRecommendation] = useState<Detection | null>(null);
@@ -845,6 +846,10 @@ export function Studio({ navigate, initialUrl = "", active = true }: { navigate:
     }
   };
 
+  const collectorNote = useMemo(() => {
+    const host = hostOf(scopeUrl ?? "");
+    return host ? supportedSites.find((site) => site.domains.some((domain) => host === domain || host.endsWith(`.${domain}`)))?.collector_note : undefined;
+  }, [scopeUrl, supportedSites]);
   const draft = draftPreset();
   const canExtract = !!scopeUrl && !!recordRoot && fields.length > 0 && acknowledged && !!purpose && !running && !(job && isActive(job.state));
   const saved = (presets.data ?? []).some((p) => p.id === draft?.id && p.version === version);
@@ -911,6 +916,7 @@ export function Studio({ navigate, initialUrl = "", active = true }: { navigate:
             <details><summary>Technical detection details</summary><code>{recommendation.preset_id}@{recommendation.preset_version}</code> · {recommendation.confidence} confidence</details>
           </section>
         )}
+        <ListingCollector scopeUrl={scopeUrl} pageReady={loaded?.state === "finished"} acknowledged={acknowledged} purpose={purpose} presets={presets.data ?? []} onStaged={setJobId} siteNote={collectorNote} />
         <section className="studio-steps" aria-labelledby="studio-steps-heading">
           <h3 id="studio-steps-heading">What should DataForge collect?</h3>
           <button type="button" className={`studio-step ${recordRoot ? "is-complete" : ""}`} disabled={!scopeUrl || mode !== "none"} onClick={() => void startPick("repeated")}>

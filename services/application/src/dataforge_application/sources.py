@@ -598,6 +598,22 @@ KNOWN_SITE_PROFILES = (
     ("homes", "Homes.com", "real_estate", ("homes.com",), True, None),
     ("apartments", "Apartments.com", "real_estate", ("apartments.com",), True, None),
     ("loopnet", "LoopNet", "real_estate", ("loopnet.com",), True, None),
+    ("har", "HAR.com", "real_estate", ("har.com",), True, None),
+    ("estately", "Estately", "real_estate", ("estately.com",), True, None),
+    ("weichert", "Weichert", "real_estate", ("weichert.com",), True, None),
+    ("coldwell_banker", "Coldwell Banker", "real_estate", ("coldwellbankerhomes.com",), True, None),
+    ("remax", "RE/MAX", "real_estate", ("remax.com",), True, None),
+    ("opendoor", "Opendoor", "real_estate", ("opendoor.com",), True, None),
+    ("streeteasy", "StreetEasy", "real_estate", ("streeteasy.com",), True, None),
+    ("hotpads", "HotPads", "real_estate", ("hotpads.com",), True, None),
+    ("apartmentguide", "ApartmentGuide", "real_estate", ("apartmentguide.com",), True, None),
+    ("apartmentfinder", "ApartmentFinder", "real_estate", ("apartmentfinder.com",), True, None),
+    ("landwatch", "LandWatch", "real_estate", ("landwatch.com",), True, None),
+    ("realtytrac", "RealtyTrac", "real_estate", ("realtytrac.com",), True, None),
+    ("showcase", "Showcase", "real_estate", ("showcase.com",), True, None),
+    ("vrm", "VRM Properties (VA homes)", "real_estate", ("vrmproperties.com",), True, None),
+    ("craigslist", "Craigslist", "real_estate", ("craigslist.org",), True, None),
+    ("newhomesource", "NewHomeSource", "real_estate", ("newhomesource.com",), True, None),
     ("propertyshark", "PropertyShark", "real_estate", ("propertyshark.com",), True, None),
     ("indeed", "Indeed", "jobs", ("indeed.com", "indeed.co.uk", "indeed.ca", "indeed.com.au", "indeed.de", "indeed.fr", "indeed.co.in"), True, None),
     ("linkedin_jobs", "LinkedIn Jobs", "jobs", ("linkedin.com",), True, "/jobs"),
@@ -651,6 +667,22 @@ SITE_EXAMPLE_URLS = {
     "apartments": "https://www.apartments.com/",
     "loopnet": "https://www.loopnet.com/search/commercial-real-estate/",
     "propertyshark": "https://www.propertyshark.com/mason/",
+    "har": "https://www.har.com/houston/realestate/for_sale",
+    "estately": "https://www.estately.com/TX/Houston",
+    "weichert": "https://www.weichert.com/TX/Harris/Houston/",
+    "coldwell_banker": "https://www.coldwellbankerhomes.com/tx/houston/",
+    "remax": "https://www.remax.com/homes-for-sale/tx/houston/city/4835000",
+    "opendoor": "https://www.opendoor.com/homes/houston",
+    "streeteasy": "https://streeteasy.com/for-sale/nyc",
+    "hotpads": "https://hotpads.com/houston-tx/apartments-for-rent",
+    "apartmentguide": "https://www.apartmentguide.com/apartments/Texas/Houston/",
+    "apartmentfinder": "https://www.apartmentfinder.com/Texas/Houston-Apartments",
+    "landwatch": "https://www.landwatch.com/texas-land-for-sale/houston",
+    "realtytrac": "https://www.realtytrac.com/houston-tx/",
+    "showcase": "https://www.showcase.com/tx/houston/commercial-real-estate/for-rent/",
+    "vrm": "https://www.vrmproperties.com/Properties-For-Sale?city=Houston&state=TX",
+    "craigslist": "https://houston.craigslist.org/search/apa",
+    "newhomesource": "https://www.newhomesource.com/communities/tx/houston-area",
     "indeed": "https://www.indeed.com/jobs?q=engineer",
     "linkedin_jobs": "https://www.linkedin.com/jobs/search/",
     "glassdoor": "https://www.glassdoor.com/Job/jobs.htm",
@@ -676,6 +708,30 @@ SITE_EXAMPLE_URLS = {
 }
 
 
+# How Scrape Studio's built-in listing collector handles a site, as tested (full, first_page, page_only, untested).
+SITE_COLLECTOR_SUPPORT = {
+    "zillow": ("full", "Result pages, map pins, and home details; sweep ZIP pages for more map pins. Map-move addresses are excluded by robots.txt."),
+    "trulia": ("full", "Result pages and details."),
+    "amazon": ("full", "Search result pages up to the last page, and product details."),
+    "har": ("full", "Search pages read from the result cards; result pages, details, 120 homes a page."),
+    "estately": ("full", "Result pages and details."),
+    "weichert": ("full", "Result pages and details, with MLS number and year built."),
+    "coldwell_banker": ("full", "Result pages and details."),
+    "remax": ("first_page", "Loads later result pages in the browser: open them yourself and use Add this page."),
+    "opendoor": ("full", "Result pages plus map pins."),
+    "streeteasy": ("full", "Result pages and details."),
+    "hotpads": ("full", "Rentals with price ranges; result pages."),
+    "apartmentguide": ("full", "Rentals; result pages."),
+    "apartmentfinder": ("full", "Rentals; result pages."),
+    "landwatch": ("full", "Land listings; result pages."),
+    "realtytrac": ("full", "Investment and foreclosure listings; result pages."),
+    "showcase": ("full", "Commercial space for lease; prices are per square foot per year."),
+    "vrm": ("full", "Homes the Department of Veterans Affairs is selling."),
+    "craigslist": ("page_only", "Craigslist's terms forbid automated browsing: only pages you open are read."),
+    "newhomesource": ("untested", "Sometimes answers with a bot check, which stops collection."),
+}
+
+
 def site_catalog() -> list[dict]:
     """Return the site families that automatic URL detection can recognize."""
     entries = [
@@ -688,6 +744,7 @@ def site_catalog() -> list[dict]:
             "suggested_fields": list(SITE_FIELDS[category]),
             "requires_rendered": rendered,
             "example_url": SITE_EXAMPLE_URLS[site_id],
+            **({"collector_support": SITE_COLLECTOR_SUPPORT[site_id][0], "collector_note": SITE_COLLECTOR_SUPPORT[site_id][1]} if site_id in SITE_COLLECTOR_SUPPORT else {}),
         }
         for site_id, name, category, domains, rendered, _required_path in KNOWN_SITE_PROFILES
     ]

@@ -54,6 +54,15 @@ export async function pickFile(filters: { name: string; extensions: string[] }[]
   return typeof selected === "string" ? selected : null;
 }
 
+export async function pickSaveFile(defaultPath: string, filters: { name: string; extensions: string[] }[]): Promise<string | null> {
+  if (!isTauri()) {
+    return null;
+  }
+  const { save } = await import("@tauri-apps/plugin-dialog");
+  const selected = await save({ defaultPath, filters });
+  return typeof selected === "string" ? selected : null;
+}
+
 export async function pickDirectory(): Promise<string | null> {
   if (!isTauri()) {
     return null;

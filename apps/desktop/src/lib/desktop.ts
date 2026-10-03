@@ -91,7 +91,7 @@ export const studioHost = {
   navigate: (url: string) => host<void>("studio_navigate", { url }),
   control: (action: "reload" | "stop" | "back" | "forward") => host<void>("studio_control", { action }),
   close: () => host<void>("studio_close"),
-  call: <T>(action: "setMode" | "takePicks" | "pageInfo" | "count" | "extract" | "scrollStep" | "scrollPage" | "suggestFlow" | "links" | "html" | "click" | "networkData" | "automation", args: unknown[] = []) => host<T>("studio_call", { action, args }),
+  call: <T>(action: "setMode" | "takePicks" | "pageInfo" | "count" | "extract" | "scrollStep" | "scrollPage" | "suggestFlow" | "links" | "html" | "click" | "networkData" | "automation" | "listings" | "products" | "details" | "nextPage", args: unknown[] = []) => host<T>("studio_call", { action, args }),
   onEvent: async (handler: (event: { type: string; event?: string; url?: string; path?: string; success?: boolean }) => void) => {
     if (!isTauri()) return () => {};
     const { listen } = await import("@tauri-apps/api/event");

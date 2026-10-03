@@ -459,6 +459,37 @@ def test_rendered_records_are_scope_checked_validated_and_staged(service: Servic
     assert "allow-list" in call(service, "scrape.stage_rendered", preset=draft, pages=pages[:0] + [pages[0], outside[0]], run_mode="test", policy_acknowledgement=True, purpose="internal_analysis")["error"]["message"]
 
 
+def test_built_in_collector_rows_from_several_pages_are_staged_as_one_dataset(service: Service, tmp_path: Path) -> None:
+    preset = next(p for p in ok(service, "preset.list") if p["id"] == "generic.listings")
+
+    def rows(first: int) -> list[dict]:
+        return [{"address": f"{n} Main St", "price": str(300000 + n), "beds": "3", "listing_url": f"https://example.org/home/{n}",
+                 "agent_phone": "713-555-0100", "site": "example.org"} for n in range(first, first + 3)]
+
+    pages = [{"url": "https://example.org/homes?page=1", "records": rows(1)}, {"url": "https://example.org/homes?page=2", "records": rows(3)}]
+    job = wait(service, ok(service, "scrape.stage_rendered", preset=preset, pages=pages, run_mode="full", policy_acknowledgement=True,
+                           purpose="internal_analysis", dataset_name="example.org listings (Scrape Studio)")["job_id"])
+    assert job["state"] == "completed", job
+    result = job["result"]
+    assert result["pages_fetched"] == 2 and result["records_extracted"] == 5 and result["records_duplicate"] == 1
+    assert result["dataset_id"] and result["strategy_used"] == "webview"
+    assert all("agent_phone" not in record for record in result["sample_records"])
+    assert str(result["sample_records"][0]["price"]).startswith("300001") and result["sample_records"][0]["address"] == "1 Main St"
+    out = tmp_path / "listings.xlsx"
+    exported = wait(service, ok(service, "dataset.export_workbook", dataset_id=result["dataset_id"], path=str(out))["job_id"])
+    assert exported["state"] == "completed", exported
+    from openpyxl import load_workbook
+
+    book = load_workbook(out)
+    assert book.sheetnames[:2] == ["Summary", "Listings"]
+    header = [cell.value for cell in book["Listings"][1]]
+    assert header[:2] == ["Address", "Price"] and "Found on page" in header and "preset_id" not in header and "agent_phone" not in header
+    assert book["Listings"].max_row == 6 and str(book["Summary"]["B5"].value).startswith("=COUNTA(")
+    assert "Choose an absolute path" in call(service, "dataset.export_workbook", dataset_id=result["dataset_id"], path="relative.xlsx")["error"]["message"]
+    too_many = [{"url": f"https://example.org/homes?page={n}", "records": rows(n)} for n in range(1, preset["request_limits"]["max_pages_default"] + 2)]
+    assert "exceed" in call(service, "scrape.stage_rendered", preset=preset, pages=too_many, run_mode="full", policy_acknowledgement=True, purpose="internal_analysis")["error"]["message"]
+
+
 def test_commands_work_from_other_threads_like_the_http_bridge(service: Service) -> None:
     results = []
     worker = Thread(target=lambda: results.append(call(service, "dataset.list")))

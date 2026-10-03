@@ -268,7 +268,8 @@ def test_path_specific_site_profiles_do_not_overmatch() -> None:
 
 def test_site_catalog_exposes_every_supported_family(service: Service) -> None:
     catalog = sources.site_catalog()
-    assert len(catalog) == 38
+    assert len(catalog) == 54
+    assert {entry.get("collector_support") for entry in catalog} >= {"full", "first_page", "page_only", "untested"}
     assert len({entry["site_id"] for entry in catalog}) == len(catalog)
     assert any(entry["site_id"] == "google_maps" for entry in catalog)
     assert catalog == ok(service, "scrape.site_catalog")

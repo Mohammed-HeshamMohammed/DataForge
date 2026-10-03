@@ -20,10 +20,11 @@ import { MatchTab } from "../features/matching/MatchTab.tsx";
 import { DEFAULT_UPDATE_PREFS, Settings, type UpdatePrefs } from "../features/settings/Settings.tsx";
 import { Studio } from "../features/studio/Studio.tsx";
 import { Automation } from "../features/automation/Automation.tsx";
+import { PublicRecords } from "../features/records/PublicRecords.tsx";
 import { ProjectGate } from "../features/onboarding/ProjectGate.tsx";
 import type { SourceKind } from "../features/scraping/sources.ts";
 
-export type Tab = "dashboard" | "scraping" | "studio" | "automation" | "datasets" | "match" | "settings";
+export type Tab = "dashboard" | "scraping" | "studio" | "automation" | "datasets" | "match" | "records" | "settings";
 export type NavigationContext = { datasetId?: string; jobId?: string; url?: string; source?: SourceKind };
 export type Navigate = (tab: Tab, context?: NavigationContext) => void;
 
@@ -33,6 +34,7 @@ export const TABS: { id: Tab; label: string; title: string }[] = [
   { id: "automation", label: "Automation", title: "Automation" },
   { id: "datasets", label: "Datasets", title: "Datasets" },
   { id: "match", label: "Clean & Combine", title: "Clean & Combine" },
+  { id: "records", label: "Public Records", title: "Public Records" },
 ];
 
 declare const __APP_VERSION__: string | undefined;
@@ -394,7 +396,7 @@ function Workspace({
             void summary.reload();
           }}
         />
-        {(["dashboard", "scraping", "studio", "automation", "datasets", "match", "settings"] as Tab[]).filter((panelTab) => mountedTabs.has(panelTab)).map((panelTab) => (
+        {(["dashboard", "scraping", "studio", "automation", "datasets", "match", "records", "settings"] as Tab[]).filter((panelTab) => mountedTabs.has(panelTab)).map((panelTab) => (
           <div
             className={panelTab === "studio" || panelTab === "automation" ? "pane-body pane-body-fill" : "pane-body"}
             key={`${panelTab}-${refreshes[panelTab] ?? 0}-${refreshToken}`}
@@ -407,6 +409,7 @@ function Workspace({
             {panelTab === "automation" && <Automation active={tab === "automation"} />}
             {panelTab === "datasets" && <Datasets navigate={navigate} initialDatasetId={contexts.datasets?.datasetId} />}
             {panelTab === "match" && <MatchTab initialDatasetId={contexts.match?.datasetId} initialJobId={contexts.match?.jobId} />}
+            {panelTab === "records" && <PublicRecords navigate={navigate} />}
             {panelTab === "settings" && <Settings project={project} navigate={navigate} onUpdateInfo={onUpdateInfo} />}
           </div>
         ))}

@@ -12,6 +12,9 @@ export type SiteCatalogEntry = {
   requires_rendered: boolean;
   example_url: string;
   variants?: SiteCatalogVariant[];
+  /** How Scrape Studio's built-in listing collector handles the site, as tested. */
+  collector_support?: "full" | "first_page" | "page_only" | "untested";
+  collector_note?: string;
 };
 
 export type SiteCatalogVariant = {
@@ -33,6 +36,22 @@ const BUILT_IN_SITE_SEEDS: readonly BuiltInSite[] = [
   ["aliexpress", "AliExpress", "marketplace", "aliexpress.com", "https://www.aliexpress.com/w/wholesale-laptop.html"],
   ["newegg", "Newegg", "marketplace", "newegg.com", "https://www.newegg.com/p/pl?d=laptop"],
   ["zillow", "Zillow", "real_estate", "zillow.com", "https://www.zillow.com/homes/"],
+  ["har", "HAR.com", "real_estate", "har.com", "https://www.har.com/houston/realestate/for_sale"],
+  ["estately", "Estately", "real_estate", "estately.com", "https://www.estately.com/TX/Houston"],
+  ["weichert", "Weichert", "real_estate", "weichert.com", "https://www.weichert.com/TX/Harris/Houston/"],
+  ["coldwell_banker", "Coldwell Banker", "real_estate", "coldwellbankerhomes.com", "https://www.coldwellbankerhomes.com/tx/houston/"],
+  ["remax", "RE/MAX", "real_estate", "remax.com", "https://www.remax.com/homes-for-sale/tx/houston/city/4835000"],
+  ["opendoor", "Opendoor", "real_estate", "opendoor.com", "https://www.opendoor.com/homes/houston"],
+  ["streeteasy", "StreetEasy", "real_estate", "streeteasy.com", "https://streeteasy.com/for-sale/nyc"],
+  ["hotpads", "HotPads", "real_estate", "hotpads.com", "https://hotpads.com/houston-tx/apartments-for-rent"],
+  ["apartmentguide", "ApartmentGuide", "real_estate", "apartmentguide.com", "https://www.apartmentguide.com/apartments/Texas/Houston/"],
+  ["apartmentfinder", "ApartmentFinder", "real_estate", "apartmentfinder.com", "https://www.apartmentfinder.com/Texas/Houston-Apartments"],
+  ["landwatch", "LandWatch", "real_estate", "landwatch.com", "https://www.landwatch.com/texas-land-for-sale/houston"],
+  ["realtytrac", "RealtyTrac", "real_estate", "realtytrac.com", "https://www.realtytrac.com/houston-tx/"],
+  ["showcase", "Showcase", "real_estate", "showcase.com", "https://www.showcase.com/tx/houston/commercial-real-estate/for-rent/"],
+  ["vrm", "VRM Properties (VA homes)", "real_estate", "vrmproperties.com", "https://www.vrmproperties.com/Properties-For-Sale?city=Houston&state=TX"],
+  ["craigslist", "Craigslist", "real_estate", "craigslist.org", "https://houston.craigslist.org/search/apa"],
+  ["newhomesource", "NewHomeSource", "real_estate", "newhomesource.com", "https://www.newhomesource.com/communities/tx/houston-area"],
   ["realtor", "Realtor.com", "real_estate", "realtor.com", "https://www.realtor.com/realestateandhomes-search/New-York_NY"],
   ["redfin", "Redfin", "real_estate", "redfin.com", "https://www.redfin.com/city/30749/NY/New-York"],
   ["trulia", "Trulia", "real_estate", "trulia.com", "https://www.trulia.com/NY/New_York/"],

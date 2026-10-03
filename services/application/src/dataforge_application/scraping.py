@@ -423,7 +423,8 @@ def make_rendered_kind(presets_dir: Path) -> JobKind:
         limits = preset["request_limits"]
         kind = (preset.get("pagination") or {}).get("type", "none")
         # Detail pages are bounded by the record cap (one record each); listing pages by the page cap.
-        page_cap = limits["max_records_default"] if kind == "detail_links" else 1 if kind in ("none", "infinite_scroll") else limits["max_pages_default"]
+        collector = (preset.get("extraction") or {}).get("mode") == "collector"
+        page_cap = limits["max_records_default"] if kind == "detail_links" else limits["max_pages_default"] if collector else 1 if kind in ("none", "infinite_scroll") else limits["max_pages_default"]
         if len(pages) > page_cap:
             raise JobValidationError(f"{len(pages)} pages exceed this preset's limit of {page_cap} for {kind} pagination")
         purpose = params.get("purpose")
@@ -460,7 +461,8 @@ def make_rendered_kind(presets_dir: Path) -> JobKind:
         sources.record_signals(store, run_id, params.get("signals") or [])
         store._connection.commit()
         candidates = []
-        selector_free = (preset.get("extraction") or {}).get("mode", "selectors") != "selectors"
+        # Selector presets and built-in collectors hand over finished rows; the other modes extract from the page HTML.
+        selector_free = (preset.get("extraction") or {}).get("mode", "selectors") not in ("selectors", "collector")
         for page in params["pages"]:
             context.checkpoint()
             if selector_free:

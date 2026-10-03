@@ -20,7 +20,9 @@ from .fetch import APP_USER_AGENT as USER_AGENT  # noqa: F401 - public alias
 from .fetch import LOCAL_HOSTS as _LOCAL_HOSTS
 
 TEST_MODE_MAX_RECORDS = 10
-EXTRACTION_MODES = ("selectors", "structured_data", "article", "document_tables", "api", "xml")
+EXTRACTION_MODES = ("selectors", "structured_data", "article", "document_tables", "api", "xml", "collector")
+# Built-in Scrape Studio collectors that read a rendered page in the embedded WebView and hand over finished rows.
+COLLECTORS = ("listings", "products")
 
 
 @dataclass(frozen=True)
@@ -145,6 +147,12 @@ def extract_page(body: str, content: bytes, content_type: str, url: str, preset:
         return _extract_json_records(document, url, extraction, fields, preset)
     if mode == "xml":
         return _extract_xml_records(content, url, extraction, fields, preset)
+    if mode == "collector":
+        # Rows a built-in collector read from a rendered page (a JSON list): keep the preset's fields only.
+        rows = json.loads(body)
+        if not isinstance(rows, list):
+            raise ValueError("Collector rows must be a JSON list of records")
+        return [_with_provenance(_project_fields(row, fields, url, preset), url, preset) for row in rows if isinstance(row, dict)]
     if mode == "structured_data":
         from .structured import extract_structured_records
 

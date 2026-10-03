@@ -188,3 +188,18 @@ DataForge keeps three execution paths: policy-controlled HTTP/httpx, Scrapy for 
 - **Challenge fallback:** CAPTCHA or bot-challenge detection still stops collection and links the user to the official-API workflow.
 - **Browser-tool compatibility:** for localhost, RFC 1918, and `.local`, `.internal`, or `.test` hosts, Studio can copy plain Playwright and Selenium extraction scripts from reviewed selectors. These scripts contain no credential handling, challenge solving, stealth, fingerprint modification, or proxy rotation. DataForge does not bundle or launch a second browser runtime.
 
+
+## D30. Built-in listing and product collectors in Scrape Studio
+
+- **What:** Scrape Studio reads listings (real-estate search pages, Zillow included) and Amazon search results without element picking. The bridge actions `listings`, `products`, and `nextPage` read the rendered page: embedded JSON (`__NEXT_DATA__`, JSON-LD, Next.js flight data, window state), the JSON and flight responses the site loads while the user browses, and repeated price cards as a fallback. Rows use the field keys of the bundled `generic.listings` and `generic.products` presets.
+- **New extraction mode `collector`:** the preset declares fields but no selectors; the bridge hands over finished rows and the backend keeps only the declared fields, validates, de-duplicates, and stages them through `scrape.stage_rendered`. Collector presets must allow only the `webview` strategy, so HTTP runs refuse them. Fixture health checks run the field mapping on recorded rows (`fixtures/collector/*.json`).
+- **Where rows live:** the Studio WebView is incognito, so collected rows are held by the app (and mirrored to app storage up to about 3 MB) until the user saves them as a dataset or clears them. Closing or reloading the Studio browser does not lose them.
+- **Pages:** the app navigates the visible WebView to each next page with the preset's minimum delay, checks scope and site signals before reading each page, stops when a page repeats rows already collected (the site paginates in the browser), and stops at challenges or login pages. Craigslist is read page by page only, because its terms forbid automated browsing.
+- **Privacy:** agent, contact, owner, and user fields are skipped; phone numbers and e-mail addresses are removed from free text. The bridge still fetches, stores, and sends nothing on its own.
+
+- **Details:** the `details` action reads one listing or product page (Zillow home data and history tables, Amazon product sections, or any site's main listing and labelled facts). Studio opens each collected item in turn with the preset's delay, checks it first, and merges the fields into the row.
+- **Zillow coverage:** Zillow's robots.txt excludes the map-move request and `?searchQueryState=` addresses but allows area, ZIP, result-page, and path-filter pages, each of which carries up to 500 map pins. Larger coverage therefore comes from sweeping allowed pages (Studio fills the ZIP pages of the area from the ZIP codes already collected), never from automating map moves.
+- **Excel:** `dataset.export_workbook` writes any dataset as the formatted workbook (Summary with live formulas, table, Details, Photos) with the same layouts as the collector scripts.
+- **Public records:** Harris County tax sales, foreclosure notices, and the HCAD appraisal roll run as jobs from the Public Records tab and create datasets. The HCAD output keeps owner names and mailing addresses as published but shows only the Homestead exemption.
+
+**Revisit when:** a supported site moves its results into a format the engine cannot read (it then falls back to the visual builder), or another county's records are needed (each county publishes its own formats).

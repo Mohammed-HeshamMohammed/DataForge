@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Callable
 
 from . import SCHEMA_VERSION
-from . import automation, datasets, matching, projects, scraping, sources
+from . import automation, datasets, matching, projects, public_records, scraping, sources, workbook
 from .contracts import health_check
 from .jobs import JobContext, JobKind, JobRunner, JobValidationError, fixture_job
 from .logs import log
@@ -63,6 +63,10 @@ class Service:
             "dataset.mapping": self._dataset_mapping,
             "dataset.confirm_mapping": lambda p: asdict(datasets.confirm_mapping(self._store(), p["dataset_id"], p["mapping"], p.get("entity_type"), p.get("export_exclude"))),
             "dataset.mapping_flags": lambda p: matching.mapping_flags(self._store(), p["dataset_id"]),
+            "records.tax_sales": lambda p: {"job_id": self._submit("public_tax_sales", p)},
+            "records.foreclosures": lambda p: {"job_id": self._submit("public_foreclosures", p)},
+            "records.hcad": lambda p: {"job_id": self._submit("public_hcad", p)},
+            "dataset.export_workbook": lambda p: {"job_id": self._submit("dataset_export_workbook", p)},
             "dataset.delete": lambda p: datasets.delete_dataset(self._store(), p["dataset_id"]) or {"deleted": p["dataset_id"]},
             "automation.list": lambda p: automation.list_workflows(self._store(), self._project_id()),
             "automation.save": lambda p: automation.save_workflow(self._store(), self._project_id(), p),
@@ -266,11 +270,13 @@ class Service:
         self.runner = JobRunner(store.database_path, {
             "fixture": JobKind(run=fixture_job),
             "dataset_import": JobKind(run=self._run_import, validate=self._validate_import),
+            "dataset_export_workbook": JobKind(run=self._run_export_workbook, validate=self._validate_export_workbook),
             "scrape": scraping.make_scrape_kind(self.presets_dir),
             "archive_query": sources.make_archive_kind(lambda store, pid, ver: scraping.resolve_preset(store, self.presets_dir, pid, ver)),
             "bulk_import": sources.make_bulk_kind(),
             "scrape_rendered": scraping.make_rendered_kind(self.presets_dir),
             "match": matching.MATCH_JOB,
+            **public_records.make_job_kinds(),
         })
         sources.purge_expired_captures(store)
         if self.watch_scheduler is None and self.start_watch_scheduler:
@@ -322,6 +328,22 @@ class Service:
         project_id = context.store.job(context.job_id)["project_id"]
         imported = datasets.import_file(context.store, project_id, Path(context.params["path"]), context.params.get("name"))
         return asdict(imported)
+
+    @staticmethod
+    def _validate_export_workbook(store: ProjectStore, params: dict) -> dict:
+        path = Path(str(params.get("path", "")))
+        if path.suffix.lower() != ".xlsx" or not path.is_absolute():
+            raise JobValidationError("Choose an absolute path ending in .xlsx for the workbook")
+        if not path.parent.is_dir():
+            raise JobValidationError("The folder for the workbook does not exist")
+        if store._connection.execute("SELECT 1 FROM datasets WHERE id = ?", (params.get("dataset_id"),)).fetchone() is None:
+            raise JobValidationError("Dataset not found")
+        return {"dataset_id": params["dataset_id"], "path": str(path.resolve())}
+
+    @staticmethod
+    def _run_export_workbook(context: JobContext) -> dict:
+        context.stage("writing_workbook")
+        return workbook.export_dataset(context.store, context.params["dataset_id"], Path(context.params["path"]))
 
     def _dataset_import(self, payload: dict) -> dict:
         return {"job_id": self._submit("dataset_import", payload)}

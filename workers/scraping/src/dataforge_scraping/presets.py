@@ -6,7 +6,7 @@ import copy
 import re
 from urllib.parse import urlparse
 
-from .extraction import EXTRACTION_MODES, TRANSFORMS
+from .extraction import COLLECTORS, EXTRACTION_MODES, TRANSFORMS
 from .signals import PURPOSES
 
 STATUSES = ("active", "degraded", "deprecated", "disabled")
@@ -101,9 +101,14 @@ def validate_preset(preset: dict) -> list[str]:
 
     extraction = preset.get("extraction") if isinstance(preset.get("extraction"), dict) else {}
     mode = "api" if strategy.get("preferred") == "api" else extraction.get("mode", "selectors")
-    selector_free = mode in ("structured_data", "article", "document_tables", "xml") or (preset.get("discovery") or {}).get("mode") in ("feed", "oai_pmh")
+    selector_free = mode in ("structured_data", "article", "document_tables", "xml", "collector") or (preset.get("discovery") or {}).get("mode") in ("feed", "oai_pmh")
     if mode not in EXTRACTION_MODES:
         errors.append(f"extraction.mode must be one of {EXTRACTION_MODES}")
+    if mode == "collector":
+        if extraction.get("collector") not in COLLECTORS:
+            errors.append(f"extraction.collector must be one of {COLLECTORS}")
+        if allowed != ["webview"] or strategy.get("preferred") != "webview":
+            errors.append("collector presets read rendered pages in Scrape Studio and must allow only the webview strategy")
     if strategy.get("preferred") == "api":
         if not isinstance(extraction.get("item_path"), str):
             errors.append("extraction.item_path is required for API presets")

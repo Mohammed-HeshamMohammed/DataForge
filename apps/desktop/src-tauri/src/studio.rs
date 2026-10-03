@@ -29,6 +29,10 @@ const BRIDGE_ACTIONS: &[&str] = &[
     "click",
     "networkData",
     "automation",
+    "listings",
+    "products",
+    "details",
+    "nextPage",
 ];
 
 #[derive(Default)]
@@ -410,6 +414,10 @@ mod tests {
         assert!(bridge_script("eval", &json!([])).is_err());
         assert!(bridge_script("networkData", &json!([])).is_ok());
         assert!(bridge_script("suggestFlow", &json!([])).is_ok());
+        assert!(bridge_script("listings", &json!([])).is_ok());
+        assert!(bridge_script("products", &json!([])).is_ok());
+        assert!(bridge_script("nextPage", &json!([])).is_ok());
+        assert!(bridge_script("details", &json!([{"url": "https://example.org/home/1"}])).is_ok());
         assert!(bridge_script("scrollPage", &json!([1])).is_ok());
         assert!(bridge_script("count", &json!({"x": 1})).is_err());
     }

@@ -105,3 +105,16 @@ def test_oauth_client_credentials_are_exchanged_in_memory() -> None:
     assert result.records[0]["id"] == "A-1"
     assert ("/items", "Bearer short-lived-token") in seen
     assert "short-lived-token" not in json.dumps(result.records)
+
+
+def test_collector_presets_render_in_studio_only_and_keep_just_their_fields() -> None:
+    preset = load("generic.listings@1.0.0.json")
+    assert validate_preset(preset) == []
+    assert any("webview strategy" in e for e in validate_preset({**preset, "strategy": {"preferred": "http", "allowed": ["http", "webview"]}}))
+    assert any("extraction.collector" in e for e in validate_preset({**preset, "extraction": {**preset["extraction"], "collector": "anything"}}))
+    rows = json.dumps([{"address": "1 Main St", "price": "300000", "listing_url": "https://example.org/home/1", "agent_name": "Jane Doe"},
+                       {"address": "2 Main St", "listing_url": "https://example.org/home/2"}])
+    records, rejected, _ = extract_document(rows, "https://example.org/homes", preset)
+    assert [r["address"] for r in records] == ["1 Main St"] and len(rejected) == 1  # price is required
+    assert "agent_name" not in records[0] and records[0]["extraction_mode"] == "collector"
+
