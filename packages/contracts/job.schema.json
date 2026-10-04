@@ -30,7 +30,8 @@
         "scrape_rendered",
         "match",
         "archive_query",
-        "bulk_import"
+        "bulk_import",
+        "dataset_cleanup"
       ]
     },
     "state": {

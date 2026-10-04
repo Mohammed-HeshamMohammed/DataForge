@@ -99,6 +99,19 @@
     "reason": {
       "type": "string",
       "minLength": 1
+    },
+    "likelihood": {
+      "description": "How likely the pair is the same record (0-1), estimated from the dataset (Fellegi-Sunter with term frequencies). Orders review; never merges by itself.",
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      ]
     }
   }
 }

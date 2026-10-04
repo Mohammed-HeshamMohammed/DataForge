@@ -3,7 +3,7 @@ import type { Navigate } from "../../app/App.tsx";
 import { call, isTauri } from "../../lib/ipc.ts";
 import { copyText, getZoom, studioHost, type Bounds } from "../../lib/desktop.ts";
 import { useJob, useService } from "../../lib/hooks.ts";
-import { isActive } from "../../lib/format.ts";
+import { formatCount, isActive } from "../../lib/format.ts";
 import { ErrorNote, JobProgress } from "../../components/ui.tsx";
 import { CustomSelect } from "../../components/CustomSelect.tsx";
 import { ScrapeResult } from "../scraping/Scraping.tsx";
@@ -11,7 +11,8 @@ import { ListingCollector } from "./ListingCollector.tsx";
 import { PURPOSES, SOURCES, enrichSiteCatalog, formatSiteCategory, type SiteCatalogEntry, type SiteCatalogVariant, type SourceKind } from "../scraping/sources.ts";
 
 type Selector = { css?: string; xpath?: string; attribute?: string };
-type Field = { key: string; type: "string" | "url" | "decimal" | "integer"; required: boolean; selectors: Selector[]; transforms: string[] };
+/** `path` is set for fields read from the page's JSON (for example hdpData.homeInfo.price) instead of a selector. */
+type Field = { key: string; path?: string; type: "string" | "url" | "decimal" | "integer"; required: boolean; selectors: Selector[]; transforms: string[] };
 type Preset = Record<string, any> & { id: string; version: string; display_name: string; strategy: { preferred: string; allowed: string[] }; request_limits: Record<string, number> };
 type Pick = { fallback_xpaths?: string[]; mode: string; tag: string; text: string; attributes: Record<string, string>; suggested_attribute: string | null; selector: string; relative_selector?: string | null; inside_record_root?: boolean; repeated?: { selector: string; count: number } | null };
 type Extracted = { url: string; candidates: number; records: Record<string, string>[]; next_url: string | null; error: string | null };
@@ -93,12 +94,14 @@ const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const RECORD_KEYS = /price|address|street|city|zip|postal|bed|bath|sqft|area|url|link|title|name|rating|image|photo|date|company|salary/i;
 
-/** The list of objects in a JSON document that looks most like records (listings, products, results), with its score. */
-export function bestRecordArray(value: unknown): { records: Record<string, unknown>[]; score: number } {
+/** The list of objects in a JSON document that looks most like records (listings, products, results), with its score and path. */
+export function bestRecordArray(value: unknown): { records: Record<string, unknown>[]; score: number; path: string[] } {
   let best: Record<string, unknown>[] = [];
   let bestScore = 0;
-  const visit = (node: unknown, depth: number) => {
-    if (depth > 6 || !node || typeof node !== "object") return;
+  let bestPath: string[] = [];
+  // Deep enough for inline Next.js data: props.pageProps.searchPageState.cat1.searchResults.listResults.
+  const visit = (node: unknown, depth: number, path: string[]) => {
+    if (depth > 8 || !node || typeof node !== "object") return;
     if (Array.isArray(node)) {
       const objects = node.filter((item): item is Record<string, unknown> => !!item && typeof item === "object" && !Array.isArray(item));
       if (objects.length >= 2 && objects.length === node.length) {
@@ -108,15 +111,111 @@ export function bestRecordArray(value: unknown): { records: Record<string, unkno
         if (score > bestScore) {
           best = objects;
           bestScore = score;
+          bestPath = path;
         }
       }
-      node.slice(0, 50).forEach((child) => visit(child, depth + 1));
+      node.slice(0, 50).forEach((child, index) => visit(child, depth + 1, [...path, String(index)]));
       return;
     }
-    Object.values(node).forEach((child) => visit(child, depth + 1));
+    Object.entries(node).forEach(([key, child]) => visit(child, depth + 1, [...path, key]));
   };
-  visit(value, 0);
-  return { records: best, score: bestScore };
+  visit(value, 0, []);
+  return { records: best, score: bestScore, path: bestPath };
+}
+
+/** A record's values with nested keys joined by dots (latLong.latitude, hdpData.homeInfo.price), as the API runtime's
+ * capture-all flattens JSON. Lists of plain values are joined; lists of objects, such as photo galleries, are left out. */
+export function flattenRecord(record: Record<string, unknown>): Record<string, string> {
+  const flat: Record<string, string> = {};
+  let size = 0;
+  const walk = (node: Record<string, unknown>, prefix: string, depth: number) => {
+    for (const [key, value] of Object.entries(node)) {
+      if (size >= 200 || key.startsWith("__")) continue;
+      const name = prefix + key;
+      let text: string | null = null;
+      if (Array.isArray(value)) {
+        const plain = value.filter((item) => (typeof item === "string" && item.trim()) || typeof item === "number" || typeof item === "boolean");
+        if (plain.length) text = plain.slice(0, 20).join(", ");
+      } else if (value && typeof value === "object") {
+        if (depth < 2) walk(value as Record<string, unknown>, `${name}.`, depth + 1);
+      } else if ((typeof value === "string" && value.trim()) || typeof value === "number" || typeof value === "boolean") {
+        text = String(value);
+      }
+      if (text !== null && !Object.hasOwn(flat, name)) {
+        flat[name] = text;
+        size++;
+      }
+    }
+  };
+  walk(record, "", 0);
+  return flat;
+}
+
+const TOTAL_KEY = /^(total|total(count|results?|resultcount|hits|items|records|entries|elements|matches|listings|products|homes)|(result|item|record|hit|listing|product)s?(count|total)|num(found|results|hits|items|records)|nbhits|found)$/;
+
+/** The result count a site reports beside a list, such as Zillow's cat1.searchList.totalResultCount next to
+ * cat1.searchResults.mapResults. Searched from the list's parent outwards, so the nearest count wins. */
+export function reportedTotal(json: unknown, path: string[], loaded: number): number | null {
+  const isObject = (value: unknown): value is Record<string, unknown> => !!value && typeof value === "object" && !Array.isArray(value);
+  const plausible = (value: unknown) => {
+    const raw = isObject(value) ? value.value : value; // Elasticsearch reports hits.total as {value, relation}
+    const total = typeof raw === "string" && /^\d{1,10}$/.test(raw) ? Number(raw) : raw;
+    return typeof total === "number" && Number.isInteger(total) && total >= loaded && total <= 1e9 ? total : null;
+  };
+  const ancestors: unknown[] = [];
+  let node = json;
+  for (const segment of path) {
+    if (!node || typeof node !== "object") break;
+    ancestors.unshift(node);
+    node = (node as Record<string, unknown>)[segment];
+  }
+  for (const ancestor of ancestors) {
+    let level = [ancestor];
+    for (let depth = 0; depth < 3 && level.length; depth++) {
+      const next: unknown[] = [];
+      for (const container of level) {
+        if (!isObject(container)) continue;
+        for (const [key, value] of Object.entries(container)) {
+          const total = TOTAL_KEY.test(key.toLowerCase().replace(/[^a-z]/g, "")) ? plausible(value) : null;
+          if (total !== null) return total;
+          if (isObject(value)) next.push(value);
+        }
+      }
+      level = next.slice(0, 200);
+    }
+  }
+  // A bare "count" (Django REST style) is trusted only directly beside the list.
+  return isObject(ancestors[0]) ? plausible(ancestors[0].count) : null;
+}
+
+export type PageDataList = { records: Record<string, string>[]; fields: { path: string; coverage: number }[]; total: number | null; path: string };
+
+/** The page's best list of records across its JSON. Repeats of that list (the same endpoint and path after a map move or
+ * on the next page of results) are merged and de-duplicated; other lists, such as regions or menus, are never mixed in. */
+export function pageDataList(responses: NetworkResponse[]): PageDataList | null {
+  const found = responses
+    .map((response) => ({ source: response.url.replace(/\/\d+(?=\/|#|$)/g, "/*"), json: response.data, ...bestRecordArray(response.data) }))
+    .filter((entry) => entry.records.length);
+  if (!found.length) return null;
+  const best = found.reduce((top, entry) => (entry.score > top.score ? entry : top));
+  const same = found.filter((entry) => entry.source === best.source && entry.path.join(".") === best.path.join("."));
+  const seen = new Set<string>();
+  const records: Record<string, string>[] = [];
+  for (const entry of same) {
+    for (const item of entry.records) {
+      const record = flattenRecord(item);
+      const signature = JSON.stringify(record);
+      if (seen.has(signature)) continue;
+      seen.add(signature);
+      records.push(record);
+    }
+  }
+  // Every field any record has, most complete first; equally complete fields keep the site's own order.
+  const counts = new Map<string, number>();
+  for (const record of records) for (const key of Object.keys(record)) counts.set(key, (counts.get(key) ?? 0) + 1);
+  const fields = [...counts].sort((a, b) => b[1] - a[1]).map(([path, count]) => ({ path, coverage: count / records.length }));
+  const latest = same[same.length - 1];
+  return { records, fields, total: reportedTotal(latest.json, latest.path, records.length), path: best.path.filter((segment) => !/^\d+$/.test(segment)).join(".") };
 }
 
 function browserTarget(value: string): string {
@@ -168,17 +267,6 @@ function playwrightCompatibilityScript(pageUrl: string, root: string, fields: Fi
 function seleniumCompatibilityScript(pageUrl: string, root: string, fields: Field[]): string {
   const definitions = fields.map((field) => ({ key: field.key, css: field.selectors[0]?.css ?? "", attribute: field.selectors[0]?.attribute ?? null }));
   return `# Authorized internal systems only. No stealth, CAPTCHA handling, proxy rotation, or login automation.\nimport json\nfrom selenium import webdriver\nfrom selenium.webdriver.common.by import By\n\ndriver = webdriver.Edge()\ntry:\n    driver.get(${JSON.stringify(pageUrl)})\n    fields = json.loads(${JSON.stringify(JSON.stringify(definitions))})\n    rows = []\n    for item in driver.find_elements(By.CSS_SELECTOR, ${JSON.stringify(root)}):\n        row = {}\n        for field in fields:\n            try:\n                node = item.find_element(By.CSS_SELECTOR, field["css"]) if field["css"] else item\n                row[field["key"]] = node.get_attribute(field["attribute"]) if field["attribute"] else node.text.strip()\n            except Exception:\n                row[field["key"]] = None\n        rows.append(row)\n    print(json.dumps(rows, ensure_ascii=False, indent=2))\nfinally:\n    driver.quit()\n`;
-}
-
-function printableRecord(record: Record<string, unknown>): Record<string, string> {
-  const result: Record<string, string> = {};
-  for (const [key, value] of Object.entries(record).slice(0, 100)) {
-    const base = slug(key);
-    let normalized = base;
-    for (let suffix = 2; normalized in result; suffix++) normalized = `${base}_${suffix}`;
-    result[normalized] = typeof value === "string" ? value : typeof value === "number" || typeof value === "boolean" ? String(value) : JSON.stringify(value);
-  }
-  return result;
 }
 
 export function Studio({ navigate, initialUrl = "", active = true }: { navigate: Navigate; initialUrl?: string; active?: boolean }) {
@@ -242,7 +330,7 @@ export function Studio({ navigate, initialUrl = "", active = true }: { navigate:
   const [manualSignIn, setManualSignIn] = useState(false);
   const [sessionExpiresAt, setSessionExpiresAt] = useState<number | null>(null);
   const [sessionSecondsLeft, setSessionSecondsLeft] = useState(0);
-  const [networkCount, setNetworkCount] = useState(0);
+  const [pageTotal, setPageTotal] = useState<number | null>(null);
   const [downloaded, setDownloaded] = useState<{ path: string; url: string } | null>(null);
   const [name, setName] = useState("my_cards");
   const [version, setVersion] = useState("1.0.0");
@@ -455,7 +543,7 @@ export function Studio({ navigate, initialUrl = "", active = true }: { navigate:
       setPageInfo(null);
       setFlowSuggestion(null);
       setCaptureNetwork(false);
-      setNetworkCount(0);
+      setPageTotal(null);
       setDownloaded(null);
       setManualSignIn(false);
       setSessionExpiresAt(null);
@@ -475,7 +563,7 @@ export function Studio({ navigate, initialUrl = "", active = true }: { navigate:
     setSessionExpiresAt(null);
     setSessionSecondsLeft(0);
     setCaptureNetwork(false);
-    setNetworkCount(0);
+    setPageTotal(null);
     setDownloaded(null);
     setStructured(null);
     setNotice(message);
@@ -556,6 +644,12 @@ export function Studio({ navigate, initialUrl = "", active = true }: { navigate:
         setError("No repeated pattern found around that element. Pick a card that appears at least three times.");
         return;
       }
+      if (captureNetwork) {
+        // Page-data fields hold JSON paths, not selectors, so visual picking starts its fields afresh.
+        setCaptureNetwork(false);
+        setPageTotal(null);
+        setFields([]);
+      }
       setRecordRoot(pick.repeated.selector);
       setRootCount(pick.repeated.count);
     } else if (pick.mode === "next") {
@@ -599,30 +693,43 @@ export function Studio({ navigate, initialUrl = "", active = true }: { navigate:
     }
   };
 
-  const networkRecords = async (limit: number) => {
+  const pageList = async () => {
     const captured = await studioHost.call<{ responses: NetworkResponse[]; error: string | null }>("networkData");
     if (captured.error) throw new Error(captured.error);
-    // Keep the responses whose best list looks like records; a region or menu list loses to the listings next to it.
-    const found = captured.responses.map((response) => bestRecordArray(response.data));
-    const top = Math.max(0, ...found.map((entry) => entry.score));
-    return found.filter((entry) => entry.records.length && entry.score >= top * 0.6).flatMap((entry) => entry.records.map(printableRecord)).slice(0, limit);
+    return pageDataList(captured.responses);
+  };
+
+  const networkRecords = async (limit: number) => {
+    const list = await pageList();
+    // Values are looked up by JSON path, so renaming a field in the technical setup keeps reading the same value.
+    return (list?.records ?? []).slice(0, limit).map((record) => Object.fromEntries(fields.flatMap((field) => (field.path && Object.hasOwn(record, field.path) ? [[field.key, record[field.path]]] : []))));
   };
 
   const inspectNetwork = async () => {
     try {
-      const records = await networkRecords(5000);
-      if (!records.length) throw new Error("No JSON record arrays have been observed yet. Use the page so it loads its data, then try again.");
-      const sample = records[0];
-      const nextFields = Object.keys(sample).slice(0, 50).map((key, index): Field => ({
-        key: slug(key), type: "string", required: index === 0, selectors: [{ css: "" }], transforms: ["trim", "collapse_whitespace"],
-      }));
+      setError(null);
+      const list = await pageList();
+      if (!list) throw new Error("No JSON record arrays have been observed yet. Use the page so it loads its data, then try again.");
+      const used = new Set<string>();
+      const nextFields = list.fields.slice(0, 50).map(({ path, coverage }, index): Field => {
+        const base = slug(path.replace(/([a-z0-9])([A-Z])/g, "$1_$2"));
+        let key = base;
+        for (let suffix = 2; used.has(key); suffix++) key = `${base}_${suffix}`;
+        used.add(key);
+        return { key, path, type: "string", required: index === 0 && coverage === 1, selectors: [{ css: "" }], transforms: ["trim", "collapse_whitespace"] };
+      });
       setCaptureNetwork(true);
       setRecordRoot(":scope");
       setFields(nextFields);
       setPageMode("none");
-      setRootCount(records.length);
-      setNetworkCount(records.length);
-      setNotice(`Found ${records.length} records in page JSON. Review the fields, then run a test.`);
+      setRootCount(list.records.length);
+      setPageTotal(list.total);
+      const found = `${formatCount(list.records.length)}${list.total !== null && list.total > list.records.length ? ` of the ${formatCount(list.total)} results the site reports` : " records"}`;
+      setNotice(
+        `Found ${found} in page JSON${list.path ? ` (${list.path})` : ""}. ` +
+          (list.total !== null && list.total > list.records.length ? "Only results the page has loaded can be collected; browse further (move the map, open more result pages), then find again to add them. " : "") +
+          "Review the fields, then run a test.",
+      );
     } catch (err) {
       fail(err);
     }
@@ -738,7 +845,7 @@ export function Studio({ navigate, initialUrl = "", active = true }: { navigate:
       );
     }
     const page = captureNetwork
-      ? { url: info.url, candidates: networkCount, records: await networkRecords(limit), next_url: null, error: null }
+      ? { url: info.url, candidates: rootCount ?? 0, records: await networkRecords(limit), next_url: null, error: null }
       : await studioHost.call<Extracted>("extract", [{ record_root: recordRoot, fields, next_css: pageMode === "next_link" ? nextCss || null : null, limit }]);
     if (page.error) throw new Error(page.error);
     return { page, info };
@@ -954,7 +1061,7 @@ export function Studio({ navigate, initialUrl = "", active = true }: { navigate:
           )}
           <button type="button" className={`studio-step ${recordRoot ? "is-complete" : ""}`} disabled={!scopeUrl || mode !== "none"} onClick={() => void startPick("repeated")}>
             <span className="studio-step-number">{recordRoot ? "✓" : "1"}</span>
-            <span><strong>{recordRoot ? "Repeated items selected" : "Select a repeated item"}</strong><small>{rootCount !== null ? `${rootCount} matching items found` : "Click one card, row, product, or result"}</small></span>
+            <span><strong>{captureNetwork ? "Page data selected" : recordRoot ? "Repeated items selected" : "Select a repeated item"}</strong><small>{rootCount === null ? "Click one card, row, product, or result" : captureNetwork && pageTotal !== null && pageTotal > rootCount ? `${formatCount(rootCount)} of ${formatCount(pageTotal)} results loaded` : `${formatCount(rootCount)} ${captureNetwork ? "records" : "matching items"} found`}</small></span>
           </button>
           <button type="button" className={`studio-step ${fields.length ? "is-complete" : ""}`} disabled={!scopeUrl || !recordRoot || mode !== "none"} onClick={() => void startPick("element")}>
             <span className="studio-step-number">{fields.length ? "✓" : "2"}</span>

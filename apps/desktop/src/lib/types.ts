@@ -24,7 +24,9 @@ export type Project = { id: string; name: string; root_path: string; created_at:
 export type Dataset = {
   id: string;
   name: string;
-  kind: "import" | "scrape";
+  kind: "import" | "scrape" | "cleaned";
+  /** For a cleaned copy: the dataset it was made from. */
+  parent_dataset_id?: string | null;
   source_filename: string;
   source_artifact_hash: string;
   row_count: number;
@@ -56,6 +58,9 @@ export type ReviewItem = {
   left: Row;
   right: Row;
   can_merge: boolean;
+  /** How likely the pair is the same record (0-1), estimated from the dataset; null for older runs. */
+  likelihood?: number | null;
+  model_score?: number | null;
 };
 
 export type MatchResults = {

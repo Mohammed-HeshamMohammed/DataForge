@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Callable
 
 from . import SCHEMA_VERSION
-from . import automation, datasets, matching, projects, public_records, scraping, sources, workbook
+from . import automation, cleaning, datasets, matching, projects, public_records, scraping, sources, workbook
 from .contracts import health_check
 from .jobs import JobContext, JobKind, JobRunner, JobValidationError, fixture_job
 from .logs import log
@@ -67,6 +67,8 @@ class Service:
             "records.foreclosures": lambda p: {"job_id": self._submit("public_foreclosures", p)},
             "records.hcad": lambda p: {"job_id": self._submit("public_hcad", p)},
             "dataset.export_workbook": lambda p: {"job_id": self._submit("dataset_export_workbook", p)},
+            "dataset.cleanup_scan": lambda p: cleaning.scan_dataset(self._store(), p["dataset_id"], str(p.get("region") or "US")),
+            "dataset.cleanup_apply": lambda p: {"job_id": self._submit("dataset_cleanup", p)},
             "dataset.delete": lambda p: datasets.delete_dataset(self._store(), p["dataset_id"]) or {"deleted": p["dataset_id"]},
             "automation.list": lambda p: automation.list_workflows(self._store(), self._project_id()),
             "automation.save": lambda p: automation.save_workflow(self._store(), self._project_id(), p),
@@ -123,6 +125,8 @@ class Service:
             "match.undo_canonical_value": lambda p: matching.undo_canonical_value(self._store(), p["job_id"], p["override_id"]),
             "match.flag_mapping": lambda p: matching.flag_mapping(self._store(), p["job_id"], p["column"], str(p.get("note", "")), p.get("decision_id")),
             "match.undo_review": lambda p: matching.undo_review(self._store(), p["job_id"], p["review_action_id"]),
+            "match.bulk_review": lambda p: matching.bulk_review(self._store(), p["job_id"], str(p["band"]), int(p["expected_count"])),
+            "match.undo_bulk_review": lambda p: matching.undo_bulk_review(self._store(), p["job_id"], p["batch_id"]),
             "match.review_history": lambda p: matching.review_history(self._store(), p["job_id"]),
             "export.create": lambda p: matching.create_export(self._store(), p["job_id"], bool(p.get("include_provenance", True)), bool(p.get("allow_unresolved", False))),
         }
@@ -271,6 +275,7 @@ class Service:
             "fixture": JobKind(run=fixture_job),
             "dataset_import": JobKind(run=self._run_import, validate=self._validate_import),
             "dataset_export_workbook": JobKind(run=self._run_export_workbook, validate=self._validate_export_workbook),
+            "dataset_cleanup": cleaning.CLEANUP_JOB,
             "scrape": scraping.make_scrape_kind(self.presets_dir),
             "archive_query": sources.make_archive_kind(lambda store, pid, ver: scraping.resolve_preset(store, self.presets_dir, pid, ver)),
             "bulk_import": sources.make_bulk_kind(),

@@ -1557,6 +1557,46 @@ details > summary {
   color: var(--color-status-critical);
 }
 
+/* Evidence sits above the comparison as compact chips, so it is visible without scrolling. */
+.evidence-inline {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-xs);
+  margin: 0;
+}
+
+.evidence-inline li {
+  padding: 3px 10px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 999px;
+  background: var(--color-surface-sunken);
+  font-size: 0.82rem;
+}
+
+.review-summary {
+  display: grid;
+  gap: var(--spacing-xs);
+}
+
+.review-summary p {
+  margin: 0;
+}
+
+.review-progress {
+  height: 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--color-surface-sunken);
+}
+
+.review-progress span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--color-accent);
+  transition: width 0.2s ease;
+}
+
 .group-card {
   margin-top: var(--spacing-md);
   padding: var(--spacing-md);
@@ -2680,6 +2720,10 @@ fieldset.scope legend {
   align-items: start;
 }
 
+.match-grid.is-focused {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .match-rail {
   position: sticky;
   top: 0;
@@ -2942,4 +2986,164 @@ fieldset.scope legend {
     flex: 1 1 40%;
     justify-content: center;
   }
+}
+
+/* Clean & Combine: Fix values */
+.cleanup-group {
+  margin: 0;
+  padding: var(--spacing-md) var(--spacing-lg) var(--spacing-lg);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface-sunken);
+}
+
+.cleanup-group legend {
+  padding: 0 var(--spacing-xs);
+  font-weight: 600;
+}
+
+.cleanup-columns {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(17rem, 1fr));
+  gap: var(--spacing-md);
+}
+
+.cleanup-card {
+  padding: var(--spacing-md);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-raised);
+}
+
+.cleanup-card h3 {
+  margin: 0 0 var(--spacing-xs);
+  font-size: 0.95rem;
+}
+
+.cleanup-card p {
+  margin: var(--spacing-xs) 0 0;
+}
+
+.cleanup-examples {
+  display: grid;
+  gap: 2px;
+  margin: var(--spacing-xs) 0 var(--spacing-sm) 1.6rem;
+  font-size: 0.8rem;
+}
+
+.cleanup-examples code,
+.cleanup-card p code {
+  overflow-wrap: anywhere;
+}
+
+.cleanup-clusters {
+  display: grid;
+  gap: var(--spacing-xs);
+}
+
+.cleanup-cluster {
+  display: grid;
+  grid-template-columns: minmax(7rem, auto) minmax(0, 1fr) minmax(10rem, 16rem);
+  gap: var(--spacing-sm);
+  align-items: center;
+  padding: var(--spacing-xs) 0;
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+.cleanup-variants {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-xs);
+}
+
+.chip-static {
+  padding: 2px 8px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 999px;
+  background: var(--color-surface-raised);
+  font-size: 0.8rem;
+}
+
+.chip-static small {
+  color: var(--color-text-muted);
+}
+
+.cleanup-target {
+  display: flex;
+  gap: var(--spacing-xs);
+  align-items: center;
+}
+
+.cleanup-target input {
+  flex: 1;
+  min-width: 0;
+}
+
+@media (max-width: 1099px) {
+  .cleanup-cluster {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Review: how likely the pair is the same record, beside the pair's position in the queue. */
+.pair-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-sm) var(--spacing-lg);
+}
+
+.pair-head p {
+  margin: 0;
+}
+
+.likelihood {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  margin: 0;
+  font-size: 0.88rem;
+  color: var(--color-text-muted);
+}
+
+.likelihood strong {
+  color: var(--color-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.likelihood-track {
+  width: 88px;
+  height: 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--color-surface-sunken);
+  box-shadow: inset 0 0 0 1px var(--color-border-subtle);
+}
+
+.likelihood-track span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+}
+
+.likelihood-high .likelihood-track span {
+  background: var(--color-status-success);
+}
+
+.likelihood-mid .likelihood-track span {
+  background: var(--color-status-warning);
+}
+
+.likelihood-low .likelihood-track span {
+  background: var(--color-status-critical);
+}
+
+.bulk-bands h3 {
+  margin: 0 0 var(--spacing-xs);
+  font-size: 1rem;
+}
+
+.bulk-bands p {
+  margin-top: 0;
 }

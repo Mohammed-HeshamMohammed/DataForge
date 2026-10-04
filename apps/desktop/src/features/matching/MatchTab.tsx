@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { call } from "../../lib/ipc.ts";
+import { loadSetting, saveSetting } from "../../lib/desktop.ts";
 import { useJob, useKeyboardShortcuts, useService } from "../../lib/hooks.ts";
 import { displayValue, formatCount, formatTime, isActive } from "../../lib/format.ts";
 import type { Dataset, Job, MatchResults, ReviewItem } from "../../lib/types.ts";
@@ -8,21 +9,23 @@ import { MappingEditor } from "../../components/MappingEditor.tsx";
 import { ImportForm } from "../datasets/Datasets.tsx";
 import { CustomSelect } from "../../components/CustomSelect.tsx";
 
-type Step = 1 | 2 | 3 | 4 | 5;
+type Step = 1 | 2 | 3 | 4 | 5 | 6;
 const STEPS: { step: Step; label: string }[] = [
   { step: 1, label: "Choose data" },
   { step: 2, label: "Explain columns" },
-  { step: 3, label: "Check duplicates" },
-  { step: 4, label: "Review uncertain pairs" },
-  { step: 5, label: "Export clean file" },
+  { step: 3, label: "Fix values" },
+  { step: 4, label: "Check duplicates" },
+  { step: 5, label: "Review pairs" },
+  { step: 6, label: "Export" },
 ];
 
 const STEP_HELP: Record<Step, { title: string; body: string }> = {
   1: { title: "Choose the list you want to clean", body: "Use one list to remove duplicates, or compare two lists to combine matching records." },
   2: { title: "Explain what each column contains", body: "DataForge suggests meanings such as phone, property address, SKU, or repository URL. You only need to check them." },
-  3: { title: "Test the rules safely", body: "Preview likely duplicates before a full run. Your original rows are never changed." },
-  4: { title: "Decide the uncertain cases", body: "Strong matches are handled automatically. You only review pairs where the evidence is not clear." },
-  5: { title: "Download the cleaned result", body: "Export one combined file while keeping the source data and decisions available for later review." },
+  3: { title: "Fix messy values first", body: "Standardize formats, clear junk, and unify different spellings. Cleaner values find more duplicates; the original stays as imported." },
+  4: { title: "Test the rules safely", body: "Preview likely duplicates before a full run. Your original rows are never changed." },
+  5: { title: "Decide the uncertain cases", body: "Strong matches are handled automatically. You only review pairs where the evidence is not clear." },
+  6: { title: "Download the cleaned result", body: "Export one combined file while keeping the source data and decisions available for later review." },
 };
 
 type Settings = { strictness: "conservative" | "balanced"; max_block_size: number; preview_size: number };
@@ -32,19 +35,20 @@ export function MatchTab({ initialDatasetId, initialJobId }: { initialDatasetId?
   const datasets = useService<Dataset[]>("dataset.list");
   const jobs = useService<Job[]>("job.list", { limit: 50 }, 2000);
   const [datasetId, setDatasetId] = useState<string | null>(initialDatasetId ?? null);
-  const [step, setStep] = useState<Step>(initialJobId ? 4 : initialDatasetId ? 2 : 1);
+  const [step, setStep] = useState<Step>(initialJobId ? 5 : initialDatasetId ? 2 : 1);
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
   const [previewJobId, setPreviewJobId] = useState<string | null>(null);
   const [fullJobId, setFullJobId] = useState<string | null>(initialJobId ?? null);
   const [mappingVersion, setMappingVersion] = useState<number | null>(null);
   const [compareId, setCompareId] = useState<string | null>(null);
   const [trustCompareFirst, setTrustCompareFirst] = useState(false);
+  const [cleanupDone, setCleanupDone] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (initialJobId) {
       setFullJobId(initialJobId);
-      setStep(4);
+      setStep(5);
     } else if (initialDatasetId) {
       setDatasetId(initialDatasetId);
       setStep(2);
@@ -67,7 +71,9 @@ export function MatchTab({ initialDatasetId, initialJobId }: { initialDatasetId?
       (preview.params.compare_dataset_id ?? null) !== compareId ||
       JSON.stringify(preview.params.settings && pickSettings(preview.params.settings as Settings & { source_trust?: string[] })) !== JSON.stringify(pickSettings(effectiveSettings)));
   const history = (jobs.data ?? []).filter((j) => j.kind === "match" && j.params.dataset_id === datasetId);
-  const completed = new Set<Step>([...(dataset ? [1 as Step] : []), ...(dataset?.mapping_version ? [2 as Step] : []), ...(preview?.state === "completed" && !previewStale ? [3 as Step] : []), ...(fullResults.data && fullResults.data.pending_review === 0 ? [4 as Step] : [])]);
+  // Fixing values and reviewing pairs need the full width; their own headers carry the counts.
+  const reviewing = (step === 5 && full?.state === "completed") || (step === 3 && !!dataset);
+  const completed = new Set<Step>([...(dataset ? [1 as Step] : []), ...(dataset?.mapping_version ? [2 as Step] : []), ...(cleanupDone || dataset?.kind === "cleaned" ? [3 as Step] : []), ...(preview?.state === "completed" && !previewStale ? [4 as Step] : []), ...(fullResults.data && fullResults.data.pending_review === 0 ? [5 as Step] : [])]);
 
   const startJob = async (runMode: "preview" | "full") => {
     try {
@@ -76,7 +82,7 @@ export function MatchTab({ initialDatasetId, initialJobId }: { initialDatasetId?
       if (runMode === "preview") setPreviewJobId(job_id);
       else {
         setFullJobId(job_id);
-        setStep(4);
+        setStep(5);
       }
       void jobs.reload();
     } catch (err) {
@@ -99,7 +105,7 @@ export function MatchTab({ initialDatasetId, initialJobId }: { initialDatasetId?
         </p>
         <ol className="stepper" aria-label="Progress">
           {STEPS.map(({ step: s, label }) => {
-            const reachable = s === 1 || (s === 2 && !!dataset) || (s === 3 && !!dataset?.mapping_version) || (s >= 4 && !!fullJobId);
+            const reachable = s === 1 || (s === 2 && !!dataset) || ((s === 3 || s === 4) && !!dataset?.mapping_version) || (s >= 5 && !!fullJobId);
             return (
               <li key={s}>
                 <button type="button" className="step" aria-current={step === s ? "step" : undefined} disabled={!reachable} onClick={() => setStep(s)}>
@@ -119,7 +125,7 @@ export function MatchTab({ initialDatasetId, initialJobId }: { initialDatasetId?
         </div>
       </header>
 
-      <div className="match-grid">
+      <div className={`match-grid${reviewing ? " is-focused" : ""}`}>
         <section className="match-main">
           <ErrorNote message={error} />
           {step === 1 && (
@@ -130,6 +136,7 @@ export function MatchTab({ initialDatasetId, initialJobId }: { initialDatasetId?
                 setDatasetId(id);
                 setPreviewJobId(null);
                 setFullJobId(null);
+                setCleanupDone(false);
               }}
               onImported={async (id) => {
                 await datasets.reload();
@@ -161,7 +168,7 @@ export function MatchTab({ initialDatasetId, initialJobId }: { initialDatasetId?
                   <h2 className="section-head">Compare with: {compareDataset.name}</h2>
                   <p className="muted small">Both mappings must use the same entity type and share at least one identifier, contact, address, or URL role. Column names may differ.</p>
                   <MappingEditor datasetId={compareDataset.id} onSaved={() => void datasets.reload()} />
-                  <button type="button" className="btn btn-primary" disabled={!dataset.mapping_version || !compareDataset.mapping_version} onClick={() => setStep(3)}>
+                  <button type="button" className="btn btn-primary" disabled={!dataset.mapping_version || !compareDataset.mapping_version} onClick={() => setStep(4)}>
                     Continue to preview
                   </button>
                 </>
@@ -169,6 +176,23 @@ export function MatchTab({ initialDatasetId, initialJobId }: { initialDatasetId?
             </>
           )}
           {step === 3 && dataset && (
+            <CleanupStep
+              dataset={dataset}
+              onCleaned={async (cleanedId) => {
+                await datasets.reload();
+                setDatasetId(cleanedId);
+                setPreviewJobId(null);
+                setFullJobId(null);
+                setCleanupDone(true);
+                setStep(4);
+              }}
+              onSkip={() => {
+                setCleanupDone(true);
+                setStep(4);
+              }}
+            />
+          )}
+          {step === 4 && dataset && (
             <PreviewStep
               settings={settings}
               setSettings={setSettings}
@@ -180,7 +204,7 @@ export function MatchTab({ initialDatasetId, initialJobId }: { initialDatasetId?
               rowCount={dataset.row_count}
             />
           )}
-          {step === 4 && fullJobId && (
+          {step === 5 && fullJobId && (
             <>
               {full && full.state !== "completed" ? (
                 <section>
@@ -203,14 +227,14 @@ export function MatchTab({ initialDatasetId, initialJobId }: { initialDatasetId?
                   )}
                 </section>
               ) : (
-                <ReviewQueue jobId={fullJobId} onChanged={() => void fullResults.reload()} onDone={() => setStep(5)} onBadMapping={() => setStep(2)} />
+                <ReviewQueue jobId={fullJobId} results={fullResults.data ?? null} onChanged={() => void fullResults.reload()} onDone={() => setStep(6)} onBadMapping={() => setStep(2)} />
               )}
             </>
           )}
-          {step === 5 && fullJobId && fullResults.data && <ExportStep results={fullResults.data} onExported={() => void fullResults.reload()} />}
+          {step === 6 && fullJobId && fullResults.data && <ExportStep results={fullResults.data} onExported={() => void fullResults.reload()} />}
         </section>
 
-        <aside className="match-rail" aria-label={dataset ? "Cleanup summary" : "How cleanup works"}>
+        {!reviewing && <aside className="match-rail" aria-label={dataset ? "Cleanup summary" : "How cleanup works"}>
           {!dataset ? (
             <>
               <h2>What DataForge will do</h2>
@@ -236,10 +260,10 @@ export function MatchTab({ initialDatasetId, initialJobId }: { initialDatasetId?
                   onClick={() => {
                     if (job.params.run_mode === "full") {
                       setFullJobId(job.id);
-                      setStep(4);
+                      setStep(5);
                     } else {
                       setPreviewJobId(job.id);
-                      setStep(3);
+                      setStep(4);
                     }
                   }}
                 >
@@ -253,7 +277,7 @@ export function MatchTab({ initialDatasetId, initialJobId }: { initialDatasetId?
               </ul>
             </>
           )}
-        </aside>
+        </aside>}
       </div>
     </div>
   );
@@ -274,6 +298,197 @@ function SummaryCounts({ dataset, results }: { dataset: Dataset | null; results:
       <Metric label="Confirmed different" value={results ? d.non_match ?? 0 : null} icon="≠" />
       {results?.run_mode === "full" && <Metric label="Clean records" value={results.canonical_records} />}
     </div>
+  );
+}
+
+type CleanupColumn = {
+  column: string;
+  role: string;
+  label: string;
+  filled: number;
+  changes: number;
+  change_examples: [string, string][];
+  invalid: number;
+  placeholders: number;
+  problem_examples: Partial<Record<"invalid" | "placeholder", string[]>>;
+};
+type CleanupCluster = { column: string; method: string; rows: number; values: { value: string; rows: number }[]; suggested: string };
+type CleanupScan = {
+  rows: number;
+  columns: CleanupColumn[];
+  junk_rows: { empty: number; exact_duplicates: number; test: number; examples: { test: Record<string, string>[] } };
+  clusters: CleanupCluster[];
+};
+type DropReason = "empty" | "exact_duplicates" | "test";
+
+const DROP_LABELS: Record<DropReason, string> = {
+  empty: "empty rows (nothing but blanks or placeholders such as N/A)",
+  exact_duplicates: "exact duplicate rows (identical apart from spacing and capitals)",
+  test: "test entries (such as “Test User” or test@test.com)",
+};
+
+function toggled<T>(set: Set<T>, value: T, on: boolean): Set<T> {
+  const next = new Set(set);
+  if (on) next.add(value);
+  else next.delete(value);
+  return next;
+}
+
+/** Step 3: fix formats, junk, and spellings in the chosen dataset, saved as a cleaned copy; the original is untouched. */
+function CleanupStep({ dataset, onCleaned, onSkip }: { dataset: Dataset; onCleaned: (datasetId: string) => void; onSkip: () => void }) {
+  const scan = useService<CleanupScan>("dataset.cleanup_scan", { dataset_id: dataset.id });
+  const [standardize, setStandardize] = useState<Set<string> | null>(null);
+  const [clear, setClear] = useState<Set<string> | null>(null);
+  const [drops, setDrops] = useState<Set<DropReason> | null>(null);
+  const [targets, setTargets] = useState<Record<number, string>>({});
+  const [skipped, setSkipped] = useState<Set<number>>(new Set());
+  const [showAllClusters, setShowAllClusters] = useState(false);
+  const [jobId, setJobId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const job = useJob(jobId, (done) => {
+    if (done.state === "completed" && done.result?.dataset_id) onCleaned(String(done.result.dataset_id));
+    else if (done.state !== "completed") setError(done.error ?? "Cleanup did not finish");
+  });
+
+  if (scan.error) return <ErrorNote message={scan.error} />;
+  if (!scan.data) return <p className="muted" role="status">Checking every value in {formatCount(dataset.row_count)} rows…</p>;
+  const report = scan.data;
+  const junk = (["empty", "exact_duplicates", "test"] as DropReason[]).filter((reason) => report.junk_rows[reason] > 0);
+  // Suggested defaults: standardize every column that changes, clear values that are only placeholders, drop junk rows, unify spellings.
+  const standardizeSet = standardize ?? new Set(report.columns.filter((c) => c.changes > 0).map((c) => c.column));
+  const clearSet = clear ?? new Set(report.columns.filter((c) => c.placeholders > 0 && c.invalid === 0).map((c) => c.column));
+  const dropSet = drops ?? new Set(junk);
+  const clusters = showAllClusters ? report.clusters : report.clusters.slice(0, 12);
+  const merges = report.clusters.flatMap((cluster, index) => (skipped.has(index) ? [] : [{ column: cluster.column, values: cluster.values.map((v) => v.value), to: (targets[index] ?? cluster.suggested).trim() }]));
+  const fixCount =
+    report.columns.reduce((sum, c) => sum + (standardizeSet.has(c.column) ? c.changes : 0) + (clearSet.has(c.column) ? c.invalid + c.placeholders : 0), 0) +
+    report.clusters.reduce((sum, cluster, index) => sum + (skipped.has(index) ? 0 : cluster.rows), 0) +
+    [...dropSet].reduce((sum, reason) => sum + report.junk_rows[reason], 0);
+  const running = !!job && isActive(job.state);
+  const nothingToFix = !report.columns.length && !report.clusters.length && !junk.length;
+
+  const apply = async () => {
+    try {
+      setError(null);
+      const plan = { standardize: [...standardizeSet], clear_invalid: [...clearSet], merge_values: merges.filter((m) => m.to), drop_rows: [...dropSet] };
+      const { job_id } = await call<{ job_id: string }>("dataset.cleanup_apply", { dataset_id: dataset.id, plan });
+      setJobId(job_id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  return (
+    <section className="stack cleanup" aria-labelledby="cleanup-title">
+      <div className="section-head">
+        <h2 id="cleanup-title">Fix values before matching</h2>
+        <span>{formatCount(report.rows)} rows checked</span>
+      </div>
+      <p className="muted">Nothing changes until you save. The cleaned copy is saved as a new dataset next to the original, which stays exactly as imported.</p>
+      {nothingToFix ? (
+        <div className="panel">
+          <p><span aria-hidden="true">✓ </span>Every value is already in a standard format. There is nothing to fix.</p>
+        </div>
+      ) : (
+        <>
+          {junk.length > 0 && (
+            <fieldset className="cleanup-group">
+              <legend>Junk rows</legend>
+              {junk.map((reason) => (
+                <label key={reason} className="toggle block">
+                  <input type="checkbox" checked={dropSet.has(reason)} onChange={(e) => setDrops(toggled(dropSet, reason, e.target.checked))} />
+                  Remove {formatCount(report.junk_rows[reason])} {DROP_LABELS[reason]}
+                </label>
+              ))}
+            </fieldset>
+          )}
+          {report.columns.length > 0 && (
+            <fieldset className="cleanup-group">
+              <legend>Formats and bad values</legend>
+              <div className="cleanup-columns">
+                {report.columns.map((c) => {
+                  const problems = c.invalid + c.placeholders;
+                  const examples = [...(c.problem_examples.placeholder ?? []), ...(c.problem_examples.invalid ?? [])].slice(0, 3);
+                  return (
+                    <div key={c.column} className="cleanup-card">
+                      <h3>
+                        {c.column}
+                        {/* The role is shown only when the column name does not already say it ("Mobile": phone numbers). */}
+                        {!c.label.toLowerCase().startsWith(c.column.toLowerCase().slice(0, 4)) && <span className="muted small"> {c.label.toLowerCase()}</span>}
+                      </h3>
+                      {c.changes > 0 && (
+                        <>
+                          <label className="toggle block">
+                            <input type="checkbox" checked={standardizeSet.has(c.column)} onChange={(e) => setStandardize(toggled(standardizeSet, c.column, e.target.checked))} />
+                            Standardize {formatCount(c.changes)} value{c.changes === 1 ? "" : "s"}
+                          </label>
+                          <ul className="plain-list cleanup-examples" aria-label={`${c.column} examples`}>
+                            {c.change_examples.slice(0, 3).map(([before, after]) => (
+                              <li key={before}><code>{before}</code> <span aria-hidden="true">→</span><span className="sr-only">becomes</span> <code>{after}</code></li>
+                            ))}
+                          </ul>
+                        </>
+                      )}
+                      {problems > 0 && (
+                        <>
+                          <label className="toggle block">
+                            <input type="checkbox" checked={clearSet.has(c.column)} onChange={(e) => setClear(toggled(clearSet, c.column, e.target.checked))} />
+                            Clear {formatCount(problems)} {c.invalid && c.placeholders ? "invalid or placeholder" : c.invalid ? "invalid" : "placeholder"} value{problems === 1 ? "" : "s"}
+                          </label>
+                          <p className="muted small">For example {examples.map((value, i) => <span key={value}>{i ? ", " : ""}<code>{value}</code></span>)}. Left as typed unless cleared.</p>
+                        </>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </fieldset>
+          )}
+          {report.clusters.length > 0 && (
+            <fieldset className="cleanup-group">
+              <legend>Different spellings of the same value</legend>
+              <ul className="plain-list cleanup-clusters">
+                {clusters.map((cluster) => {
+                  const index = report.clusters.indexOf(cluster);
+                  return (
+                    <li key={`${cluster.column}-${index}`} className="cleanup-cluster">
+                      <label className="toggle">
+                        <input type="checkbox" checked={!skipped.has(index)} onChange={(e) => setSkipped(toggled(skipped, index, !e.target.checked))} aria-label={`Unify ${cluster.values.map((v) => v.value).join(", ")} in ${cluster.column}`} />
+                        <span className="muted small">{cluster.column}</span>
+                      </label>
+                      <span className="cleanup-variants">
+                        {cluster.values.map((v) => <span key={v.value} className="chip-static">{v.value} <small>×{formatCount(v.rows)}</small></span>)}
+                      </span>
+                      <label className="cleanup-target">
+                        <span className="sr-only">Keep as</span>
+                        <span aria-hidden="true">→</span>
+                        <input value={targets[index] ?? cluster.suggested} disabled={skipped.has(index)} onChange={(e) => setTargets({ ...targets, [index]: e.target.value })} aria-label={`Value to keep for ${cluster.column}`} />
+                      </label>
+                    </li>
+                  );
+                })}
+              </ul>
+              {report.clusters.length > clusters.length && (
+                <button type="button" className="btn btn-small" onClick={() => setShowAllClusters(true)}>Show all {formatCount(report.clusters.length)} groups</button>
+              )}
+            </fieldset>
+          )}
+        </>
+      )}
+      <ErrorNote message={error} />
+      {job && isActive(job.state) && <JobProgress job={job} />}
+      <div className="decision-bar">
+        {!nothingToFix && (
+          <button type="button" className="btn btn-primary" disabled={running || fixCount === 0} onClick={() => void apply()}>
+            Save cleaned copy and continue
+          </button>
+        )}
+        <button type="button" className={nothingToFix ? "btn btn-primary" : "btn"} disabled={running} onClick={onSkip}>
+          {nothingToFix ? "Continue" : "Skip, use the data as it is"}
+        </button>
+        {!nothingToFix && <span className="muted small">{formatCount(fixCount)} fix{fixCount === 1 ? "" : "es"} selected</span>}
+      </div>
+    </section>
   );
 }
 
@@ -483,18 +698,19 @@ function PreviewStep({
   );
 }
 
-function ReviewQueue({ jobId, onChanged, onDone, onBadMapping }: { jobId: string; onChanged: () => void; onDone: () => void; onBadMapping: () => void }) {
+function ReviewQueue({ jobId, results, onChanged, onDone, onBadMapping }: { jobId: string; results: MatchResults | null; onChanged: () => void; onDone: () => void; onBadMapping: () => void }) {
   const [choosing, setChoosing] = useState(false);
   const [chosen, setChosen] = useState<Record<string, string>>({});
   const [flagColumn, setFlagColumn] = useState("");
   const [flagNote, setFlagNote] = useState("");
   const [index, setIndex] = useState(0);
-  const [revealed, setRevealed] = useState(false);
+  // Values stay masked until the reviewer chooses to see them; that choice is remembered.
+  const [revealed, setRevealed] = useState(() => loadSetting("review.reveal", false));
   const [shortcuts, setShortcuts] = useState(true);
   const [lastAction, setLastAction] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [order, setOrder] = useState<"score" | "model">("score");
-  const queue = useService<{ total: number; items: ReviewItem[]; sensitive_columns: string[]; ranking_model: RankingModel | null }>("match.review_queue", { job_id: jobId, limit: 50, order });
+  const [order, setOrder] = useState<ReviewOrder>("likelihood");
+  const queue = useService<{ total: number; items: ReviewItem[]; sensitive_columns: string[]; ranking_model: RankingModel | null; bands?: Bands }>("match.review_queue", { job_id: jobId, limit: 50, order });
   const toast = useToast();
   const keepRef = useRef<HTMLButtonElement>(null);
   const items = queue.data?.items ?? [];
@@ -515,6 +731,33 @@ function ReviewQueue({ jobId, onChanged, onDone, onBadMapping }: { jobId: string
       setError(null);
       setLastAction(result.review_action_id);
       toast.show({ message: action === "merge" ? "Merged. Canonical records updated." : "Kept separate. This pair will not be linked.", action: { label: "Undo", run: () => void undo(result.review_action_id) } });
+      await queue.reload();
+      onChanged();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      await queue.reload();
+    }
+  };
+
+  const decideBand = async (band: keyof Bands, expected: number) => {
+    try {
+      const result = await call<{ batch_id: string | null; decided: number }>("match.bulk_review", { job_id: jobId, band, expected_count: expected });
+      setError(null);
+      setIndex(0);
+      const undoBand = async () => {
+        try {
+          await call("match.undo_bulk_review", { job_id: jobId, batch_id: result.batch_id });
+          toast.show({ message: `Undone: ${pairs(result.decided)} back in the queue.` });
+          await queue.reload();
+          onChanged();
+        } catch (err) {
+          setError(err instanceof Error ? err.message : String(err));
+        }
+      };
+      toast.show({
+        message: band === "likely" ? `Merged ${pairs(result.decided)}. Canonical records updated.` : `Kept ${pairs(result.decided)} separate.`,
+        action: result.batch_id ? { label: "Undo", run: () => void undoBand() } : undefined,
+      });
       await queue.reload();
       onChanged();
     } catch (err) {
@@ -558,6 +801,8 @@ function ReviewQueue({ jobId, onChanged, onDone, onBadMapping }: { jobId: string
   if (!queue.data) return <p className="muted">Loading review queue…</p>;
 
   const columns = item ? [...new Set([...Object.keys(item.left.raw), ...Object.keys(item.right.raw)])] : [];
+  const reviewedCount = Object.values(results?.reviewed ?? {}).reduce((sum, count) => sum + count, 0);
+  const reviewTotal = reviewedCount + queue.data.total;
 
   return (
     <section className="stack" aria-labelledby="review-title">
@@ -565,9 +810,19 @@ function ReviewQueue({ jobId, onChanged, onDone, onBadMapping }: { jobId: string
         <h2 id="review-title">Review matches</h2>
         <span>{formatCount(queue.data.total)} remaining</span>
       </div>
+      {results && (
+        <div className="review-summary">
+          <div className="review-progress" role="progressbar" aria-label="Review progress" aria-valuemin={0} aria-valuemax={reviewTotal} aria-valuenow={reviewedCount}>
+            <span style={{ width: `${reviewTotal ? (reviewedCount / reviewTotal) * 100 : 100}%` }} />
+          </div>
+          <p className="muted small">
+            {formatCount(reviewedCount)} of {formatCount(reviewTotal)} reviewed · {formatCount(results.decisions.match ?? 0)} pairs matched automatically · {formatCount(results.canonical_records)} clean records
+          </p>
+        </div>
+      )}
       <div className="row-actions">
         <label className="toggle">
-          <input type="checkbox" checked={revealed} onChange={(e) => setRevealed(e.target.checked)} /> Reveal sensitive values
+          <input type="checkbox" checked={revealed} onChange={(e) => { setRevealed(e.target.checked); saveSetting("review.reveal", e.target.checked); }} /> Reveal sensitive values
         </label>
         <label className="toggle">
           <input type="checkbox" checked={shortcuts} onChange={(e) => setShortcuts(e.target.checked)} /> Keyboard shortcuts (J/K next/previous, M merge, S keep separate, U undo)
@@ -583,6 +838,7 @@ function ReviewQueue({ jobId, onChanged, onDone, onBadMapping }: { jobId: string
         }}
         onTrained={() => void queue.reload()}
       />
+      {queue.data.bands && <BulkBands bands={queue.data.bands} onDecide={(band, expected) => void decideBand(band, expected)} />}
       <ErrorNote message={error} />
       {!item ? (
         <div className="panel">
@@ -595,9 +851,21 @@ function ReviewQueue({ jobId, onChanged, onDone, onBadMapping }: { jobId: string
         </div>
       ) : (
         <>
-          <p className="muted">
-            Item {Math.min(index, items.length - 1) + 1} of {items.length} loaded · score {item.score.toFixed(2)} · {item.reason}
-          </p>
+          <div className="pair-head">
+            <p className="muted">
+              Pair {Math.min(index, items.length - 1) + 1} of {items.length} loaded · {item.reason}
+            </p>
+            {item.likelihood != null && <Likelihood value={item.likelihood} />}
+          </div>
+          <h3 className="sr-only">Evidence</h3>
+          <ul className="plain-list evidence evidence-inline" aria-label="Evidence">
+            {item.evidence.map((e, i) => (
+              <li key={i} className={`evidence-${e.strength}`}>
+                <span aria-hidden="true">{e.strength === "strong" ? "✓" : e.strength === "guard" ? "✕" : e.result === "different" ? "≠" : "•"}</span>{" "}
+                <strong>{e.strength === "guard" ? "Contradiction" : e.strength === "strong" ? "Strong" : "Supporting"}</strong> — {e.explanation}
+              </li>
+            ))}
+          </ul>
           <div className="table-wrap">
             <table className="data-table comparison">
               <caption className="sr-only">Record A compared with record B</caption>
@@ -648,15 +916,6 @@ function ReviewQueue({ jobId, onChanged, onDone, onBadMapping }: { jobId: string
               </tbody>
             </table>
           </div>
-          <h3>Evidence</h3>
-          <ul className="plain-list evidence">
-            {item.evidence.map((e, i) => (
-              <li key={i} className={`evidence-${e.strength}`}>
-                <span aria-hidden="true">{e.strength === "strong" ? "✓" : e.strength === "guard" ? "✕" : e.result === "different" ? "≠" : "•"}</span>{" "}
-                <strong>{e.strength === "guard" ? "Contradiction" : e.strength === "strong" ? "Strong evidence" : "Supporting"}</strong> — {e.explanation}
-              </li>
-            ))}
-          </ul>
           <div className="decision-bar">
             {!item.can_merge && <strong className="note-error">✕ Cannot auto-merge</strong>}
             <button ref={keepRef} type="button" className="btn" onClick={() => void decide("keep_separate")}>
@@ -722,16 +981,79 @@ function ReviewQueue({ jobId, onChanged, onDone, onBadMapping }: { jobId: string
 }
 
 type RankingModel = { id: string; model_version: string; label_count: number; created_at: string; evaluation: { accuracy: number; precision: number | null; recall: number | null; holdout_size: number } };
+type ReviewOrder = "likelihood" | "score" | "model";
+type Bands = { likely: number; unlikely: number };
 
-function RankingControls({ jobId, model, order, onOrder, onTrained }: { jobId: string; model: RankingModel | null; order: "score" | "model"; onOrder: (order: "score" | "model") => void; onTrained: () => void }) {
+const pairs = (count: number) => `${formatCount(count)} ${count === 1 ? "pair" : "pairs"}`;
+
+const ORDER_LABEL: Record<ReviewOrder, string> = { likelihood: "most likely first", score: "deterministic score", model: "learned from your decisions" };
+
+/** "97%", with the ends written as ">99%" and "<1%" so a rounded 100% or 0% never reads as certainty. */
+function likelihoodLabel(value: number): string {
+  if (value >= 0.995) return ">99%";
+  if (value < 0.005) return "<1%";
+  return `${Math.round(value * 100)}%`;
+}
+
+function Likelihood({ value }: { value: number }) {
+  const label = likelihoodLabel(value);
+  const tone = value >= 0.9 ? "high" : value >= 0.5 ? "mid" : "low";
+  return (
+    <p className={`likelihood likelihood-${tone}`} title="Estimated from this file: how often each field agrees by chance, and how much rarer values count">
+      <span className="likelihood-track" aria-hidden="true">
+        <span style={{ width: `${Math.max(value * 100, 2)}%` }} />
+      </span>
+      <strong>{label}</strong> likely the same record
+    </p>
+  );
+}
+
+/** The two clearest groups of the queue, each decided in one step that can be undone. */
+function BulkBands({ bands, onDecide }: { bands: Bands; onDecide: (band: keyof Bands, expected: number) => void }) {
+  if (!bands.likely && !bands.unlikely) return null;
+  return (
+    <section className="panel bulk-bands" aria-labelledby="bulk-title">
+      <h3 id="bulk-title">Decide the clearest pairs together</h3>
+      <p className="muted small">
+        DataForge estimated from this file how likely each pair is the same record. Rare shared values count more than common ones, and anything that disagrees counts against. Each group is one decision you can undo.
+      </p>
+      <div className="row-actions">
+        {bands.likely > 0 && (
+          <ConfirmButton
+            label={`Merge ${pairs(bands.likely)} at >99%`}
+            title={`Merge ${pairs(bands.likely)}?`}
+            body={
+              <p>
+                Every pair in review that is at least 99% likely the same record and where no field disagrees is merged. Raw rows remain unchanged, and Undo restores all {pairs(bands.likely)} to the queue.
+              </p>
+            }
+            confirmLabel={`Merge ${pairs(bands.likely)}`}
+            onConfirm={() => onDecide("likely", bands.likely)}
+          />
+        )}
+        {bands.unlikely > 0 && (
+          <ConfirmButton
+            label={`Keep ${pairs(bands.unlikely)} at <1% separate`}
+            title={`Keep ${pairs(bands.unlikely)} separate?`}
+            body={<p>Every pair in review that is less than 1% likely the same record is kept separate and will not be linked. Undo restores all {pairs(bands.unlikely)} to the queue.</p>}
+            confirmLabel={`Keep ${pairs(bands.unlikely)} separate`}
+            onConfirm={() => onDecide("unlikely", bands.unlikely)}
+          />
+        )}
+      </div>
+    </section>
+  );
+}
+
+function RankingControls({ jobId, model, order, onOrder, onTrained }: { jobId: string; model: RankingModel | null; order: ReviewOrder; onOrder: (order: ReviewOrder) => void; onTrained: () => void }) {
   const [error, setError] = useState<string | null>(null);
   return (
     <details className="panel">
       <summary>
-        Queue order: <strong>{order === "model" ? "learned from your decisions" : "deterministic score"}</strong>
+        Queue order: <strong>{ORDER_LABEL[order]}</strong>
       </summary>
       <p className="muted small">
-        A ranking model trained only on your merge and keep-separate decisions can put the most likely merges first. It changes the order only: every item still needs your decision and nothing is merged automatically.
+        Most likely first uses the likelihood DataForge estimated from this file. A ranking model trained only on your merge and keep-separate decisions can also order the queue. Either way the order changes only: every item still needs your decision.
       </p>
       {model ? (
         <p className="small">
@@ -743,6 +1065,9 @@ function RankingControls({ jobId, model, order, onOrder, onTrained }: { jobId: s
         <p className="small muted">No model yet. Train one after reviewing at least 20 pairs with both outcomes.</p>
       )}
       <div className="segmented" role="tablist" aria-label="Queue order">
+        <button type="button" role="tab" aria-selected={order === "likelihood"} onClick={() => onOrder("likelihood")}>
+          Most likely first
+        </button>
         <button type="button" role="tab" aria-selected={order === "score"} onClick={() => onOrder("score")}>
           Score
         </button>
@@ -786,7 +1111,7 @@ type ClusterItem = {
 function GroupsPanel({ jobId, onChanged }: { jobId: string; onChanged: () => void }) {
   const groups = useService<{ total: number; items: ClusterItem[]; sensitive_columns: string[] }>("match.clusters", { job_id: jobId, limit: 25 });
   const [selected, setSelected] = useState<Record<string, Set<string>>>({});
-  const [revealed, setRevealed] = useState(false);
+  const [revealed, setRevealed] = useState(() => loadSetting("review.reveal", false));
   const [error, setError] = useState<string | null>(null);
   const toast = useToast();
 
@@ -821,7 +1146,7 @@ function GroupsPanel({ jobId, onChanged }: { jobId: string; onChanged: () => voi
       </summary>
       <p className="muted small">Split a group to separate members that should not be together, or lock a correct group so future runs keep it exactly as it is. Both apply to this dataset in future runs and can be undone.</p>
       <label className="toggle">
-        <input type="checkbox" checked={revealed} onChange={(e) => setRevealed(e.target.checked)} /> Reveal sensitive values
+        <input type="checkbox" checked={revealed} onChange={(e) => { setRevealed(e.target.checked); saveSetting("review.reveal", e.target.checked); }} /> Reveal sensitive values
       </label>
       <ErrorNote message={error} />
       {groups.data.items.length === 0 && <p className="muted">No records were merged.</p>}

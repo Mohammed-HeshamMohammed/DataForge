@@ -101,4 +101,41 @@ describe("review queue", () => {
     expect(calls.some((c) => c.command === "match.submit_review")).toBe(false);
     expect(await screen.findByRole("button", { name: "Fix mapping" })).toBeTruthy();
   });
+
+  it("orders by likelihood, shows it per pair, and decides the clearest group in one undoable step", async () => {
+    let likely = 1;
+    responses["match.review_queue"] = () => ({
+      ...queue([
+        { decision_id: "dA", score: 0.9, reason: "Needs review", review_version: 0, evidence: [evidence("strong")], left: row("r2", "Grace Hopper", "2125550100"), right: row("r3", "G. Hopper", "2125550100"), can_merge: true, model_score: null, likelihood: 0.9993 },
+      ]),
+      order: "likelihood",
+      bands: { likely, unlikely: 0 },
+    });
+    responses["match.bulk_review"] = () => {
+      likely = 0;
+      return { batch_id: "b1", decided: 1, action: "merge" };
+    };
+    responses["match.undo_bulk_review"] = () => {
+      likely = 1;
+      return { undone: 1 };
+    };
+    const { container } = render(<MatchTab initialDatasetId="d1" initialJobId="j1" />);
+    await screen.findByRole("heading", { name: "Review matches" });
+    expect(calls.find((c) => c.command === "match.review_queue")?.payload).toMatchObject({ order: "likelihood" });
+    expect(container.querySelector(".pair-head .likelihood")?.textContent).toBe(">99% likely the same record");
+
+    fireEvent.click(screen.getByRole("button", { name: "Merge 1 pair at >99%" }));
+    const dialog = screen.getByRole("dialog", { name: "Merge 1 pair?" });
+    expect(within(dialog).getByText(/no field disagrees/)).toBeTruthy();
+    expect(calls.some((c) => c.command === "match.bulk_review")).toBe(false);
+    fireEvent.click(within(dialog).getByRole("button", { name: "Merge 1 pair" }));
+    await waitFor(() => expect(calls.find((c) => c.command === "match.bulk_review")?.payload).toMatchObject({ job_id: "j1", band: "likely", expected_count: 1 }));
+    expect(await screen.findByText("Merged 1 pair. Canonical records updated.")).toBeTruthy();
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Merge 1 pair at >99%" })).toBeNull());
+
+    fireEvent.click(screen.getByRole("button", { name: "Undo" }));
+    await waitFor(() => expect(calls.find((c) => c.command === "match.undo_bulk_review")?.payload).toMatchObject({ job_id: "j1", batch_id: "b1" }));
+    expect(await screen.findByRole("button", { name: "Merge 1 pair at >99%" })).toBeTruthy();
+    expect(await accessibilityViolations(container)).toEqual([]);
+  });
 });

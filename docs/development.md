@@ -113,7 +113,8 @@ The CLI uses the same command API as the desktop app. With `--wait`, it follows 
 
 - **Full runs** need a completed preview with the same mapping version and settings.
 - **Auto-match** needs an identifier match, or strong evidence plus a score at or above the threshold and at least two comparable fields.
-- **Guards:** a conflicting identifier, house number, or unit means "Cannot auto-merge".
+- **Guards:** a conflicting identifier, house number, or unit means "Cannot auto-merge". For people, so does a different first name (household members share phones, addresses, and surnames), unless the records share an email address, which sends the pair to review.
+- **People:** names are compared as given names and surname: nicknames (Peggy for Margaret), short forms, typos, initials (including a nickname's initial, B. for Robert), "Last, First" order, titles, and suffixes. An initial alone counts for less, so Safer mode reviews it. Gmail dots and +tags at major providers are ignored when comparing emails.
 - **Clustering** rejects single-link bridges between groups.
 - **Review:** decisions become dataset-scoped constraints with optimistic versions and undo.
 - **Groups:** splitting adds `must_not_link` constraints, and locking keeps a group exactly as it is; both apply to future runs and can be undone.

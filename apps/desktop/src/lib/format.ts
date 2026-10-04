@@ -12,10 +12,12 @@ const STAGE_LABELS: Record<string, string> = {
   finding_candidates: "Finding candidates",
   evaluating_evidence: "Evaluating evidence",
   building_groups: "Building safe groups",
+  estimating_likelihood: "Estimating how likely each pair is",
   creating_review_queue: "Creating review queue",
   fetching: "Fetching pages",
   page_extracted: "Extracting records",
   reading_file: "Reading file",
+  cleaning_values: "Cleaning values",
   working: "Working",
 };
 
@@ -25,6 +27,7 @@ export function stageLabel(stage: string): string {
 
 export const JOB_KIND_LABELS: Record<string, string> = {
   dataset_import: "Import",
+  dataset_cleanup: "Cleanup",
   match: "Match",
   scrape: "Scrape",
   scrape_rendered: "Studio scrape",

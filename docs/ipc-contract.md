@@ -24,6 +24,8 @@ Command names match `^[a-z_]+\.[a-z_]+$` (enforced by the host). Unknown additiv
 | `dataset.mapping` / `dataset.confirm_mapping` | `dataset_id`, `mapping`, `entity_type` | latest mapping / new immutable version |
 | `dataset.delete` | `dataset_id` | `{deleted}` |
 | `dataset.export_workbook` | `dataset_id`, `path` (absolute, `.xlsx`) | `{job_id}` (job result: `path`, `rows`, `columns`, `sheets`): Summary with live formulas, table, Details, Photos |
+| `dataset.cleanup_scan` | `dataset_id`, `region?` (default `US`) | per-column `changes`, `invalid`, `placeholders` with examples; `junk_rows` (empty, exact duplicates, test entries); `clusters` of variant spellings with a `suggested` value; the `roles` used and whether they come from a confirmed mapping. Reads only that dataset. |
+| `dataset.cleanup_apply` | `dataset_id`, `plan` (`standardize`, `clear_invalid`, `merge_values: [{column, values, to}]`, `drop_rows` ⊆ empty/exact_duplicates/test), `name?`, `region?` | `{job_id}` (job result: new `dataset_id` of kind `cleaned` with `parent_dataset_id`, `rows`, `removed_rows`, `summary`, copied `mapping_version`). The original rows are never changed. |
 | `records.tax_sales` | `policy_acknowledgement`, `purpose`, `hcad_dir?` | `{job_id}` (job result: `dataset_id`, `rows`): Harris County Tax Office delinquent-tax sale list |
 | `records.foreclosures` | `policy_acknowledgement`, `purpose`, `from`, `to` (`YYYY-MM`, at most 12 months) | `{job_id}`: Harris County Clerk trustee foreclosure notice index |
 | `records.hcad` | `policy_acknowledgement`, `purpose`, `data_dir`, filters (`zip`, `property_class`, `absentee`, `out_of_state`, `no_homestead`, `owner_type`, `owned_years`, `built_before`, `min_value`, `max_value`; at least one) | `{job_id}`: HCAD appraisal roll filtered from the bulk files |
@@ -54,10 +56,13 @@ Command names match `^[a-z_]+\.[a-z_]+$` (enforced by the host). Unknown additiv
 | `match.set_canonical_value` / `match.undo_canonical_value` | `job_id`, `cluster_id`, `column`, `row_id` / `job_id`, `override_id` | `{override_id}` / `{undone}` |
 | `match.flag_mapping` / `dataset.mapping_flags` | `job_id`, `column`, `note`, `decision_id?` / `dataset_id` | `{flag_id, dataset_id}` / open reports |
 | `dataset.confirm_mapping` | adds `export_exclude?` (columns) | new mapping version |
+| `match.review_queue` | adds `order` `likelihood` (default in the app: most likely first) | adds `likelihood` per item and `bands` `{likely, unlikely}` |
+| `match.bulk_review` | `job_id`, `band` (`likely`: merge pairs ≥ 99% likely on which no field disagrees \| `unlikely`: keep pairs < 1% likely separate), `expected_count` (refused if the band changed) | `{batch_id, decided, action}` |
+| `match.undo_bulk_review` | `job_id`, `batch_id` | `{undone}` |
 
 `match.results` also returns `compare_dataset_id`, `review_turnaround`, and `mapping_flags`. Its metrics include `stage_seconds`, `rows_per_second`, `cluster_size_distribution`, `decisions_by_scope`, and `survivor_sources`. `match.clusters` items include `canonical_values`, `field_provenance`, and `conflicts`. Machine-checked JSON schemas for these responses live in `packages/contracts/`.
 
-Studio bridge actions also include `scrollStep` and `links(css)` for infinite scroll and detail links, and `html()` (read-only page snapshot, capped at 5 MB) for structured-data detection.
+Studio bridge actions also include `scrollStep` and `links(css)` for infinite scroll and detail links, and `html()` (read-only page snapshot, capped at 5 MB) for structured-data detection. `networkData()` returns inline `application/json` scripts (such as `__NEXT_DATA__`) and same-origin JSON responses that contain a list of objects, up to 8 MB each, 50 responses, and 20 MB in total; the oldest responses are dropped first.
 
 ### Scraping expansion (schema_version 1, additive)
 
