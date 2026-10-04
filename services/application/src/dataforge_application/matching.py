@@ -338,7 +338,10 @@ def _recluster(store: ProjectStore, job_id: str) -> None:
     active = {ds: {col: role for col, role in m.items() if role not in ("other", "ignore")} for ds, m in roles.items()}
     normalized = {r["id"]: normalize_row(r["raw"], active[r["source"]], settings.get("default_region", "US")) for r in rows}
     decisions = [dict(d) for d in store._connection.execute("SELECT id, left_row_id, right_row_id, decision, score FROM match_decisions WHERE job_id = ?", (job_id,))]
-    clusters, bridges, _ = engine.cluster([r["id"] for r in rows], normalized, decisions, _constraints(store, dataset_ids), _locked_groups(store, dataset_ids))
+    # Regrouping after a review applies the same people rules as the run (no automatic group joins different first names).
+    entity = store._connection.execute("SELECT entity_type FROM mapping_versions WHERE id = ?", (run["mapping_version_id"],)).fetchone()
+    person = engine.is_person(entity["entity_type"] if entity else None, roles)
+    clusters, bridges, _ = engine.cluster([r["id"] for r in rows], normalized, decisions, _constraints(store, dataset_ids), _locked_groups(store, dataset_ids), person)
     canonical = engine.canonicalize(
         clusters, {r["id"]: r for r in rows}, normalized, source_trust=settings.get("source_trust") or [],
         overrides=_overrides(store, dataset_ids), role_mappings=roles if len(roles) > 1 else None,

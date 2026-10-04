@@ -451,6 +451,11 @@ def canonicalize(
     return records
 
 
+def is_person(entity_type: str | None, mappings: dict[str, dict]) -> bool:
+    """People are compared by given name and surname; companies, properties, and products by the whole name."""
+    return entity_type == "person" or any(role in ("first_name", "last_name") for m in mappings.values() for role in m.values())
+
+
 def run(request: dict, progress: Callable[[str, dict], None] = lambda s, d: None, should_stop: Callable[[], bool] = lambda: False) -> dict:
     settings = validate_request(request)
     started = time.perf_counter()
@@ -464,8 +469,7 @@ def run(request: dict, progress: Callable[[str, dict], None] = lambda s, d: None
         stage_started = now
 
     mappings = request.get("mappings") or {"default": request["mapping"]}
-    # People are compared by given name and surname; companies, properties, and products by the whole name.
-    person = request.get("entity_type") == "person" or any(role in ("first_name", "last_name") for m in mappings.values() for role in m.values())
+    person = is_person(request.get("entity_type"), mappings)
     active = {name: {col: role for col, role in m.items() if role not in ("other", "ignore")} for name, m in mappings.items()}
     rows = {row["id"]: row for row in request["rows"]}
     row_order = [row["id"] for row in request["rows"]]
