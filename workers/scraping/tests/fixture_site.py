@@ -41,6 +41,7 @@ class SiteState:
         self.etag_hits = 0
         self.pdf: bytes | None = None
         self.robots_status = 200
+        self.robots_failures = 0  # robots.txt answers 503 this many times before it recovers
 
 
 def make_handler(state: SiteState):
@@ -68,6 +69,9 @@ def make_handler(state: SiteState):
             base = f"http://{self.headers['Host']}"
             path = url.path
             if path == "/robots.txt":
+                if state.robots_failures:
+                    state.robots_failures -= 1
+                    return self._send(503, "busy", "text/plain")
                 if state.robots_status != 200:
                     return self._send(state.robots_status, "error", "text/plain")
                 return self._send(200, state.robots.format(base=base), "text/plain")
@@ -135,6 +139,10 @@ def make_handler(state: SiteState):
                 return self._send(200, "name,phone\nAcme,512-555-0100\nBeta,512-555-0101\n", "text/csv")
             if path == "/challenge":
                 return self._send(200, "<div class='g-recaptcha'></div>")
+            if path == "/blocked":
+                return self._send(503, "<html><body>Sorry! Something went wrong.<!-- To discuss automated access to our data please contact api-support@example.test --></body></html>")
+            if path == "/captcha-form":
+                return self._send(200, "<html><body><form action='/errors/validateCaptcha'><input name='field-keywords'></form></body></html>")
             if path == "/limited":
                 return self._send(429, "slow down", headers={"Retry-After": "1"})
             if path == "/api/search":

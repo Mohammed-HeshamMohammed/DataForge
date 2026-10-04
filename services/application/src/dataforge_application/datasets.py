@@ -446,6 +446,12 @@ _ROLE_PATTERNS: dict[str, tuple[str, ...]] = {
         "repo url", "package url", "canonical url",
     ),
 }
+# Columns the scrapers add to every record. They describe how a row was collected, so values such as
+# source_url repeat across every row from one page and must never be proposed as match evidence.
+SCRAPE_PROVENANCE_COLUMNS = frozenset({
+    "source_url", "source_retrieved_at", "preset_id", "preset_version", "strategy_used", "extraction_mode",
+    "structured_syntax",
+})
 # Roles that may be mapped to several columns (set comparison or column-namespaced identifiers).
 MULTI_COLUMN_ROLES = frozenset({"phone", "email", "identifier", "other", "ignore"})
 SENSITIVE_ROLES = frozenset({
@@ -470,6 +476,9 @@ def _store_artifact(store: ProjectStore, source_bytes: bytes, suffix: str) -> st
 def propose_field_mappings(headers: list[str]) -> tuple[FieldMappingProposal, ...]:
     proposals: list[FieldMappingProposal] = []
     for header in headers:
+        if header in SCRAPE_PROVENANCE_COLUMNS:
+            proposals.append(FieldMappingProposal(header, "ignore", "proposed", ("ignore",)))
+            continue
         normalized = re.sub(r"[^a-z0-9]+", " ", header.casefold()).strip()
         exact_candidates = tuple(
             role for role, patterns in _ROLE_PATTERNS.items() if normalized in patterns

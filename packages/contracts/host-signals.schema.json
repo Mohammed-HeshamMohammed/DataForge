@@ -36,6 +36,13 @@
         "local"
       ]
     },
+    "robots_error": {
+      "description": "Why robots.txt was unreachable after a retry, such as \"network error: ConnectError\" or \"server error 503\".",
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "crawl_delay": {
       "type": [
         "number",

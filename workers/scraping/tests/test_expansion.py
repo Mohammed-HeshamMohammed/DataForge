@@ -71,6 +71,40 @@ def test_robots_rfc9309_longest_match_wildcards_and_errors(site) -> None:
         SignalChecker(client, include_local=True).check_url(base + "/anything")  # 4xx: no restrictions
 
 
+def test_robots_retries_once_and_names_the_failure(site, monkeypatch) -> None:
+    import socket
+
+    import dataforge_scraping.signals as signals_module
+
+    monkeypatch.setattr(signals_module, "ROBOTS_RETRY_SECONDS", 0)
+    base, state = site
+    state.robots_failures = 1
+    with httpx.Client() as client:
+        checker = SignalChecker(client, include_local=True)
+        checker.check_url(base + "/product/SKU-1")  # one 503 is retried, not turned into disallow-all
+        assert checker.for_url(base + "/").robots_status == "ok"
+    state.robots_status = 503
+    with httpx.Client() as client:
+        with pytest.raises(PolicyViolation, match=r"after a retry \(server error 503\)"):
+            SignalChecker(client, include_local=True).check_url(base + "/anything")
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        closed_port = probe.getsockname()[1]
+    with httpx.Client() as client:
+        with pytest.raises(PolicyViolation, match=r"network error: ConnectError"):
+            SignalChecker(client, include_local=True).check_url(f"http://127.0.0.1:{closed_port}/anything")
+
+
+def test_refusal_pages_stop_at_once_and_amazon_captcha_is_a_challenge(site) -> None:
+    base, state = site
+    with httpx.Client() as client:
+        with pytest.raises(PolicyViolation, match=r"refused automated access \(HTTP 503\)"):
+            fetch(client, base + "/blocked", {}, lambda url, preset: None, sleep=lambda seconds: None)
+        assert state.requests.count("/blocked") == 1  # not retried as a transient 503
+        with pytest.raises(PolicyViolation, match="access challenge"):
+            fetch(client, base + "/captcha-form", {}, lambda url, preset: None, sleep=lambda seconds: None)
+
+
 def test_tdmrep_and_aipref_signals_by_purpose(site) -> None:
     base, state = site
     assert parse_content_usage("train-ai=n, search=y") == {"train-ai": "n", "search": "y"}
@@ -299,6 +333,18 @@ def test_scrapy_engine_stops_on_challenge_and_honours_cancel(site) -> None:
     crawl = local(load("generic.crawl_structured@1.0.0.json"), base)
     cancelled = collect_with_scrapy(base + "/products?page=1", crawl, 500, 50, should_stop=lambda: True, include_local_signals=True)
     assert cancelled.stop_reason == "cancelled"
+
+
+def test_scrapy_engine_stops_on_a_refusal_page_without_retrying(site) -> None:
+    from dataforge_scraping.engines.launcher import collect_with_scrapy
+
+    base, state = site
+    preset = local(load("generic.html_list@1.1.0.json"), base)
+    preset["extraction"]["record_root"] = {"css": "li.item"}
+    preset["pagination"] = {"type": "none"}
+    with pytest.raises(PolicyViolation, match="refused automated access"):
+        collect_with_scrapy(base + "/blocked", preset, 10, 5, include_local_signals=True)
+    assert state.requests.count("/blocked") == 1
 
 
 # --- Phase 4: open data APIs -------------------------------------------------------------------------

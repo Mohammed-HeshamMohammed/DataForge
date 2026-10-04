@@ -21,6 +21,12 @@ const PRESETS = [
     request: { url_template: "https://api.gdeltproject.org/api/v2/doc/doc?query={{query}}", limit_variable: "limit", variables: { query: { type: "string", required: true }, limit: { type: "integer", default: 75, minimum: 1, maximum: 250 } } },
   },
   {
+    id: "generic.sitemap_structured", version: "1.0.0", display_name: "Sitemap: structured data", page_type: "structured_data", status: "active", source: "bundled", errors: [],
+    url_scope: { allowed_hosts: [], user_supplied_host: true }, policy: { robots_policy: "respect" }, strategy: { preferred: "http", allowed: ["http"] },
+    request_limits: { max_pages_default: 5000, max_records_default: 50000, min_delay_ms: 2000 }, extraction: { mode: "structured_data", fields: [] }, pagination: { type: "none" },
+    discovery: { mode: "sitemap", sitemap: { url_pattern: "" } },
+  },
+  {
     id: "custom.detected.shop_test", version: "1.0.0", display_name: "Detected shop list", page_type: "draft", status: "active", source: "custom", errors: [],
     url_scope: { allowed_hosts: ["shop.test"] }, policy: { robots_policy: "respect" }, strategy: { preferred: "http", allowed: ["http", "webview"] },
     request_limits: { max_pages_default: 10, max_records_default: 500, min_delay_ms: 1000 }, extraction: { record_root: { css: "li.item" }, fields: [] }, pagination: { type: "none" },
@@ -86,6 +92,25 @@ describe("scraping tab", () => {
     fireEvent.click(screen.getByText("Choose a collection method manually"));
     expect(screen.getByRole("tab", { name: "Use automatic detection" }).getAttribute("aria-selected")).toBe("true");
     expect(await accessibilityViolations(container)).toEqual([]);
+  });
+
+  it("keeps a manually chosen method when a URL is checked and offers the detection as a suggestion", async () => {
+    const { Scraping } = await import("../features/scraping/Scraping.tsx");
+    const { container } = render(<Scraping navigate={() => {}} initialSource="sitemap" />);
+    const input = await screen.findByLabelText("Page or data URL");
+    fireEvent.click(screen.getByText("Advanced collection settings"));
+    const preset = () => (screen.getByLabelText("Collection preset") as HTMLButtonElement).value;
+    await waitFor(() => expect(preset()).toBe("generic.sitemap_structured@1.0.0"));
+    fireEvent.change(input, { target: { value: "https://shop.test/" } });
+    fireEvent.click(screen.getByRole("button", { name: "Check this URL" }));
+    await screen.findByText(/Your Sitemap method is kept/);
+    expect(preset()).toBe("generic.sitemap_structured@1.0.0");
+    expect(screen.getByRole("tab", { name: "Sitemap" }).getAttribute("aria-selected")).toBe("true");
+    expect(await accessibilityViolations(container)).toEqual([]);
+
+    fireEvent.click(screen.getByRole("button", { name: "Use the suggestion instead" }));
+    await waitFor(() => expect(preset()).toBe("custom.detected.shop_test@1.0.0"));
+    expect(screen.getByRole("tab", { name: "Use automatic detection" }).getAttribute("aria-selected")).toBe("true");
   });
 
   it("opens a method selected from Scrape Studio directly", async () => {

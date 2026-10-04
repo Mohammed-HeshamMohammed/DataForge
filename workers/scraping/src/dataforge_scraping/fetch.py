@@ -32,7 +32,9 @@ except ImportError:  # pragma: no cover
 APP_USER_AGENT = "DataForge/0.2 (local desktop; permitted collection)"
 LOCAL_HOSTS = {"127.0.0.1", "localhost"}
 ACCESS_STOP_CODES = {401, 402, 403, 407, 408, 425, 429, 451}
-CHALLENGE_MARKERS = ("g-recaptcha", "h-captcha", "cf-challenge", "/cdn-cgi/challenge-platform", "captcha-delivery")
+CHALLENGE_MARKERS = ("g-recaptcha", "h-captcha", "cf-challenge", "/cdn-cgi/challenge-platform", "captcha-delivery", "/errors/validatecaptcha")
+# Wording sites put on error pages that refuse automated clients outright (for example Amazon's 503 page).
+AUTOMATION_BLOCK_MARKERS = ("automated access", "api-services-support@amazon.com")
 MAX_RETRY_AFTER_SECONDS = 60
 MAX_BODY_BYTES = 50 * 1024 * 1024
 TRANSIENT_BACKOFF_SECONDS = (3.0, 10.0)
@@ -111,6 +113,17 @@ class HostScheduler:
             self._sleep(pause)
 
 
+def automation_block_reason(status: int, text: str | None) -> str | None:
+    """An error page saying the site refuses automated access is a refusal, not a transient error to retry."""
+    if status < 400 or not text:
+        return None
+    lowered = text[:200_000].lower()
+    if any(marker in lowered for marker in AUTOMATION_BLOCK_MARKERS):
+        return (f"Collection stopped: the site refused automated access (HTTP {status}). "
+                "Use the site's official API or ask the site owner for permission.")
+    return None
+
+
 def scheduler_for(preset: dict) -> HostScheduler:
     limits = preset.get("request_limits") if isinstance(preset.get("request_limits"), dict) else {}
     return HostScheduler(int(limits.get("min_delay_ms", 0)) / 1000, limits.get("max_requests_per_second"))
@@ -144,6 +157,10 @@ def fetch(
             sleep(TRANSIENT_BACKOFF_SECONDS[2 - transient_left])
             transient_left -= 1
             continue
+        content_type = response.headers.get("content-type", "")
+        refusal = automation_block_reason(response.status_code, response.text if "html" in content_type or not content_type else None)
+        if refusal:
+            raise PolicyViolation(refusal)
         if response.status_code in (502, 503, 504) and transient_left and not response.headers.get("retry-after"):
             sleep(TRANSIENT_BACKOFF_SECONDS[2 - transient_left])
             transient_left -= 1

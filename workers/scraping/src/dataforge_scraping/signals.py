@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from fnmatch import fnmatch
@@ -28,6 +29,7 @@ _AIPREF_CATEGORIES = {
 }
 _DEFAULT_CATEGORIES = ("bots",)
 _CONTENT_USAGE_LINE = re.compile(r"^\s*content-usage\s*:\s*(.+)$", re.I)
+ROBOTS_RETRY_SECONDS = 2.0
 
 
 @dataclass
@@ -35,6 +37,7 @@ class HostSignals:
     host: str
     checked_at: str
     robots_status: str = "not_checked"  # ok | missing | unreachable | forbidden | local
+    robots_error: str | None = None  # why robots.txt was unreachable: "network error: ..." or "server error 503"
     crawl_delay: float | None = None
     sitemaps: list[str] = field(default_factory=list)
     tdm_reservation: int | None = None
@@ -123,6 +126,24 @@ class SignalChecker:
         except httpx.HTTPError:
             return None
 
+    def _get_robots(self, url: str) -> tuple[httpx.Response | None, str | None]:
+        """One retry, so a momentary network or server error does not turn into disallow-all for the job."""
+        response, problem = None, None
+        for attempt in range(2):
+            if attempt:
+                time.sleep(ROBOTS_RETRY_SECONDS)
+            try:
+                if self.scheduler is not None:
+                    self.scheduler.wait(url)
+                response = self.client.get(url, follow_redirects=True, timeout=15.0)
+            except httpx.HTTPError as error:
+                response, problem = None, f"network error: {type(error).__name__}"
+                continue
+            if response.status_code < 500:
+                return response, None
+            problem = f"server error {response.status_code}"
+        return response, problem
+
     def for_url(self, url: str) -> HostSignals:
         parsed = urlparse(url)
         origin = f"{parsed.scheme}://{parsed.netloc}"
@@ -137,9 +158,10 @@ class SignalChecker:
             self._robots[origin] = None
             return signals
         # robots.txt (RFC 9309 section 2.3.1: 4xx = no restrictions, 5xx/unreachable = complete disallow)
-        response = self._get(origin + "/robots.txt")
-        if response is None or response.status_code >= 500:
+        response, problem = self._get_robots(origin + "/robots.txt")
+        if problem is not None:
             signals.robots_status = "unreachable"
+            signals.robots_error = problem
             signals._robots_text = "User-agent: *\nDisallow: /"
             self._robots[origin] = Protego.parse(signals._robots_text)
         elif response.status_code in (401, 403):
@@ -186,7 +208,7 @@ class SignalChecker:
         origin = f"{parsed.scheme}://{parsed.netloc}"
         robots = self._robots.get(origin)
         if self.robots_policy == "respect" and robots is not None and not robots.can_fetch(url, APP_USER_AGENT):
-            reason = {"unreachable": "robots.txt could not be retrieved (server error), which RFC 9309 treats as disallow-all",
+            reason = {"unreachable": f"robots.txt could not be retrieved after a retry ({signals.robots_error or 'server error'}), which RFC 9309 treats as disallow-all",
                       "forbidden": "robots.txt access is forbidden, treated as disallow-all"}.get(signals.robots_status, "robots.txt disallows this URL")
             raise PolicyViolation(f"Collection stopped: {reason}")
         path = parsed.path or "/"

@@ -30,7 +30,7 @@ from twisted.internet.task import LoopingCall
 from ..discovery import Frontier, extract_links, parse_feed, parse_llms_txt, parse_sitemap
 from ..errors import PolicyViolation
 from ..extraction import _detail_urls, _next_html_url, _unique_fields, _validate_record, canonicalize_url, extract_page, validate_url
-from ..fetch import ACCESS_STOP_CODES, CHALLENGE_MARKERS
+from ..fetch import ACCESS_STOP_CODES, CHALLENGE_MARKERS, automation_block_reason
 from ..signals import SignalChecker
 
 _EMIT = sys.stdout  # replaced by run() before stdout is redirected
@@ -128,6 +128,24 @@ class PolicyMiddleware:
         except PolicyViolation as error:
             self._close(spider, str(error))
             raise IgnoreRequest(str(error))
+        return response
+
+
+class AccessRefusalMiddleware(PolicyMiddleware):
+    """Ordered before Scrapy's RetryMiddleware (550), so a page refusing automated access stops the crawl
+    on the first response instead of being retried as a transient 503."""
+
+    def process_request(self, request: Request, spider=None):
+        return None
+
+    def process_response(self, request: Request, response: Response, spider=None):
+        spider = spider or self.crawler.spider
+        content_type = response.headers.get(b"Content-Type", b"").decode("latin-1")
+        text = response.text if hasattr(response, "text") and ("html" in content_type or not content_type) else None
+        reason = automation_block_reason(response.status, text)
+        if reason:
+            self._close(spider, reason)
+            raise IgnoreRequest("automated access refused")
         return response
 
 
@@ -508,7 +526,10 @@ def settings_for(job: dict) -> dict:
         "HTTPCACHE_DIR": str(Path(job["cache_dir"]) / "scrapy") if job.get("cache_dir") else "httpcache",
         "HTTPCACHE_POLICY": "scrapy.extensions.httpcache.RFC2616Policy",
         "HTTPCACHE_IGNORE_HTTP_CODES": sorted(ACCESS_STOP_CODES),
-        "DOWNLOADER_MIDDLEWARES": {"dataforge_scraping.engines.scrapy_engine.PolicyMiddleware": 50},
+        "DOWNLOADER_MIDDLEWARES": {
+            "dataforge_scraping.engines.scrapy_engine.PolicyMiddleware": 50,
+            "dataforge_scraping.engines.scrapy_engine.AccessRefusalMiddleware": 560,
+        },
         "ITEM_PIPELINES": {"dataforge_scraping.engines.scrapy_engine.EmitPipeline": 900},
         "EXTENSIONS": {"scrapy.extensions.telnet.TelnetConsole": None},
         "SPIDER_MIDDLEWARES": {},

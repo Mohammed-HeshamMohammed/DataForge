@@ -1,6 +1,7 @@
 import { render, screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
-import { ListingCollector, collectorKind, mergedRows, rowKey, withDetails, zillowZipPages } from "../features/studio/ListingCollector.tsx";
+import { ListingCollector, collectorKind, mergedRows, rowKey, withDetails, zillowAllowedAddress, zillowZipPages } from "../features/studio/ListingCollector.tsx";
+import { bestRecordArray } from "../features/studio/Studio.tsx";
 
 const preset = { id: "generic.listings", version: "1.0.0", request_limits: { max_pages_default: 50, min_delay_ms: 8000 } };
 
@@ -24,11 +25,31 @@ describe("Scrape Studio built-in collector", () => {
     expect(rows[1]).toEqual({ listing_url: "https://x.test/2", price: "200", baths: "2" });
   });
 
-  it("builds Zillow ZIP pages from the ZIP codes already collected", () => {
-    const rows = [{ zip: "77007" }, { zip: "77002-1234" }, { zip: "77007" }, { zip: "" }];
-    expect(zillowZipPages("https://www.zillow.com/houston-tx/2_p/", rows)).toEqual(["https://www.zillow.com/houston-tx-77002/", "https://www.zillow.com/houston-tx-77007/"]);
-    expect(zillowZipPages("https://www.zillow.com/houston-tx-77007/", rows)).toHaveLength(2);
-    expect(zillowZipPages("https://www.zillow.com/homedetails/1-Elm/1_zpid/", rows)).toEqual([]);
+  it("builds Zillow ZIP pages from each home's own city, state, and ZIP code", () => {
+    const rows = [{ zip: "50021", city: "Ankeny", state: "IA" }, { zip: "50309-1234", city: "Des Moines", state: "IA" }, { zip: "50021", city: "Ankeny", state: "IA" },
+      { zip: "52240" }, { zip: "" }];
+    expect(zillowZipPages("https://www.zillow.com/ia/", rows)).toEqual([
+      "https://www.zillow.com/ankeny-ia-50021/", "https://www.zillow.com/des-moines-ia-50309/", "https://www.zillow.com/52240/",
+    ]);
+    expect(zillowZipPages("not a url", rows)).toEqual([]);
+  });
+
+  it("suggests the allowed Zillow area page for an excluded search address", () => {
+    const search = (term: string) => `https://www.zillow.com/homes/?searchQueryState=${encodeURIComponent(JSON.stringify({ usersSearchTerm: term, mapBounds: { west: -94 } }))}`;
+    expect(zillowAllowedAddress(search("Iowa"))).toBe("https://www.zillow.com/ia/");
+    expect(zillowAllowedAddress(search("Des Moines, IA"))).toBe("https://www.zillow.com/des-moines-ia/");
+    expect(zillowAllowedAddress(search("Ankeny, IA 50021"))).toBe("https://www.zillow.com/ankeny-ia-50021/");
+    expect(zillowAllowedAddress(search("50021"))).toBe("https://www.zillow.com/50021/");
+    expect(zillowAllowedAddress("https://www.zillow.com/homes/")).toBeNull();
+  });
+
+  it("prefers a list of listings over a list of regions in captured page data", () => {
+    const data = {
+      regions: [{ ispointregion: false, regionname: "Des Moines" }, { ispointregion: true, regionname: "Ankeny" }],
+      cat1: { searchResults: { listResults: [1, 2].map((n) => ({ zpid: n, price: "$300,000", address: `${n} Elm St`, beds: 3, baths: 2, detailUrl: `/homedetails/${n}/` })) } },
+    };
+    expect(bestRecordArray(data).records).toHaveLength(2);
+    expect(bestRecordArray(data).records[0]).toHaveProperty("zpid", 1);
   });
 
   it("merges detail-page fields into the row they belong to on any page", () => {

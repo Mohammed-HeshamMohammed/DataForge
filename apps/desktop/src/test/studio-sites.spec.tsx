@@ -4,7 +4,7 @@ import { accessibilityViolations } from "./a11y.ts";
 
 const siteCatalog = [
   { site_id: "amazon", site_name: "Amazon", site_category: "marketplace", domains: ["amazon.com"], recommended_method: "visual_studio", suggested_fields: ["title", "price"], requires_rendered: true, example_url: "https://www.amazon.com/s?k=laptop" },
-  { site_id: "zillow", site_name: "Zillow", site_category: "real_estate", domains: ["zillow.com"], recommended_method: "visual_studio", suggested_fields: ["address", "price"], requires_rendered: true, example_url: "https://www.zillow.com/homes/" },
+  { site_id: "zillow", site_name: "Zillow", site_category: "real_estate", domains: ["zillow.com"], recommended_method: "visual_studio", suggested_fields: ["address", "price"], requires_rendered: true, example_url: "https://www.zillow.com/houston-tx/" },
 ];
 let siteCatalogAvailable = true;
 const studioOpen = vi.fn(async () => {});
@@ -72,8 +72,8 @@ describe("Scrape Studio supported websites", () => {
     fireEvent.change(screen.getByRole("searchbox", { name: /Search Amazon Egypt/ }), { target: { value: "zillow" } });
     fireEvent.click(screen.getByRole("option", { name: /Zillow/ }));
 
-    expect((screen.getByRole("textbox", { name: "Search or page address" }) as HTMLInputElement).value).toBe("https://www.zillow.com/homes/");
-    await waitFor(() => expect(studioOpen).toHaveBeenCalledWith("https://www.zillow.com/homes/", ["www.zillow.com"], expect.any(Object)));
+    expect((screen.getByRole("textbox", { name: "Search or page address" }) as HTMLInputElement).value).toBe("https://www.zillow.com/houston-tx/");
+    await waitFor(() => expect(studioOpen).toHaveBeenCalledWith("https://www.zillow.com/houston-tx/", ["www.zillow.com"], expect.any(Object)));
     expect(await screen.findByText("Supported website")).toBeTruthy();
     await waitFor(() => expect(picker.getAttribute("aria-expanded")).toBe("false"));
     expect(await accessibilityViolations(container)).toEqual([]);

@@ -35,7 +35,7 @@ const BUILT_IN_SITE_SEEDS: readonly BuiltInSite[] = [
   ["etsy", "Etsy", "marketplace", "etsy.com", "https://www.etsy.com/search?q=desk+lamp"],
   ["aliexpress", "AliExpress", "marketplace", "aliexpress.com", "https://www.aliexpress.com/w/wholesale-laptop.html"],
   ["newegg", "Newegg", "marketplace", "newegg.com", "https://www.newegg.com/p/pl?d=laptop"],
-  ["zillow", "Zillow", "real_estate", "zillow.com", "https://www.zillow.com/homes/"],
+  ["zillow", "Zillow", "real_estate", "zillow.com", "https://www.zillow.com/houston-tx/"],
   ["har", "HAR.com", "real_estate", "har.com", "https://www.har.com/houston/realestate/for_sale"],
   ["estately", "Estately", "real_estate", "estately.com", "https://www.estately.com/TX/Houston"],
   ["weichert", "Weichert", "real_estate", "weichert.com", "https://www.weichert.com/TX/Harris/Houston/"],

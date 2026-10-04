@@ -147,6 +147,14 @@ def test_json_import_and_mapping_proposals_are_conservative(tmp_path: Path) -> N
     store.close()
 
 
+def test_scrape_provenance_columns_are_never_proposed_as_match_evidence() -> None:
+    provenance = ["source_url", "source_retrieved_at", "preset_id", "preset_version", "strategy_used", "extraction_mode", "structured_syntax"]
+    proposals = propose_field_mappings(["title", "link", *provenance, "Source URL"])
+
+    assert [(p.role, p.confidence) for p in proposals[2:-1]] == [("ignore", "proposed")] * len(provenance)
+    assert proposals[-1].role == "url"
+
+
 def test_xlsx_import_and_mapping_versions_are_immutable(tmp_path: Path) -> None:
     from openpyxl import Workbook
 

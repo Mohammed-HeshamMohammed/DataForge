@@ -659,7 +659,7 @@ SITE_EXAMPLE_URLS = {
     "etsy": "https://www.etsy.com/search?q=lamp",
     "aliexpress": "https://www.aliexpress.com/w/wholesale-laptop.html",
     "newegg": "https://www.newegg.com/p/pl?d=laptop",
-    "zillow": "https://www.zillow.com/homes/",
+    "zillow": "https://www.zillow.com/houston-tx/",  # an area page: robots.txt excludes /homes/ and ?searchQueryState addresses
     "realtor": "https://www.realtor.com/realestateandhomes-search/",
     "redfin": "https://www.redfin.com/city/",
     "trulia": "https://www.trulia.com/for_sale/",

@@ -47,20 +47,59 @@ export function mergedRows(pages: Record<string, Row[]>, kind: Kind): Row[] {
   return [...rows.values()];
 }
 
-/** Zillow ZIP pages for every ZIP code already collected: /houston-tx/… → /houston-tx-77002/. Each carries its own map pins. */
+const slugOf = (text: string) => text.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+
+/** Zillow ZIP pages for every ZIP code already collected (/ankeny-ia-50021/, or /50021/ without a city). Each one carries
+ * up to 500 map pins and its own result pages, so sweeping them reaches far more homes than one map view. */
 export function zillowZipPages(currentUrl: string, rows: Row[]): string[] {
-  let origin = "https://www.zillow.com";
-  let area = "";
+  let origin: string;
   try {
-    const url = new URL(currentUrl);
-    origin = url.origin;
-    area = (url.pathname.split("/").filter(Boolean)[0] ?? "").replace(/-\d{5}$/, "");
+    origin = new URL(currentUrl).origin;
   } catch {
     return [];
   }
-  if (!/^[a-z0-9-]+-[a-z]{2}$/i.test(area)) return [];
-  const zips = [...new Set(rows.map((row) => (row.zip ?? "").slice(0, 5)).filter((zip) => /^\d{5}$/.test(zip)))].sort();
-  return zips.map((zip) => `${origin}/${area}-${zip}/`);
+  const pages = new Map<string, string>();
+  for (const row of rows) {
+    const zip = (row.zip ?? "").slice(0, 5);
+    if (!/^\d{5}$/.test(zip) || pages.has(zip)) continue;
+    const city = slugOf(row.city ?? "");
+    const state = (row.state ?? "").toLowerCase();
+    pages.set(zip, city && /^[a-z]{2}$/.test(state) ? `${origin}/${city}-${state}-${zip}/` : `${origin}/${zip}/`);
+  }
+  return [...pages.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([, url]) => url);
+}
+
+const STATE_CODES: Record<string, string> = {
+  alabama: "al", alaska: "ak", arizona: "az", arkansas: "ar", california: "ca", colorado: "co", connecticut: "ct", delaware: "de",
+  "district of columbia": "dc", florida: "fl", georgia: "ga", hawaii: "hi", idaho: "id", illinois: "il", indiana: "in", iowa: "ia",
+  kansas: "ks", kentucky: "ky", louisiana: "la", maine: "me", maryland: "md", massachusetts: "ma", michigan: "mi", minnesota: "mn",
+  mississippi: "ms", missouri: "mo", montana: "mt", nebraska: "ne", nevada: "nv", "new hampshire": "nh", "new jersey": "nj",
+  "new mexico": "nm", "new york": "ny", "north carolina": "nc", "north dakota": "nd", ohio: "oh", oklahoma: "ok", oregon: "or",
+  pennsylvania: "pa", "rhode island": "ri", "south carolina": "sc", "south dakota": "sd", tennessee: "tn", texas: "tx", utah: "ut",
+  vermont: "vt", virginia: "va", washington: "wa", "west virginia": "wv", wisconsin: "wi", wyoming: "wy",
+};
+
+/** The robots-allowed Zillow area page for a search address Zillow's robots.txt excludes (/homes/?searchQueryState=…). */
+export function zillowAllowedAddress(fullUrl: string): string | null {
+  let url: URL;
+  try {
+    url = new URL(fullUrl);
+  } catch {
+    return null;
+  }
+  let term = "";
+  try {
+    term = String((JSON.parse(url.searchParams.get("searchQueryState") || "{}") as { usersSearchTerm?: unknown }).usersSearchTerm ?? "").trim();
+  } catch {
+    term = "";
+  }
+  let match: RegExpMatchArray | null;
+  let path: string | null = null;
+  if ((match = term.match(/^(\d{5})$/))) path = `/${match[1]}/`;
+  else if ((match = term.match(/^(.+?),\s*([A-Za-z]{2})(?:\s+(\d{5}))?$/))) path = `/${slugOf(match[1])}-${match[2].toLowerCase()}${match[3] ? `-${match[3]}` : ""}/`;
+  else if (STATE_CODES[term.toLowerCase()]) path = `/${STATE_CODES[term.toLowerCase()]}/`;
+  else if (/^[A-Za-z]{2}$/.test(term) && Object.values(STATE_CODES).includes(term.toLowerCase())) path = `/${term.toLowerCase()}/`;
+  return path ? url.origin + path : null;
 }
 
 /** Merge a detail-page record into the row it belongs to, wherever that row was collected. */
@@ -106,6 +145,7 @@ export function ListingCollector({ scopeUrl, pageReady, acknowledged, purpose, p
   const [pages, setPages] = useState<Record<string, Row[]>>({});
   const pagesRef = useRef(pages);
   const [coverage, setCoverage] = useState<Coverage | null>(null);
+  const [excluded, setExcluded] = useState<{ reason: string; suggestion: string | null } | null>(null);
   const [maxPages, setMaxPages] = useState(5);
   const [sweepList, setSweepList] = useState("");
   const [sweepDepth, setSweepDepth] = useState(1);
@@ -142,10 +182,12 @@ export function ListingCollector({ scopeUrl, pageReady, acknowledged, purpose, p
 
   const showCoverage = (read: PageRead) => setCoverage({ onPage: read.on_page ?? read.records.length, mapPins: read.map_pins ?? 0, reportedTotal: read.reported_total ?? null });
 
-  // Count what the collector can read whenever a page finishes loading.
+  // Whenever a page finishes loading: count what the collector can read, and say right away if the site's
+  // signals exclude this address (on Zillow, suggest the allowed area page for the same search).
   useEffect(() => {
     if (!pageReady || !scopeUrl) {
       setCoverage(null);
+      setExcluded(null);
       return;
     }
     let cancelled = false;
@@ -154,9 +196,21 @@ export function ListingCollector({ scopeUrl, pageReady, acknowledged, purpose, p
     }).catch(() => {
       if (!cancelled) setCoverage(null);
     });
+    void (async () => {
+      try {
+        const info = await studioHost.call<PageInfo>("pageInfo");
+        const result = await call<{ allowed: boolean; reason: string | null }>("scrape.check_url", { preset, url: info.url, scope_url: scopeUrl, ...(purpose ? { purpose } : {}) });
+        if (cancelled) return;
+        setExcluded(result.allowed ? null : { reason: result.reason ?? "This address is excluded", suggestion: onZillow ? zillowAllowedAddress(info.url) : null });
+      } catch {
+        if (!cancelled) setExcluded(null);
+      }
+    })();
     return () => {
       cancelled = true;
     };
+    // preset and purpose only refine the check; the page load drives it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [kind, pageReady, scopeUrl]);
 
   const checkUrl = async (target: string) => {
@@ -373,6 +427,22 @@ export function ListingCollector({ scopeUrl, pageReady, acknowledged, purpose, p
         {pageOnly ? ` ${host}'s terms do not allow automated browsing: only pages you open are read.` : ""}
       </p>
       {siteNote && <p className="muted small">Tested: {siteNote}</p>}
+      {excluded && (
+        <div className="note note-warning small" role="status">
+          <p>DataForge will not read this address: {excluded.reason}.{onZillow ? " Zillow's robots.txt excludes /homes/ and addresses that carry the map position or filters (?searchQueryState=)." : ""}</p>
+          {excluded.suggestion && (
+            <button type="button" className="btn btn-small" disabled={!!running} onClick={() => void studioHost.navigate(excluded.suggestion!).catch((err) => setError(String(err)))}>
+              Open {excluded.suggestion.replace(/^https:\/\/(www\.)?/, "")} instead
+            </button>
+          )}
+          {onZillow && !excluded.suggestion && <p>Open an area page such as zillow.com/ia/, zillow.com/des-moines-ia/, or zillow.com/50021/.</p>}
+        </div>
+      )}
+      {onZillow && coverage?.reportedTotal && coverage.reportedTotal > rows.length && (
+        <p className="muted small">
+          Zillow shows at most about 500 map pins per view and about 800 list results per search. To reach the other {(coverage.reportedTotal - rows.length).toLocaleString()} homes, collect this page, then use “Collect from a list of pages” → “Fill with ZIP pages”.
+        </p>
+      )}
       {!preset && <p className="note small" role="status">The {kind === "products" ? "generic.products" : "generic.listings"} preset is not installed.</p>}
       <div className="row-actions">
         <button type="button" className="btn btn-small" disabled={!ready || !pageReady} onClick={() => void collectPages(false)}>Add this page</button>

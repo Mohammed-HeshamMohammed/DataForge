@@ -91,15 +91,32 @@ function slug(value: string): string {
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-function firstRecordArray(value: unknown, depth = 0): Record<string, unknown>[] {
-  if (Array.isArray(value) && value.every((item) => typeof item === "object" && item !== null && !Array.isArray(item))) return value as Record<string, unknown>[];
-  if (value && typeof value === "object" && depth < 4) {
-    for (const nested of Object.values(value)) {
-      const found = firstRecordArray(nested, depth + 1);
-      if (found.length) return found;
+const RECORD_KEYS = /price|address|street|city|zip|postal|bed|bath|sqft|area|url|link|title|name|rating|image|photo|date|company|salary/i;
+
+/** The list of objects in a JSON document that looks most like records (listings, products, results), with its score. */
+export function bestRecordArray(value: unknown): { records: Record<string, unknown>[]; score: number } {
+  let best: Record<string, unknown>[] = [];
+  let bestScore = 0;
+  const visit = (node: unknown, depth: number) => {
+    if (depth > 6 || !node || typeof node !== "object") return;
+    if (Array.isArray(node)) {
+      const objects = node.filter((item): item is Record<string, unknown> => !!item && typeof item === "object" && !Array.isArray(item));
+      if (objects.length >= 2 && objects.length === node.length) {
+        const keys = new Set(objects.slice(0, 20).flatMap((item) => Object.keys(item)));
+        const hits = [...keys].filter((key) => RECORD_KEYS.test(key)).length;
+        const score = hits * 10 + Math.min(keys.size, 30) + Math.log2(objects.length + 1);
+        if (score > bestScore) {
+          best = objects;
+          bestScore = score;
+        }
+      }
+      node.slice(0, 50).forEach((child) => visit(child, depth + 1));
+      return;
     }
-  }
-  return [];
+    Object.values(node).forEach((child) => visit(child, depth + 1));
+  };
+  visit(value, 0);
+  return { records: best, score: bestScore };
 }
 
 function browserTarget(value: string): string {
@@ -585,7 +602,10 @@ export function Studio({ navigate, initialUrl = "", active = true }: { navigate:
   const networkRecords = async (limit: number) => {
     const captured = await studioHost.call<{ responses: NetworkResponse[]; error: string | null }>("networkData");
     if (captured.error) throw new Error(captured.error);
-    return captured.responses.flatMap((response) => firstRecordArray(response.data).map(printableRecord)).slice(0, limit);
+    // Keep the responses whose best list looks like records; a region or menu list loses to the listings next to it.
+    const found = captured.responses.map((response) => bestRecordArray(response.data));
+    const top = Math.max(0, ...found.map((entry) => entry.score));
+    return found.filter((entry) => entry.records.length && entry.score >= top * 0.6).flatMap((entry) => entry.records.map(printableRecord)).slice(0, limit);
   };
 
   const inspectNetwork = async () => {
@@ -850,6 +870,13 @@ export function Studio({ navigate, initialUrl = "", active = true }: { navigate:
     const host = hostOf(scopeUrl ?? "");
     return host ? supportedSites.find((site) => site.domains.some((domain) => host === domain || host.endsWith(`.${domain}`)))?.collector_note : undefined;
   }, [scopeUrl, supportedSites]);
+  // Listing sites in the catalog and Amazon are what the built-in collector reads.
+  const collectorSite = useMemo(() => {
+    const host = hostOf(scopeUrl ?? "");
+    if (!host) return false;
+    if (/(^|\.)amazon\.[a-z.]+$/i.test(host)) return true;
+    return supportedSites.some((site) => site.site_category === "real_estate" && site.domains.some((domain) => host === domain || host.endsWith(`.${domain}`)));
+  }, [scopeUrl, supportedSites]);
   const draft = draftPreset();
   const canExtract = !!scopeUrl && !!recordRoot && fields.length > 0 && acknowledged && !!purpose && !running && !(job && isActive(job.state));
   const saved = (presets.data ?? []).some((p) => p.id === draft?.id && p.version === version);
@@ -882,6 +909,7 @@ export function Studio({ navigate, initialUrl = "", active = true }: { navigate:
           <h2>Collect from this page</h2>
           <p className="muted small">Open a page, point at one repeating item, then choose the information you want. DataForge handles the technical setup.</p>
         </header>
+        <ListingCollector scopeUrl={scopeUrl} pageReady={loaded?.state === "finished"} acknowledged={acknowledged} purpose={purpose} presets={presets.data ?? []} onStaged={setJobId} siteNote={collectorNote} />
         <section className="studio-site-picker" aria-labelledby="studio-site-picker-heading">
           <label className="field">
             <span id="studio-site-picker-heading">Start with a supported website</span>
@@ -916,9 +944,14 @@ export function Studio({ navigate, initialUrl = "", active = true }: { navigate:
             <details><summary>Technical detection details</summary><code>{recommendation.preset_id}@{recommendation.preset_version}</code> · {recommendation.confidence} confidence</details>
           </section>
         )}
-        <ListingCollector scopeUrl={scopeUrl} pageReady={loaded?.state === "finished"} acknowledged={acknowledged} purpose={purpose} presets={presets.data ?? []} onStaged={setJobId} siteNote={collectorNote} />
         <section className="studio-steps" aria-labelledby="studio-steps-heading">
           <h3 id="studio-steps-heading">What should DataForge collect?</h3>
+          {scopeUrl && collectorSite && (
+            <p className="note small">
+              Listings or products? The built-in collector at the top reads them without picking.{" "}
+              <button type="button" className="link" onClick={() => document.getElementById("studio-collector-heading")?.scrollIntoView({ behavior: "smooth", block: "start" })}>Go to the collector</button>
+            </p>
+          )}
           <button type="button" className={`studio-step ${recordRoot ? "is-complete" : ""}`} disabled={!scopeUrl || mode !== "none"} onClick={() => void startPick("repeated")}>
             <span className="studio-step-number">{recordRoot ? "✓" : "1"}</span>
             <span><strong>{recordRoot ? "Repeated items selected" : "Select a repeated item"}</strong><small>{rootCount !== null ? `${rootCount} matching items found` : "Click one card, row, product, or result"}</small></span>

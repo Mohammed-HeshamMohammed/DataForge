@@ -139,13 +139,13 @@ export function Scraping({ navigate, initialSource }: { navigate: Navigate; init
     try {
       const result = await call<Detection>("scrape.detect_url", { url: url.trim(), purpose });
       setDetected(result);
-      setMode("auto");
-      setSelectedKey(`${result.preset_id}@${result.preset_version}`);
+      // A manually chosen method stays selected; the detection is offered as a suggestion instead.
+      if (mode === "auto") setSelectedKey(`${result.preset_id}@${result.preset_version}`);
       await presets.reload();
       setError(null);
     } catch (err) {
       setDetected(null);
-      setSelectedKey("");
+      if (mode === "auto") setSelectedKey("");
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setDetecting(false);
@@ -190,13 +190,19 @@ export function Scraping({ navigate, initialSource }: { navigate: Navigate; init
         </div>
         <label className="field auto-url-field">
           <span>Page or data URL</span>
-          <input ref={urlInputRef} value={url} onChange={(event) => { setUrl(event.target.value); if (mode === "auto") { setDetected(null); setSelectedKey(""); } }} placeholder={START_URL_PLACEHOLDER[source]} spellCheck={false} />
+          <input ref={urlInputRef} value={url} onChange={(event) => { setUrl(event.target.value); setDetected(null); if (mode === "auto") setSelectedKey(""); }} placeholder={START_URL_PLACEHOLDER[source]} spellCheck={false} />
         </label>
         <button type="button" className="btn btn-primary" disabled={!url.trim() || !purpose || detecting} onClick={() => void detectUrl()}>
           {detecting ? "Checking…" : "Check this URL"}
         </button>
       </section>
-      {detected && (
+      {detected && mode !== "auto" && (
+        <div className="note auto-detection-result" role="status">
+          <strong>Your {sourceInfo?.label ?? "selected"} method is kept.</strong> Automatic detection suggests {SOURCES.find((item) => item.id === detected.source)?.label ?? "another method"} for this address: {detected.reason}.
+          <button type="button" className="btn btn-small" onClick={() => { setMode("auto"); setSelectedKey(`${detected.preset_id}@${detected.preset_version}`); }}>Use the suggestion instead</button>
+        </div>
+      )}
+      {detected && mode === "auto" && (
         <div className="note auto-detection-result" role="status">
           <strong>{detected.site_name ? `${detected.site_name} recognized.` : `DataForge found a ${sourceInfo?.label.toLowerCase() ?? "compatible"} source.`}</strong> {detected.reason}. The collection method is ready.
           {!!detected.suggested_fields?.length && <span className="muted small"> Suggested information: {detected.suggested_fields.join(", ")}.</span>}
