@@ -213,3 +213,12 @@ DataForge keeps three execution paths: policy-controlled HTTP/httpx, Scrapy for 
 
 **Revisit when:** real review decisions show first-name contradictions overruled often (add the nicknames, or relax the rule to review), or a non-English naming convention (patronymics, family name first) needs its own parser.
 
+
+## D32. Fix values before matching, as a cleaned copy
+
+- **What:** Clean & Combine gained a "Fix values" step between explaining columns and checking duplicates. `dataset.cleanup_scan` reads only the chosen dataset and reports, per column role, the formats it would standardize (names, phones, emails, ZIP/postal codes including leading zeros Excel dropped, US states, USPS street suffixes and unit words, URLs, IDs stored as numbers), invalid and placeholder values (N/A, 000-000-0000, noemail@…, Excel errors), junk rows (empty, exact duplicates as typed, test entries), and variant spellings grouped OpenRefine-style by fingerprint, character n-gram fingerprint, or company name without legal form.
+- **Choices stay with the person:** every fix is a checkbox with before/after examples; invalid values are kept unless the person clears them, and the value kept for a group of spellings is editable. Nothing outside the dataset is consulted or added.
+- **Never in place:** `dataset.cleanup_apply` writes a new dataset of kind `cleaned` that keeps the original row numbers, records `parent_dataset_id` and the plan with a change summary (migration 011), and copies the column mapping. The imported rows are unchanged, so cleanup can be redone differently.
+- **Measured:** on the matching answer-key sets with typical spreadsheet damage (dropped ZIP zeros, email domain typos, N/A phones), cleaning first raised automatic merges from 86.6% to 90.3% (held-out set 81.6% to 85.3%) and shrank the review queue by about a fifth, with no wrong merges either way. Scanning or applying 50,000 rows takes about 2 seconds.
+
+**Revisit when:** people need fixes that depend on more than one column at once (for example splitting a full address into parts), or regions other than the US need their own state and postal rules.

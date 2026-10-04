@@ -2987,3 +2987,100 @@ fieldset.scope legend {
     justify-content: center;
   }
 }
+
+/* Clean & Combine: Fix values */
+.cleanup-group {
+  margin: 0;
+  padding: var(--spacing-md) var(--spacing-lg) var(--spacing-lg);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface-sunken);
+}
+
+.cleanup-group legend {
+  padding: 0 var(--spacing-xs);
+  font-weight: 600;
+}
+
+.cleanup-columns {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(17rem, 1fr));
+  gap: var(--spacing-md);
+}
+
+.cleanup-card {
+  padding: var(--spacing-md);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--color-surface-raised);
+}
+
+.cleanup-card h3 {
+  margin: 0 0 var(--spacing-xs);
+  font-size: 0.95rem;
+}
+
+.cleanup-card p {
+  margin: var(--spacing-xs) 0 0;
+}
+
+.cleanup-examples {
+  display: grid;
+  gap: 2px;
+  margin: var(--spacing-xs) 0 var(--spacing-sm) 1.6rem;
+  font-size: 0.8rem;
+}
+
+.cleanup-examples code,
+.cleanup-card p code {
+  overflow-wrap: anywhere;
+}
+
+.cleanup-clusters {
+  display: grid;
+  gap: var(--spacing-xs);
+}
+
+.cleanup-cluster {
+  display: grid;
+  grid-template-columns: minmax(7rem, auto) minmax(0, 1fr) minmax(10rem, 16rem);
+  gap: var(--spacing-sm);
+  align-items: center;
+  padding: var(--spacing-xs) 0;
+  border-bottom: 1px solid var(--color-border-subtle);
+}
+
+.cleanup-variants {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-xs);
+}
+
+.chip-static {
+  padding: 2px 8px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 999px;
+  background: var(--color-surface-raised);
+  font-size: 0.8rem;
+}
+
+.chip-static small {
+  color: var(--color-text-muted);
+}
+
+.cleanup-target {
+  display: flex;
+  gap: var(--spacing-xs);
+  align-items: center;
+}
+
+.cleanup-target input {
+  flex: 1;
+  min-width: 0;
+}
+
+@media (max-width: 1099px) {
+  .cleanup-cluster {
+    grid-template-columns: 1fr;
+  }
+}

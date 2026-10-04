@@ -9,21 +9,23 @@ import { MappingEditor } from "../../components/MappingEditor.tsx";
 import { ImportForm } from "../datasets/Datasets.tsx";
 import { CustomSelect } from "../../components/CustomSelect.tsx";
 
-type Step = 1 | 2 | 3 | 4 | 5;
+type Step = 1 | 2 | 3 | 4 | 5 | 6;
 const STEPS: { step: Step; label: string }[] = [
   { step: 1, label: "Choose data" },
   { step: 2, label: "Explain columns" },
-  { step: 3, label: "Check duplicates" },
-  { step: 4, label: "Review uncertain pairs" },
-  { step: 5, label: "Export clean file" },
+  { step: 3, label: "Fix values" },
+  { step: 4, label: "Check duplicates" },
+  { step: 5, label: "Review pairs" },
+  { step: 6, label: "Export" },
 ];
 
 const STEP_HELP: Record<Step, { title: string; body: string }> = {
   1: { title: "Choose the list you want to clean", body: "Use one list to remove duplicates, or compare two lists to combine matching records." },
   2: { title: "Explain what each column contains", body: "DataForge suggests meanings such as phone, property address, SKU, or repository URL. You only need to check them." },
-  3: { title: "Test the rules safely", body: "Preview likely duplicates before a full run. Your original rows are never changed." },
-  4: { title: "Decide the uncertain cases", body: "Strong matches are handled automatically. You only review pairs where the evidence is not clear." },
-  5: { title: "Download the cleaned result", body: "Export one combined file while keeping the source data and decisions available for later review." },
+  3: { title: "Fix messy values first", body: "Standardize formats, clear junk, and unify different spellings. Cleaner values find more duplicates; the original stays as imported." },
+  4: { title: "Test the rules safely", body: "Preview likely duplicates before a full run. Your original rows are never changed." },
+  5: { title: "Decide the uncertain cases", body: "Strong matches are handled automatically. You only review pairs where the evidence is not clear." },
+  6: { title: "Download the cleaned result", body: "Export one combined file while keeping the source data and decisions available for later review." },
 };
 
 type Settings = { strictness: "conservative" | "balanced"; max_block_size: number; preview_size: number };
@@ -33,19 +35,20 @@ export function MatchTab({ initialDatasetId, initialJobId }: { initialDatasetId?
   const datasets = useService<Dataset[]>("dataset.list");
   const jobs = useService<Job[]>("job.list", { limit: 50 }, 2000);
   const [datasetId, setDatasetId] = useState<string | null>(initialDatasetId ?? null);
-  const [step, setStep] = useState<Step>(initialJobId ? 4 : initialDatasetId ? 2 : 1);
+  const [step, setStep] = useState<Step>(initialJobId ? 5 : initialDatasetId ? 2 : 1);
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
   const [previewJobId, setPreviewJobId] = useState<string | null>(null);
   const [fullJobId, setFullJobId] = useState<string | null>(initialJobId ?? null);
   const [mappingVersion, setMappingVersion] = useState<number | null>(null);
   const [compareId, setCompareId] = useState<string | null>(null);
   const [trustCompareFirst, setTrustCompareFirst] = useState(false);
+  const [cleanupDone, setCleanupDone] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     if (initialJobId) {
       setFullJobId(initialJobId);
-      setStep(4);
+      setStep(5);
     } else if (initialDatasetId) {
       setDatasetId(initialDatasetId);
       setStep(2);
@@ -68,9 +71,9 @@ export function MatchTab({ initialDatasetId, initialJobId }: { initialDatasetId?
       (preview.params.compare_dataset_id ?? null) !== compareId ||
       JSON.stringify(preview.params.settings && pickSettings(preview.params.settings as Settings & { source_trust?: string[] })) !== JSON.stringify(pickSettings(effectiveSettings)));
   const history = (jobs.data ?? []).filter((j) => j.kind === "match" && j.params.dataset_id === datasetId);
-  // Reviewing pairs needs the full width for the side-by-side comparison; its header carries the summary.
-  const reviewing = step === 4 && full?.state === "completed";
-  const completed = new Set<Step>([...(dataset ? [1 as Step] : []), ...(dataset?.mapping_version ? [2 as Step] : []), ...(preview?.state === "completed" && !previewStale ? [3 as Step] : []), ...(fullResults.data && fullResults.data.pending_review === 0 ? [4 as Step] : [])]);
+  // Fixing values and reviewing pairs need the full width; their own headers carry the counts.
+  const reviewing = (step === 5 && full?.state === "completed") || (step === 3 && !!dataset);
+  const completed = new Set<Step>([...(dataset ? [1 as Step] : []), ...(dataset?.mapping_version ? [2 as Step] : []), ...(cleanupDone || dataset?.kind === "cleaned" ? [3 as Step] : []), ...(preview?.state === "completed" && !previewStale ? [4 as Step] : []), ...(fullResults.data && fullResults.data.pending_review === 0 ? [5 as Step] : [])]);
 
   const startJob = async (runMode: "preview" | "full") => {
     try {
@@ -79,7 +82,7 @@ export function MatchTab({ initialDatasetId, initialJobId }: { initialDatasetId?
       if (runMode === "preview") setPreviewJobId(job_id);
       else {
         setFullJobId(job_id);
-        setStep(4);
+        setStep(5);
       }
       void jobs.reload();
     } catch (err) {
@@ -102,7 +105,7 @@ export function MatchTab({ initialDatasetId, initialJobId }: { initialDatasetId?
         </p>
         <ol className="stepper" aria-label="Progress">
           {STEPS.map(({ step: s, label }) => {
-            const reachable = s === 1 || (s === 2 && !!dataset) || (s === 3 && !!dataset?.mapping_version) || (s >= 4 && !!fullJobId);
+            const reachable = s === 1 || (s === 2 && !!dataset) || ((s === 3 || s === 4) && !!dataset?.mapping_version) || (s >= 5 && !!fullJobId);
             return (
               <li key={s}>
                 <button type="button" className="step" aria-current={step === s ? "step" : undefined} disabled={!reachable} onClick={() => setStep(s)}>
@@ -133,6 +136,7 @@ export function MatchTab({ initialDatasetId, initialJobId }: { initialDatasetId?
                 setDatasetId(id);
                 setPreviewJobId(null);
                 setFullJobId(null);
+                setCleanupDone(false);
               }}
               onImported={async (id) => {
                 await datasets.reload();
@@ -164,7 +168,7 @@ export function MatchTab({ initialDatasetId, initialJobId }: { initialDatasetId?
                   <h2 className="section-head">Compare with: {compareDataset.name}</h2>
                   <p className="muted small">Both mappings must use the same entity type and share at least one identifier, contact, address, or URL role. Column names may differ.</p>
                   <MappingEditor datasetId={compareDataset.id} onSaved={() => void datasets.reload()} />
-                  <button type="button" className="btn btn-primary" disabled={!dataset.mapping_version || !compareDataset.mapping_version} onClick={() => setStep(3)}>
+                  <button type="button" className="btn btn-primary" disabled={!dataset.mapping_version || !compareDataset.mapping_version} onClick={() => setStep(4)}>
                     Continue to preview
                   </button>
                 </>
@@ -172,6 +176,23 @@ export function MatchTab({ initialDatasetId, initialJobId }: { initialDatasetId?
             </>
           )}
           {step === 3 && dataset && (
+            <CleanupStep
+              dataset={dataset}
+              onCleaned={async (cleanedId) => {
+                await datasets.reload();
+                setDatasetId(cleanedId);
+                setPreviewJobId(null);
+                setFullJobId(null);
+                setCleanupDone(true);
+                setStep(4);
+              }}
+              onSkip={() => {
+                setCleanupDone(true);
+                setStep(4);
+              }}
+            />
+          )}
+          {step === 4 && dataset && (
             <PreviewStep
               settings={settings}
               setSettings={setSettings}
@@ -183,7 +204,7 @@ export function MatchTab({ initialDatasetId, initialJobId }: { initialDatasetId?
               rowCount={dataset.row_count}
             />
           )}
-          {step === 4 && fullJobId && (
+          {step === 5 && fullJobId && (
             <>
               {full && full.state !== "completed" ? (
                 <section>
@@ -206,11 +227,11 @@ export function MatchTab({ initialDatasetId, initialJobId }: { initialDatasetId?
                   )}
                 </section>
               ) : (
-                <ReviewQueue jobId={fullJobId} results={fullResults.data ?? null} onChanged={() => void fullResults.reload()} onDone={() => setStep(5)} onBadMapping={() => setStep(2)} />
+                <ReviewQueue jobId={fullJobId} results={fullResults.data ?? null} onChanged={() => void fullResults.reload()} onDone={() => setStep(6)} onBadMapping={() => setStep(2)} />
               )}
             </>
           )}
-          {step === 5 && fullJobId && fullResults.data && <ExportStep results={fullResults.data} onExported={() => void fullResults.reload()} />}
+          {step === 6 && fullJobId && fullResults.data && <ExportStep results={fullResults.data} onExported={() => void fullResults.reload()} />}
         </section>
 
         {!reviewing && <aside className="match-rail" aria-label={dataset ? "Cleanup summary" : "How cleanup works"}>
@@ -239,10 +260,10 @@ export function MatchTab({ initialDatasetId, initialJobId }: { initialDatasetId?
                   onClick={() => {
                     if (job.params.run_mode === "full") {
                       setFullJobId(job.id);
-                      setStep(4);
+                      setStep(5);
                     } else {
                       setPreviewJobId(job.id);
-                      setStep(3);
+                      setStep(4);
                     }
                   }}
                 >
@@ -277,6 +298,197 @@ function SummaryCounts({ dataset, results }: { dataset: Dataset | null; results:
       <Metric label="Confirmed different" value={results ? d.non_match ?? 0 : null} icon="≠" />
       {results?.run_mode === "full" && <Metric label="Clean records" value={results.canonical_records} />}
     </div>
+  );
+}
+
+type CleanupColumn = {
+  column: string;
+  role: string;
+  label: string;
+  filled: number;
+  changes: number;
+  change_examples: [string, string][];
+  invalid: number;
+  placeholders: number;
+  problem_examples: Partial<Record<"invalid" | "placeholder", string[]>>;
+};
+type CleanupCluster = { column: string; method: string; rows: number; values: { value: string; rows: number }[]; suggested: string };
+type CleanupScan = {
+  rows: number;
+  columns: CleanupColumn[];
+  junk_rows: { empty: number; exact_duplicates: number; test: number; examples: { test: Record<string, string>[] } };
+  clusters: CleanupCluster[];
+};
+type DropReason = "empty" | "exact_duplicates" | "test";
+
+const DROP_LABELS: Record<DropReason, string> = {
+  empty: "empty rows (nothing but blanks or placeholders such as N/A)",
+  exact_duplicates: "exact duplicate rows (identical apart from spacing and capitals)",
+  test: "test entries (such as “Test User” or test@test.com)",
+};
+
+function toggled<T>(set: Set<T>, value: T, on: boolean): Set<T> {
+  const next = new Set(set);
+  if (on) next.add(value);
+  else next.delete(value);
+  return next;
+}
+
+/** Step 3: fix formats, junk, and spellings in the chosen dataset, saved as a cleaned copy; the original is untouched. */
+function CleanupStep({ dataset, onCleaned, onSkip }: { dataset: Dataset; onCleaned: (datasetId: string) => void; onSkip: () => void }) {
+  const scan = useService<CleanupScan>("dataset.cleanup_scan", { dataset_id: dataset.id });
+  const [standardize, setStandardize] = useState<Set<string> | null>(null);
+  const [clear, setClear] = useState<Set<string> | null>(null);
+  const [drops, setDrops] = useState<Set<DropReason> | null>(null);
+  const [targets, setTargets] = useState<Record<number, string>>({});
+  const [skipped, setSkipped] = useState<Set<number>>(new Set());
+  const [showAllClusters, setShowAllClusters] = useState(false);
+  const [jobId, setJobId] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const job = useJob(jobId, (done) => {
+    if (done.state === "completed" && done.result?.dataset_id) onCleaned(String(done.result.dataset_id));
+    else if (done.state !== "completed") setError(done.error ?? "Cleanup did not finish");
+  });
+
+  if (scan.error) return <ErrorNote message={scan.error} />;
+  if (!scan.data) return <p className="muted" role="status">Checking every value in {formatCount(dataset.row_count)} rows…</p>;
+  const report = scan.data;
+  const junk = (["empty", "exact_duplicates", "test"] as DropReason[]).filter((reason) => report.junk_rows[reason] > 0);
+  // Suggested defaults: standardize every column that changes, clear values that are only placeholders, drop junk rows, unify spellings.
+  const standardizeSet = standardize ?? new Set(report.columns.filter((c) => c.changes > 0).map((c) => c.column));
+  const clearSet = clear ?? new Set(report.columns.filter((c) => c.placeholders > 0 && c.invalid === 0).map((c) => c.column));
+  const dropSet = drops ?? new Set(junk);
+  const clusters = showAllClusters ? report.clusters : report.clusters.slice(0, 12);
+  const merges = report.clusters.flatMap((cluster, index) => (skipped.has(index) ? [] : [{ column: cluster.column, values: cluster.values.map((v) => v.value), to: (targets[index] ?? cluster.suggested).trim() }]));
+  const fixCount =
+    report.columns.reduce((sum, c) => sum + (standardizeSet.has(c.column) ? c.changes : 0) + (clearSet.has(c.column) ? c.invalid + c.placeholders : 0), 0) +
+    report.clusters.reduce((sum, cluster, index) => sum + (skipped.has(index) ? 0 : cluster.rows), 0) +
+    [...dropSet].reduce((sum, reason) => sum + report.junk_rows[reason], 0);
+  const running = !!job && isActive(job.state);
+  const nothingToFix = !report.columns.length && !report.clusters.length && !junk.length;
+
+  const apply = async () => {
+    try {
+      setError(null);
+      const plan = { standardize: [...standardizeSet], clear_invalid: [...clearSet], merge_values: merges.filter((m) => m.to), drop_rows: [...dropSet] };
+      const { job_id } = await call<{ job_id: string }>("dataset.cleanup_apply", { dataset_id: dataset.id, plan });
+      setJobId(job_id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  return (
+    <section className="stack cleanup" aria-labelledby="cleanup-title">
+      <div className="section-head">
+        <h2 id="cleanup-title">Fix values before matching</h2>
+        <span>{formatCount(report.rows)} rows checked</span>
+      </div>
+      <p className="muted">Nothing changes until you save. The cleaned copy is saved as a new dataset next to the original, which stays exactly as imported.</p>
+      {nothingToFix ? (
+        <div className="panel">
+          <p><span aria-hidden="true">✓ </span>Every value is already in a standard format. There is nothing to fix.</p>
+        </div>
+      ) : (
+        <>
+          {junk.length > 0 && (
+            <fieldset className="cleanup-group">
+              <legend>Junk rows</legend>
+              {junk.map((reason) => (
+                <label key={reason} className="toggle block">
+                  <input type="checkbox" checked={dropSet.has(reason)} onChange={(e) => setDrops(toggled(dropSet, reason, e.target.checked))} />
+                  Remove {formatCount(report.junk_rows[reason])} {DROP_LABELS[reason]}
+                </label>
+              ))}
+            </fieldset>
+          )}
+          {report.columns.length > 0 && (
+            <fieldset className="cleanup-group">
+              <legend>Formats and bad values</legend>
+              <div className="cleanup-columns">
+                {report.columns.map((c) => {
+                  const problems = c.invalid + c.placeholders;
+                  const examples = [...(c.problem_examples.placeholder ?? []), ...(c.problem_examples.invalid ?? [])].slice(0, 3);
+                  return (
+                    <div key={c.column} className="cleanup-card">
+                      <h3>
+                        {c.column}
+                        {/* The role is shown only when the column name does not already say it ("Mobile": phone numbers). */}
+                        {!c.label.toLowerCase().startsWith(c.column.toLowerCase().slice(0, 4)) && <span className="muted small"> {c.label.toLowerCase()}</span>}
+                      </h3>
+                      {c.changes > 0 && (
+                        <>
+                          <label className="toggle block">
+                            <input type="checkbox" checked={standardizeSet.has(c.column)} onChange={(e) => setStandardize(toggled(standardizeSet, c.column, e.target.checked))} />
+                            Standardize {formatCount(c.changes)} value{c.changes === 1 ? "" : "s"}
+                          </label>
+                          <ul className="plain-list cleanup-examples" aria-label={`${c.column} examples`}>
+                            {c.change_examples.slice(0, 3).map(([before, after]) => (
+                              <li key={before}><code>{before}</code> <span aria-hidden="true">→</span><span className="sr-only">becomes</span> <code>{after}</code></li>
+                            ))}
+                          </ul>
+                        </>
+                      )}
+                      {problems > 0 && (
+                        <>
+                          <label className="toggle block">
+                            <input type="checkbox" checked={clearSet.has(c.column)} onChange={(e) => setClear(toggled(clearSet, c.column, e.target.checked))} />
+                            Clear {formatCount(problems)} {c.invalid && c.placeholders ? "invalid or placeholder" : c.invalid ? "invalid" : "placeholder"} value{problems === 1 ? "" : "s"}
+                          </label>
+                          <p className="muted small">For example {examples.map((value, i) => <span key={value}>{i ? ", " : ""}<code>{value}</code></span>)}. Left as typed unless cleared.</p>
+                        </>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </fieldset>
+          )}
+          {report.clusters.length > 0 && (
+            <fieldset className="cleanup-group">
+              <legend>Different spellings of the same value</legend>
+              <ul className="plain-list cleanup-clusters">
+                {clusters.map((cluster) => {
+                  const index = report.clusters.indexOf(cluster);
+                  return (
+                    <li key={`${cluster.column}-${index}`} className="cleanup-cluster">
+                      <label className="toggle">
+                        <input type="checkbox" checked={!skipped.has(index)} onChange={(e) => setSkipped(toggled(skipped, index, !e.target.checked))} aria-label={`Unify ${cluster.values.map((v) => v.value).join(", ")} in ${cluster.column}`} />
+                        <span className="muted small">{cluster.column}</span>
+                      </label>
+                      <span className="cleanup-variants">
+                        {cluster.values.map((v) => <span key={v.value} className="chip-static">{v.value} <small>×{formatCount(v.rows)}</small></span>)}
+                      </span>
+                      <label className="cleanup-target">
+                        <span className="sr-only">Keep as</span>
+                        <span aria-hidden="true">→</span>
+                        <input value={targets[index] ?? cluster.suggested} disabled={skipped.has(index)} onChange={(e) => setTargets({ ...targets, [index]: e.target.value })} aria-label={`Value to keep for ${cluster.column}`} />
+                      </label>
+                    </li>
+                  );
+                })}
+              </ul>
+              {report.clusters.length > clusters.length && (
+                <button type="button" className="btn btn-small" onClick={() => setShowAllClusters(true)}>Show all {formatCount(report.clusters.length)} groups</button>
+              )}
+            </fieldset>
+          )}
+        </>
+      )}
+      <ErrorNote message={error} />
+      {job && isActive(job.state) && <JobProgress job={job} />}
+      <div className="decision-bar">
+        {!nothingToFix && (
+          <button type="button" className="btn btn-primary" disabled={running || fixCount === 0} onClick={() => void apply()}>
+            Save cleaned copy and continue
+          </button>
+        )}
+        <button type="button" className={nothingToFix ? "btn btn-primary" : "btn"} disabled={running} onClick={onSkip}>
+          {nothingToFix ? "Continue" : "Skip, use the data as it is"}
+        </button>
+        {!nothingToFix && <span className="muted small">{formatCount(fixCount)} fix{fixCount === 1 ? "" : "es"} selected</span>}
+      </div>
+    </section>
   );
 }
 
