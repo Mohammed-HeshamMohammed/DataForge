@@ -25,15 +25,16 @@ export type ProjectSummary = {
   job_counts: Record<string, number>;
 };
 
-function ProgressRing({ percent }: { percent: number }) {
+/** `percent` is null until a cleanup has run, so an untouched project never reads as 100% reviewed. */
+function ProgressRing({ percent }: { percent: number | null }) {
   const radius = 26;
   const circumference = 2 * Math.PI * radius;
   return (
-    <svg className="ring" width="64" height="64" viewBox="0 0 64 64" role="img" aria-label={`${percent}% of review items resolved`}>
+    <svg className="ring" width="64" height="64" viewBox="0 0 64 64" role="img" aria-label={percent === null ? "No cleanup run yet" : `${percent}% of review items resolved`}>
       <circle cx="32" cy="32" r={radius} className="ring-track" />
-      <circle cx="32" cy="32" r={radius} className="ring-value" strokeDasharray={circumference} strokeDashoffset={circumference * (1 - percent / 100)} transform="rotate(-90 32 32)" />
+      {percent !== null && <circle cx="32" cy="32" r={radius} className="ring-value" strokeDasharray={circumference} strokeDashoffset={circumference * (1 - percent / 100)} transform="rotate(-90 32 32)" />}
       <text x="32" y="36" textAnchor="middle" className="ring-text">
-        {percent}%
+        {percent === null ? "—" : `${percent}%`}
       </text>
     </svg>
   );
@@ -51,7 +52,8 @@ export function Sidebar({ summary, navigate, minimized = false, onToggle = () =>
   const [filter, setFilter] = useState("");
   const totals = summary?.totals;
   const reviewTotal = (totals?.pending_review ?? 0) + (totals?.reviewed ?? 0);
-  const percent = reviewTotal ? Math.round(((totals?.reviewed ?? 0) / reviewTotal) * 100) : 100;
+  const matched = reviewTotal > 0 || (totals?.safe_matches ?? 0) > 0;
+  const percent = reviewTotal ? Math.round(((totals?.reviewed ?? 0) / reviewTotal) * 100) : matched ? 100 : null;
   const datasets = (summary?.datasets ?? []).filter((d) => d.name.toLowerCase().includes(filter.toLowerCase()));
 
   return (

@@ -784,7 +784,8 @@ kbd {
   }
 }
 
-@media (max-width: 1439px) {
+/* The review chip keeps its icon and count (and its accessible name) so the tabs never get cut off. */
+@media (max-width: 1679px) {
   .main-pane .pane-header .chip-label {
     display: none;
   }

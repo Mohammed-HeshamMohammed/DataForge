@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { call } from "../../lib/ipc.ts";
+import { loadSetting, saveSetting } from "../../lib/desktop.ts";
 import { useJob, useKeyboardShortcuts, useService } from "../../lib/hooks.ts";
 import { displayValue, formatCount, formatTime, isActive } from "../../lib/format.ts";
 import type { Dataset, Job, MatchResults, ReviewItem } from "../../lib/types.ts";
@@ -67,6 +68,8 @@ export function MatchTab({ initialDatasetId, initialJobId }: { initialDatasetId?
       (preview.params.compare_dataset_id ?? null) !== compareId ||
       JSON.stringify(preview.params.settings && pickSettings(preview.params.settings as Settings & { source_trust?: string[] })) !== JSON.stringify(pickSettings(effectiveSettings)));
   const history = (jobs.data ?? []).filter((j) => j.kind === "match" && j.params.dataset_id === datasetId);
+  // Reviewing pairs needs the full width for the side-by-side comparison; its header carries the summary.
+  const reviewing = step === 4 && full?.state === "completed";
   const completed = new Set<Step>([...(dataset ? [1 as Step] : []), ...(dataset?.mapping_version ? [2 as Step] : []), ...(preview?.state === "completed" && !previewStale ? [3 as Step] : []), ...(fullResults.data && fullResults.data.pending_review === 0 ? [4 as Step] : [])]);
 
   const startJob = async (runMode: "preview" | "full") => {
@@ -119,7 +122,7 @@ export function MatchTab({ initialDatasetId, initialJobId }: { initialDatasetId?
         </div>
       </header>
 
-      <div className="match-grid">
+      <div className={`match-grid${reviewing ? " is-focused" : ""}`}>
         <section className="match-main">
           <ErrorNote message={error} />
           {step === 1 && (
@@ -203,14 +206,14 @@ export function MatchTab({ initialDatasetId, initialJobId }: { initialDatasetId?
                   )}
                 </section>
               ) : (
-                <ReviewQueue jobId={fullJobId} onChanged={() => void fullResults.reload()} onDone={() => setStep(5)} onBadMapping={() => setStep(2)} />
+                <ReviewQueue jobId={fullJobId} results={fullResults.data ?? null} onChanged={() => void fullResults.reload()} onDone={() => setStep(5)} onBadMapping={() => setStep(2)} />
               )}
             </>
           )}
           {step === 5 && fullJobId && fullResults.data && <ExportStep results={fullResults.data} onExported={() => void fullResults.reload()} />}
         </section>
 
-        <aside className="match-rail" aria-label={dataset ? "Cleanup summary" : "How cleanup works"}>
+        {!reviewing && <aside className="match-rail" aria-label={dataset ? "Cleanup summary" : "How cleanup works"}>
           {!dataset ? (
             <>
               <h2>What DataForge will do</h2>
@@ -253,7 +256,7 @@ export function MatchTab({ initialDatasetId, initialJobId }: { initialDatasetId?
               </ul>
             </>
           )}
-        </aside>
+        </aside>}
       </div>
     </div>
   );
@@ -483,13 +486,14 @@ function PreviewStep({
   );
 }
 
-function ReviewQueue({ jobId, onChanged, onDone, onBadMapping }: { jobId: string; onChanged: () => void; onDone: () => void; onBadMapping: () => void }) {
+function ReviewQueue({ jobId, results, onChanged, onDone, onBadMapping }: { jobId: string; results: MatchResults | null; onChanged: () => void; onDone: () => void; onBadMapping: () => void }) {
   const [choosing, setChoosing] = useState(false);
   const [chosen, setChosen] = useState<Record<string, string>>({});
   const [flagColumn, setFlagColumn] = useState("");
   const [flagNote, setFlagNote] = useState("");
   const [index, setIndex] = useState(0);
-  const [revealed, setRevealed] = useState(false);
+  // Values stay masked until the reviewer chooses to see them; that choice is remembered.
+  const [revealed, setRevealed] = useState(() => loadSetting("review.reveal", false));
   const [shortcuts, setShortcuts] = useState(true);
   const [lastAction, setLastAction] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -558,6 +562,8 @@ function ReviewQueue({ jobId, onChanged, onDone, onBadMapping }: { jobId: string
   if (!queue.data) return <p className="muted">Loading review queue…</p>;
 
   const columns = item ? [...new Set([...Object.keys(item.left.raw), ...Object.keys(item.right.raw)])] : [];
+  const reviewedCount = Object.values(results?.reviewed ?? {}).reduce((sum, count) => sum + count, 0);
+  const reviewTotal = reviewedCount + queue.data.total;
 
   return (
     <section className="stack" aria-labelledby="review-title">
@@ -565,9 +571,19 @@ function ReviewQueue({ jobId, onChanged, onDone, onBadMapping }: { jobId: string
         <h2 id="review-title">Review matches</h2>
         <span>{formatCount(queue.data.total)} remaining</span>
       </div>
+      {results && (
+        <div className="review-summary">
+          <div className="review-progress" role="progressbar" aria-label="Review progress" aria-valuemin={0} aria-valuemax={reviewTotal} aria-valuenow={reviewedCount}>
+            <span style={{ width: `${reviewTotal ? (reviewedCount / reviewTotal) * 100 : 100}%` }} />
+          </div>
+          <p className="muted small">
+            {formatCount(reviewedCount)} of {formatCount(reviewTotal)} reviewed · {formatCount(results.decisions.match ?? 0)} pairs matched automatically · {formatCount(results.canonical_records)} clean records
+          </p>
+        </div>
+      )}
       <div className="row-actions">
         <label className="toggle">
-          <input type="checkbox" checked={revealed} onChange={(e) => setRevealed(e.target.checked)} /> Reveal sensitive values
+          <input type="checkbox" checked={revealed} onChange={(e) => { setRevealed(e.target.checked); saveSetting("review.reveal", e.target.checked); }} /> Reveal sensitive values
         </label>
         <label className="toggle">
           <input type="checkbox" checked={shortcuts} onChange={(e) => setShortcuts(e.target.checked)} /> Keyboard shortcuts (J/K next/previous, M merge, S keep separate, U undo)
@@ -596,8 +612,17 @@ function ReviewQueue({ jobId, onChanged, onDone, onBadMapping }: { jobId: string
       ) : (
         <>
           <p className="muted">
-            Item {Math.min(index, items.length - 1) + 1} of {items.length} loaded · score {item.score.toFixed(2)} · {item.reason}
+            Pair {Math.min(index, items.length - 1) + 1} of {items.length} loaded · {item.reason}
           </p>
+          <h3 className="sr-only">Evidence</h3>
+          <ul className="plain-list evidence evidence-inline" aria-label="Evidence">
+            {item.evidence.map((e, i) => (
+              <li key={i} className={`evidence-${e.strength}`}>
+                <span aria-hidden="true">{e.strength === "strong" ? "✓" : e.strength === "guard" ? "✕" : e.result === "different" ? "≠" : "•"}</span>{" "}
+                <strong>{e.strength === "guard" ? "Contradiction" : e.strength === "strong" ? "Strong" : "Supporting"}</strong> — {e.explanation}
+              </li>
+            ))}
+          </ul>
           <div className="table-wrap">
             <table className="data-table comparison">
               <caption className="sr-only">Record A compared with record B</caption>
@@ -648,15 +673,6 @@ function ReviewQueue({ jobId, onChanged, onDone, onBadMapping }: { jobId: string
               </tbody>
             </table>
           </div>
-          <h3>Evidence</h3>
-          <ul className="plain-list evidence">
-            {item.evidence.map((e, i) => (
-              <li key={i} className={`evidence-${e.strength}`}>
-                <span aria-hidden="true">{e.strength === "strong" ? "✓" : e.strength === "guard" ? "✕" : e.result === "different" ? "≠" : "•"}</span>{" "}
-                <strong>{e.strength === "guard" ? "Contradiction" : e.strength === "strong" ? "Strong evidence" : "Supporting"}</strong> — {e.explanation}
-              </li>
-            ))}
-          </ul>
           <div className="decision-bar">
             {!item.can_merge && <strong className="note-error">✕ Cannot auto-merge</strong>}
             <button ref={keepRef} type="button" className="btn" onClick={() => void decide("keep_separate")}>
@@ -786,7 +802,7 @@ type ClusterItem = {
 function GroupsPanel({ jobId, onChanged }: { jobId: string; onChanged: () => void }) {
   const groups = useService<{ total: number; items: ClusterItem[]; sensitive_columns: string[] }>("match.clusters", { job_id: jobId, limit: 25 });
   const [selected, setSelected] = useState<Record<string, Set<string>>>({});
-  const [revealed, setRevealed] = useState(false);
+  const [revealed, setRevealed] = useState(() => loadSetting("review.reveal", false));
   const [error, setError] = useState<string | null>(null);
   const toast = useToast();
 
@@ -821,7 +837,7 @@ function GroupsPanel({ jobId, onChanged }: { jobId: string; onChanged: () => voi
       </summary>
       <p className="muted small">Split a group to separate members that should not be together, or lock a correct group so future runs keep it exactly as it is. Both apply to this dataset in future runs and can be undone.</p>
       <label className="toggle">
-        <input type="checkbox" checked={revealed} onChange={(e) => setRevealed(e.target.checked)} /> Reveal sensitive values
+        <input type="checkbox" checked={revealed} onChange={(e) => { setRevealed(e.target.checked); saveSetting("review.reveal", e.target.checked); }} /> Reveal sensitive values
       </label>
       <ErrorNote message={error} />
       {groups.data.items.length === 0 && <p className="muted">No records were merged.</p>}

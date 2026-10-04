@@ -1557,6 +1557,46 @@ details > summary {
   color: var(--color-status-critical);
 }
 
+/* Evidence sits above the comparison as compact chips, so it is visible without scrolling. */
+.evidence-inline {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-xs);
+  margin: 0;
+}
+
+.evidence-inline li {
+  padding: 3px 10px;
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 999px;
+  background: var(--color-surface-sunken);
+  font-size: 0.82rem;
+}
+
+.review-summary {
+  display: grid;
+  gap: var(--spacing-xs);
+}
+
+.review-summary p {
+  margin: 0;
+}
+
+.review-progress {
+  height: 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--color-surface-sunken);
+}
+
+.review-progress span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--color-accent);
+  transition: width 0.2s ease;
+}
+
 .group-card {
   margin-top: var(--spacing-md);
   padding: var(--spacing-md);
@@ -2678,6 +2718,10 @@ fieldset.scope legend {
   grid-template-columns: minmax(0, 8fr) minmax(14rem, 4fr);
   gap: var(--spacing-xl);
   align-items: start;
+}
+
+.match-grid.is-focused {
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .match-rail {
