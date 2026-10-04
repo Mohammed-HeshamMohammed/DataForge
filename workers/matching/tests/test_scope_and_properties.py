@@ -60,7 +60,7 @@ def test_reviewer_chosen_values_override_survivor_values_with_provenance():
 
 def test_metrics_include_stage_timings_and_size_distribution():
     metrics = engine.run(cross_request())["metrics"]
-    assert set(metrics["stage_seconds"]) == {"normalizing", "finding_candidates", "evaluating_evidence", "building_groups"}
+    assert set(metrics["stage_seconds"]) == {"normalizing", "finding_candidates", "evaluating_evidence", "building_groups", "estimating_likelihood"}
     assert metrics["cluster_size_distribution"] == {"2": 1, "1": 1}
     assert metrics["rows_per_second"] > 0
 

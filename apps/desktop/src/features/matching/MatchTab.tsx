@@ -709,8 +709,8 @@ function ReviewQueue({ jobId, results, onChanged, onDone, onBadMapping }: { jobI
   const [shortcuts, setShortcuts] = useState(true);
   const [lastAction, setLastAction] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [order, setOrder] = useState<"score" | "model">("score");
-  const queue = useService<{ total: number; items: ReviewItem[]; sensitive_columns: string[]; ranking_model: RankingModel | null }>("match.review_queue", { job_id: jobId, limit: 50, order });
+  const [order, setOrder] = useState<ReviewOrder>("likelihood");
+  const queue = useService<{ total: number; items: ReviewItem[]; sensitive_columns: string[]; ranking_model: RankingModel | null; bands?: Bands }>("match.review_queue", { job_id: jobId, limit: 50, order });
   const toast = useToast();
   const keepRef = useRef<HTMLButtonElement>(null);
   const items = queue.data?.items ?? [];
@@ -731,6 +731,33 @@ function ReviewQueue({ jobId, results, onChanged, onDone, onBadMapping }: { jobI
       setError(null);
       setLastAction(result.review_action_id);
       toast.show({ message: action === "merge" ? "Merged. Canonical records updated." : "Kept separate. This pair will not be linked.", action: { label: "Undo", run: () => void undo(result.review_action_id) } });
+      await queue.reload();
+      onChanged();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      await queue.reload();
+    }
+  };
+
+  const decideBand = async (band: keyof Bands, expected: number) => {
+    try {
+      const result = await call<{ batch_id: string | null; decided: number }>("match.bulk_review", { job_id: jobId, band, expected_count: expected });
+      setError(null);
+      setIndex(0);
+      const undoBand = async () => {
+        try {
+          await call("match.undo_bulk_review", { job_id: jobId, batch_id: result.batch_id });
+          toast.show({ message: `Undone: ${pairs(result.decided)} back in the queue.` });
+          await queue.reload();
+          onChanged();
+        } catch (err) {
+          setError(err instanceof Error ? err.message : String(err));
+        }
+      };
+      toast.show({
+        message: band === "likely" ? `Merged ${pairs(result.decided)}. Canonical records updated.` : `Kept ${pairs(result.decided)} separate.`,
+        action: result.batch_id ? { label: "Undo", run: () => void undoBand() } : undefined,
+      });
       await queue.reload();
       onChanged();
     } catch (err) {
@@ -811,6 +838,7 @@ function ReviewQueue({ jobId, results, onChanged, onDone, onBadMapping }: { jobI
         }}
         onTrained={() => void queue.reload()}
       />
+      {queue.data.bands && <BulkBands bands={queue.data.bands} onDecide={(band, expected) => void decideBand(band, expected)} />}
       <ErrorNote message={error} />
       {!item ? (
         <div className="panel">
@@ -823,9 +851,12 @@ function ReviewQueue({ jobId, results, onChanged, onDone, onBadMapping }: { jobI
         </div>
       ) : (
         <>
-          <p className="muted">
-            Pair {Math.min(index, items.length - 1) + 1} of {items.length} loaded · {item.reason}
-          </p>
+          <div className="pair-head">
+            <p className="muted">
+              Pair {Math.min(index, items.length - 1) + 1} of {items.length} loaded · {item.reason}
+            </p>
+            {item.likelihood != null && <Likelihood value={item.likelihood} />}
+          </div>
           <h3 className="sr-only">Evidence</h3>
           <ul className="plain-list evidence evidence-inline" aria-label="Evidence">
             {item.evidence.map((e, i) => (
@@ -950,16 +981,79 @@ function ReviewQueue({ jobId, results, onChanged, onDone, onBadMapping }: { jobI
 }
 
 type RankingModel = { id: string; model_version: string; label_count: number; created_at: string; evaluation: { accuracy: number; precision: number | null; recall: number | null; holdout_size: number } };
+type ReviewOrder = "likelihood" | "score" | "model";
+type Bands = { likely: number; unlikely: number };
 
-function RankingControls({ jobId, model, order, onOrder, onTrained }: { jobId: string; model: RankingModel | null; order: "score" | "model"; onOrder: (order: "score" | "model") => void; onTrained: () => void }) {
+const pairs = (count: number) => `${formatCount(count)} ${count === 1 ? "pair" : "pairs"}`;
+
+const ORDER_LABEL: Record<ReviewOrder, string> = { likelihood: "most likely first", score: "deterministic score", model: "learned from your decisions" };
+
+/** "97%", with the ends written as ">99%" and "<1%" so a rounded 100% or 0% never reads as certainty. */
+function likelihoodLabel(value: number): string {
+  if (value >= 0.995) return ">99%";
+  if (value < 0.005) return "<1%";
+  return `${Math.round(value * 100)}%`;
+}
+
+function Likelihood({ value }: { value: number }) {
+  const label = likelihoodLabel(value);
+  const tone = value >= 0.9 ? "high" : value >= 0.5 ? "mid" : "low";
+  return (
+    <p className={`likelihood likelihood-${tone}`} title="Estimated from this file: how often each field agrees by chance, and how much rarer values count">
+      <span className="likelihood-track" aria-hidden="true">
+        <span style={{ width: `${Math.max(value * 100, 2)}%` }} />
+      </span>
+      <strong>{label}</strong> likely the same record
+    </p>
+  );
+}
+
+/** The two clearest groups of the queue, each decided in one step that can be undone. */
+function BulkBands({ bands, onDecide }: { bands: Bands; onDecide: (band: keyof Bands, expected: number) => void }) {
+  if (!bands.likely && !bands.unlikely) return null;
+  return (
+    <section className="panel bulk-bands" aria-labelledby="bulk-title">
+      <h3 id="bulk-title">Decide the clearest pairs together</h3>
+      <p className="muted small">
+        DataForge estimated from this file how likely each pair is the same record. Rare shared values count more than common ones, and anything that disagrees counts against. Each group is one decision you can undo.
+      </p>
+      <div className="row-actions">
+        {bands.likely > 0 && (
+          <ConfirmButton
+            label={`Merge ${pairs(bands.likely)} at >99%`}
+            title={`Merge ${pairs(bands.likely)}?`}
+            body={
+              <p>
+                Every pair in review that is at least 99% likely the same record and where no field disagrees is merged. Raw rows remain unchanged, and Undo restores all {pairs(bands.likely)} to the queue.
+              </p>
+            }
+            confirmLabel={`Merge ${pairs(bands.likely)}`}
+            onConfirm={() => onDecide("likely", bands.likely)}
+          />
+        )}
+        {bands.unlikely > 0 && (
+          <ConfirmButton
+            label={`Keep ${pairs(bands.unlikely)} at <1% separate`}
+            title={`Keep ${pairs(bands.unlikely)} separate?`}
+            body={<p>Every pair in review that is less than 1% likely the same record is kept separate and will not be linked. Undo restores all {pairs(bands.unlikely)} to the queue.</p>}
+            confirmLabel={`Keep ${pairs(bands.unlikely)} separate`}
+            onConfirm={() => onDecide("unlikely", bands.unlikely)}
+          />
+        )}
+      </div>
+    </section>
+  );
+}
+
+function RankingControls({ jobId, model, order, onOrder, onTrained }: { jobId: string; model: RankingModel | null; order: ReviewOrder; onOrder: (order: ReviewOrder) => void; onTrained: () => void }) {
   const [error, setError] = useState<string | null>(null);
   return (
     <details className="panel">
       <summary>
-        Queue order: <strong>{order === "model" ? "learned from your decisions" : "deterministic score"}</strong>
+        Queue order: <strong>{ORDER_LABEL[order]}</strong>
       </summary>
       <p className="muted small">
-        A ranking model trained only on your merge and keep-separate decisions can put the most likely merges first. It changes the order only: every item still needs your decision and nothing is merged automatically.
+        Most likely first uses the likelihood DataForge estimated from this file. A ranking model trained only on your merge and keep-separate decisions can also order the queue. Either way the order changes only: every item still needs your decision.
       </p>
       {model ? (
         <p className="small">
@@ -971,6 +1065,9 @@ function RankingControls({ jobId, model, order, onOrder, onTrained }: { jobId: s
         <p className="small muted">No model yet. Train one after reviewing at least 20 pairs with both outcomes.</p>
       )}
       <div className="segmented" role="tablist" aria-label="Queue order">
+        <button type="button" role="tab" aria-selected={order === "likelihood"} onClick={() => onOrder("likelihood")}>
+          Most likely first
+        </button>
         <button type="button" role="tab" aria-selected={order === "score"} onClick={() => onOrder("score")}>
           Score
         </button>

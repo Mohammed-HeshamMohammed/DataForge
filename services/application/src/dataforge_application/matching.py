@@ -10,7 +10,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from dataforge_matching import SCHEMA_VERSION as MATCH_SCHEMA_VERSION
-from dataforge_matching import engine, ranking
+from dataforge_matching import engine, likelihood, ranking
 from dataforge_matching.normalize import normalize_row
 
 from .datasets import SENSITIVE_ROLES, latest_mapping
@@ -175,8 +175,8 @@ def run_match_job(context: JobContext) -> dict:
              json.dumps([r["id"] for r in rows]), json.dumps(result["metrics"]), utc_now()),
         )
         store._connection.executemany(
-            "INSERT INTO match_decisions(job_id, id, left_row_id, right_row_id, decision, score, reason, block_ids_json, evidence_json) VALUES (?,?,?,?,?,?,?,?,?)",
-            [(job_id, d["id"], d["left_row_id"], d["right_row_id"], d["decision"], d["score"], d["reason"], json.dumps(d["candidate_block_ids"]), json.dumps(d["evidence"])) for d in result["decisions"]],
+            "INSERT INTO match_decisions(job_id, id, left_row_id, right_row_id, decision, score, reason, block_ids_json, evidence_json, likelihood) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            [(job_id, d["id"], d["left_row_id"], d["right_row_id"], d["decision"], d["score"], d["reason"], json.dumps(d["candidate_block_ids"]), json.dumps(d["evidence"]), d.get("likelihood")) for d in result["decisions"]],
         )
         _write_clusters(store, job_id, result["clusters"], result["canonical"])
     return {
@@ -304,9 +304,10 @@ def review_queue(store: ProjectStore, job_id: str, offset: int = 0, limit: int =
         decisions = [d for _, d in scored[offset:offset + limit]]
     else:
         model_scores = {}
+        order_by = "COALESCE(d.likelihood, -1) DESC, d.score DESC, d.id" if order == "likelihood" else "d.score DESC, d.id"
         decisions = store._connection.execute(
             f"""SELECT d.* FROM match_decisions d JOIN match_runs r ON r.job_id = d.job_id
-                WHERE d.job_id = ? AND {_pending_clause()} ORDER BY d.score DESC, d.id LIMIT ? OFFSET ?""",
+                WHERE d.job_id = ? AND {_pending_clause()} ORDER BY {order_by} LIMIT ? OFFSET ?""",
             (job_id, limit, offset),
         ).fetchall()
     row_ids = {d["left_row_id"] for d in decisions} | {d["right_row_id"] for d in decisions}
@@ -322,10 +323,12 @@ def review_queue(store: ProjectStore, job_id: str, offset: int = 0, limit: int =
         "evidence": json.loads(d["evidence_json"]), "left": rows.get(d["left_row_id"]), "right": rows.get(d["right_row_id"]),
         "can_merge": not any(e["strength"] == "guard" for e in json.loads(d["evidence_json"])),
         "model_score": model_scores.get(d["id"]),
+        "likelihood": d["likelihood"],
     } for d in decisions]
     model_info = latest_ranking_model(store, run["dataset_id"])
     return {
         "total": total, "offset": offset, "items": items, "order": order, "sensitive_columns": _sensitive_columns(store, run),
+        "bands": {band: len(found) for band, found in _bands(store, job_id).items()},
         "ranking_model": None if model_info is None else {k: v for k, v in model_info.items() if k != "weights"},
     }
 
@@ -396,6 +399,68 @@ def submit_review(store: ProjectStore, job_id: str, decision_id: str, action: st
         _recluster(store, job_id)
     store.append_event(job_id, "review.decision_recorded", {"decision_id": decision_id, "action": action, "review_action_id": review_id})
     return {"review_action_id": review_id, "review_version": expected_version + 1}
+
+
+# Bulk review: the reviewer decides a whole band of the queue at once. Only the clearest bands are offered.
+LIKELY, UNLIKELY = 0.99, 0.01
+
+
+def _bands(store: ProjectStore, job_id: str) -> dict[str, list[str]]:
+    """Pending pairs at least 99% likely on which no field disagrees, and pairs under 1% likely."""
+    pending = store._connection.execute(
+        f"SELECT d.id, d.likelihood, d.evidence_json FROM match_decisions d JOIN match_runs r ON r.job_id = d.job_id WHERE d.job_id = ? AND {_pending_clause()} AND d.likelihood IS NOT NULL ORDER BY d.id",
+        (job_id,),
+    ).fetchall()
+    likely = [d["id"] for d in pending if d["likelihood"] >= LIKELY and likelihood.agrees_throughout(json.loads(d["evidence_json"]))]
+    unlikely = [d["id"] for d in pending if d["likelihood"] < UNLIKELY]
+    return {"likely": likely, "unlikely": unlikely}
+
+
+def bulk_review(store: ProjectStore, job_id: str, band: str, expected_count: int) -> dict:
+    """Merge every pending pair at least 99% likely ("likely") or keep every pair under 1% likely separate ("unlikely").
+    ``expected_count`` is the number the reviewer confirmed; if the queue changed since, nothing is decided."""
+    if band not in ("likely", "unlikely"):
+        raise ValueError("band must be likely or unlikely")
+    run = _run(store, job_id)
+    if store.job(job_id)["state"] != "completed":
+        raise ValueError("Only completed jobs can be reviewed")
+    ids = _bands(store, job_id)[band]
+    if len(ids) != int(expected_count):
+        raise ReviewConflict(f"The review queue changed: {len(ids)} pairs are in this group now. Check the number and confirm again.")
+    if not ids:
+        return {"batch_id": None, "decided": 0}
+    action = "merge" if band == "likely" else "keep_separate"
+    batch_id, now = str(uuid4()), utc_now()
+    with store._connection:
+        for decision_id in ids:
+            decision = store._connection.execute("SELECT left_row_id, right_row_id FROM match_decisions WHERE job_id = ? AND id = ?", (job_id, decision_id)).fetchone()
+            review_id = str(uuid4())
+            store._connection.execute("UPDATE match_decisions SET review_version = review_version + 1 WHERE job_id = ? AND id = ?", (job_id, decision_id))
+            store._connection.execute(
+                "INSERT INTO review_actions(id, job_id, decision_id, action, created_at, batch_id) VALUES (?,?,?,?,?,?)", (review_id, job_id, decision_id, action, now, batch_id)
+            )
+            store._connection.execute(
+                "INSERT INTO match_constraints(id, dataset_id, left_row_id, right_row_id, kind, review_action_id, created_at) VALUES (?,?,?,?,?,?,?)",
+                (str(uuid4()), run["dataset_id"], decision["left_row_id"], decision["right_row_id"], "must_link" if action == "merge" else "must_not_link", review_id, now),
+            )
+        _recluster(store, job_id)
+    store.append_event(job_id, "review.bulk_recorded", {"batch_id": batch_id, "action": action, "decided": len(ids)})
+    return {"batch_id": batch_id, "decided": len(ids), "action": action}
+
+
+def undo_bulk_review(store: ProjectStore, job_id: str, batch_id: str) -> dict:
+    actions = store._connection.execute("SELECT id, decision_id FROM review_actions WHERE job_id = ? AND batch_id = ? AND reversed_at IS NULL", (job_id, batch_id)).fetchall()
+    if not actions:
+        raise ValueError("Bulk decision not found or already undone")
+    now = utc_now()
+    with store._connection:
+        for action in actions:
+            store._connection.execute("UPDATE review_actions SET reversed_at = ? WHERE id = ?", (now, action["id"]))
+            store._connection.execute("UPDATE match_constraints SET revoked_at = ? WHERE review_action_id = ?", (now, action["id"]))
+            store._connection.execute("UPDATE match_decisions SET review_version = review_version + 1 WHERE job_id = ? AND id = ?", (job_id, action["decision_id"]))
+        _recluster(store, job_id)
+    store.append_event(job_id, "review.bulk_reversed", {"batch_id": batch_id, "undone": len(actions)})
+    return {"undone": len(actions)}
 
 
 def undo_review(store: ProjectStore, job_id: str, review_action_id: str) -> dict:

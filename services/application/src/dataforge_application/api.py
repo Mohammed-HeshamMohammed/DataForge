@@ -125,6 +125,8 @@ class Service:
             "match.undo_canonical_value": lambda p: matching.undo_canonical_value(self._store(), p["job_id"], p["override_id"]),
             "match.flag_mapping": lambda p: matching.flag_mapping(self._store(), p["job_id"], p["column"], str(p.get("note", "")), p.get("decision_id")),
             "match.undo_review": lambda p: matching.undo_review(self._store(), p["job_id"], p["review_action_id"]),
+            "match.bulk_review": lambda p: matching.bulk_review(self._store(), p["job_id"], str(p["band"]), int(p["expected_count"])),
+            "match.undo_bulk_review": lambda p: matching.undo_bulk_review(self._store(), p["job_id"], p["batch_id"]),
             "match.review_history": lambda p: matching.review_history(self._store(), p["job_id"]),
             "export.create": lambda p: matching.create_export(self._store(), p["job_id"], bool(p.get("include_provenance", True)), bool(p.get("allow_unresolved", False))),
         }

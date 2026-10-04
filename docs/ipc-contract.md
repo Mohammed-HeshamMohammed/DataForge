@@ -56,6 +56,9 @@ Command names match `^[a-z_]+\.[a-z_]+$` (enforced by the host). Unknown additiv
 | `match.set_canonical_value` / `match.undo_canonical_value` | `job_id`, `cluster_id`, `column`, `row_id` / `job_id`, `override_id` | `{override_id}` / `{undone}` |
 | `match.flag_mapping` / `dataset.mapping_flags` | `job_id`, `column`, `note`, `decision_id?` / `dataset_id` | `{flag_id, dataset_id}` / open reports |
 | `dataset.confirm_mapping` | adds `export_exclude?` (columns) | new mapping version |
+| `match.review_queue` | adds `order` `likelihood` (default in the app: most likely first) | adds `likelihood` per item and `bands` `{likely, unlikely}` |
+| `match.bulk_review` | `job_id`, `band` (`likely`: merge pairs ≥ 99% likely on which no field disagrees \| `unlikely`: keep pairs < 1% likely separate), `expected_count` (refused if the band changed) | `{batch_id, decided, action}` |
+| `match.undo_bulk_review` | `job_id`, `batch_id` | `{undone}` |
 
 `match.results` also returns `compare_dataset_id`, `review_turnaround`, and `mapping_flags`. Its metrics include `stage_seconds`, `rows_per_second`, `cluster_size_distribution`, `decisions_by_scope`, and `survivor_sources`. `match.clusters` items include `canonical_values`, `field_provenance`, and `conflicts`. Machine-checked JSON schemas for these responses live in `packages/contracts/`.
 

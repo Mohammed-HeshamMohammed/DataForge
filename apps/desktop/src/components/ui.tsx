@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { formatCount, stageLabel } from "../lib/format.ts";
 import type { Job, JobState } from "../lib/types.ts";
 import { describeError } from "../lib/errors.ts";
@@ -109,13 +109,14 @@ export function ConfirmButton({
   disabled?: boolean;
 }) {
   const dialog = useRef<HTMLDialogElement>(null);
+  const titleId = useId();
   return (
     <>
       <button type="button" className={danger ? "btn btn-danger" : "btn"} disabled={disabled} onClick={() => dialog.current?.showModal()}>
         {label}
       </button>
-      <dialog ref={dialog} className="dialog" aria-labelledby={`${label}-title`}>
-        <h2 id={`${label}-title`}>{title}</h2>
+      <dialog ref={dialog} className="dialog" aria-labelledby={titleId}>
+        <h2 id={titleId}>{title}</h2>
         <div>{body}</div>
         <div className="row-actions">
           <button type="button" className="btn" autoFocus onClick={() => dialog.current?.close()}>

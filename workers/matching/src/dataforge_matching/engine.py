@@ -18,7 +18,7 @@ from typing import Callable, Iterable
 from rapidfuzz import fuzz
 from rapidfuzz.distance import JaroWinkler
 
-from . import POLICY_VERSION, SCHEMA_VERSION
+from . import POLICY_VERSION, SCHEMA_VERSION, likelihood
 from .normalize import ALL_ROLES, NORMALIZATION_VERSION, POSITIONAL_ROLES, given_relation, name_initials, normalize_row, soundex
 
 WEIGHTS = {
@@ -513,6 +513,9 @@ def run(request: dict, progress: Callable[[str, dict], None] = lambda s, d: None
         overrides=request.get("overrides"), role_mappings=mappings if len(mappings) > 1 else None,
     )
     mark("building_groups")
+    progress("estimating_likelihood", {})
+    likelihood_model = likelihood.annotate(decisions, normalized, lambda left, right: compare(left, right, person)[0])
+    mark("estimating_likelihood")
 
     counts = defaultdict(int)
     reasons = defaultdict(int)
@@ -541,6 +544,7 @@ def run(request: dict, progress: Callable[[str, dict], None] = lambda s, d: None
             "cluster_size_distribution": _size_distribution(clusters),
             "survivor_sources": _survivor_sources(canonical, rows),
             "stage_seconds": stage_seconds,
+            "likelihood": likelihood_model,
             "total_seconds": round(time.perf_counter() - started, 4),
             "rows_per_second": round(len(rows) / max(time.perf_counter() - started, 1e-6), 1),
         },

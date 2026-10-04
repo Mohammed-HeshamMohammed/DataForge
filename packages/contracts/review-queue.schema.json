@@ -9,7 +9,8 @@
     "items",
     "order",
     "sensitive_columns",
-    "ranking_model"
+    "ranking_model",
+    "bands"
   ],
   "properties": {
     "total": {
@@ -21,6 +22,7 @@
     },
     "order": {
       "enum": [
+        "likelihood",
         "score",
         "model"
       ]
@@ -135,7 +137,38 @@
               "raw",
               "source"
             ]
+          },
+          "likelihood": {
+            "description": "How likely the pair is the same record, estimated from the dataset; null for runs before it existed.",
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1
+              }
+            ]
           }
+        }
+      }
+    },
+    "bands": {
+      "description": "Pending pairs in the groups offered for a bulk decision: likely (at least 99% likely, nothing disagrees) and unlikely (under 1%).",
+      "type": "object",
+      "required": [
+        "likely",
+        "unlikely"
+      ],
+      "properties": {
+        "likely": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "unlikely": {
+          "type": "integer",
+          "minimum": 0
         }
       }
     }

@@ -58,6 +58,9 @@ export type ReviewItem = {
   left: Row;
   right: Row;
   can_merge: boolean;
+  /** How likely the pair is the same record (0-1), estimated from the dataset; null for older runs. */
+  likelihood?: number | null;
+  model_score?: number | null;
 };
 
 export type MatchResults = {

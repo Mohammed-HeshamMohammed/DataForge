@@ -3084,3 +3084,66 @@ fieldset.scope legend {
     grid-template-columns: 1fr;
   }
 }
+
+/* Review: how likely the pair is the same record, beside the pair's position in the queue. */
+.pair-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--spacing-sm) var(--spacing-lg);
+}
+
+.pair-head p {
+  margin: 0;
+}
+
+.likelihood {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--spacing-sm);
+  margin: 0;
+  font-size: 0.88rem;
+  color: var(--color-text-muted);
+}
+
+.likelihood strong {
+  color: var(--color-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.likelihood-track {
+  width: 88px;
+  height: 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--color-surface-sunken);
+  box-shadow: inset 0 0 0 1px var(--color-border-subtle);
+}
+
+.likelihood-track span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+}
+
+.likelihood-high .likelihood-track span {
+  background: var(--color-status-success);
+}
+
+.likelihood-mid .likelihood-track span {
+  background: var(--color-status-warning);
+}
+
+.likelihood-low .likelihood-track span {
+  background: var(--color-status-critical);
+}
+
+.bulk-bands h3 {
+  margin: 0 0 var(--spacing-xs);
+  font-size: 1rem;
+}
+
+.bulk-bands p {
+  margin-top: 0;
+}

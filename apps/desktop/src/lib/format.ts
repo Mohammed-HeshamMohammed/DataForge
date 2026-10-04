@@ -12,6 +12,7 @@ const STAGE_LABELS: Record<string, string> = {
   finding_candidates: "Finding candidates",
   evaluating_evidence: "Evaluating evidence",
   building_groups: "Building safe groups",
+  estimating_likelihood: "Estimating how likely each pair is",
   creating_review_queue: "Creating review queue",
   fetching: "Fetching pages",
   page_extracted: "Extracting records",
