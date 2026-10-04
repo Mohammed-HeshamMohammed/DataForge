@@ -203,3 +203,13 @@ DataForge keeps three execution paths: policy-controlled HTTP/httpx, Scrapy for 
 - **Public records:** Harris County tax sales, foreclosure notices, and the HCAD appraisal roll run as jobs from the Public Records tab and create datasets. The HCAD output keeps owner names and mailing addresses as published but shows only the Homestead exemption.
 
 **Revisit when:** a supported site moves its results into a format the engine cannot read (it then falls back to the visual builder), or another county's records are needed (each county publishes its own formats).
+
+## D31. People-aware matching, measured against an answer key
+
+- **Why:** on 2,636 synthetic contacts with a known answer key (nicknames, initials, "Last, First", typos, phone formats, Gmail variants, missing fields, same-name strangers, and household members sharing a phone and address), Safer mode merged 85% of duplicate pairs automatically, made 9 wrong merges (all household members), and filled the review queue with 535 pairs of which only 40% were duplicates.
+- **What changed (policy `deterministic-1.1.0`, normalization `1.2.0`):** for `entity_type: person` (or any mapping with first/last name roles) names are compared as given names and surname; a different first name is a contradiction, both for a pair and for a whole group, so a vague record such as "S. Rodriguez" cannot join Susan and Samantha; emails are compared as the mailbox they deliver to; candidate groups use both the ZIP prefix and the city, and records without a phone or email are also paired by a surname that sounds alike (Soundex) plus a first initial their name or its nicknames allow. Companies, properties, and products keep whole-name comparison.
+- **Result:** Safer mode makes no wrong merges on that set and on a held-out set (new seed, middle initials, titles, hyphenated surnames, nicknames missing from the table); it merges 91% automatically and the review queue shrank to 175 pairs. Flexible mode merges 98%. On 50,000 rows the run takes about as long as before (a plain-US-number fast path for phones offsets the extra comparisons).
+- **Trade-off:** a nickname missing from the table reads as a different first name, and such a pair is kept apart without review unless the records share an email. The rule only limits automatic grouping: a reviewer's merge of a pair in the queue is never blocked by it.
+
+**Revisit when:** real review decisions show first-name contradictions overruled often (add the nicknames, or relax the rule to review), or a non-English naming convention (patronymics, family name first) needs its own parser.
+

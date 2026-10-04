@@ -16,9 +16,10 @@ from itertools import combinations
 from typing import Callable, Iterable
 
 from rapidfuzz import fuzz
+from rapidfuzz.distance import JaroWinkler
 
 from . import POLICY_VERSION, SCHEMA_VERSION
-from .normalize import ALL_ROLES, NORMALIZATION_VERSION, POSITIONAL_ROLES, normalize_row
+from .normalize import ALL_ROLES, NORMALIZATION_VERSION, POSITIONAL_ROLES, given_relation, name_initials, normalize_row, soundex
 
 WEIGHTS = {
     "identifier": 0.30, "phone": 0.32, "email": 0.28, "address": 0.20, "mailing_address": 0.10,
@@ -58,7 +59,7 @@ def validate_request(request: dict) -> dict:
     return settings
 
 
-def _block_keys(n: dict) -> Iterable[str]:
+def _block_keys(n: dict, person: bool = False) -> Iterable[str]:
     for column, value in n["identifier"].items():
         yield f"id:{column}:{value}"
     for value in n["phone"]:
@@ -66,15 +67,32 @@ def _block_keys(n: dict) -> Iterable[str]:
             yield f"phone:{value}"
     for value in n["email"]:
         yield f"email:{value}"
-    locality = (n.get("postal_code") or "")[:3] or n.get("city", "") or n.get("county", "") or n.get("region", "")
+    # A record may carry a postal code, a city, or both, so each is its own key; otherwise
+    # "12 Oak Ln, Miami" and "12 Oak Lane, Miami 33124" would never be compared.
+    localities = [value for value in ((n.get("postal_code") or "")[:3], n.get("city", "")) if value] or [
+        value for value in (n.get("county", "") or n.get("region", ""),) if value
+    ]
     for role, prefix in (("address", "addr"), ("mailing_address", "maddr")):
         parsed = n.get(role)
         if parsed and parsed["house_number"] and parsed["street"]:
             street_stem = parsed["street"].split()[0][:4]
-            yield f"{prefix}:{parsed['house_number']}:{street_stem}:{locality}" if locality else f"{prefix}:{parsed['house_number']}:{parsed['street']}"
+            if localities:
+                for locality in localities:
+                    yield f"{prefix}:{parsed['house_number']}:{street_stem}:{locality}"
+            else:
+                yield f"{prefix}:{parsed['house_number']}:{parsed['street']}"
     name_tokens = sorted(n.get("name", "").split())
     if len(name_tokens) >= 2 and n.get("postal_code"):
         yield f"name_postal:{' '.join(name_tokens)}:{n['postal_code']}"
+    # People with little contact data: a surname that sounds the same (each part of a hyphenated one) and a
+    # first initial their name or its nicknames allow (Robert or Bob), in the same area.
+    if person and n.get("person"):
+        given, surname = n["person"]
+        sounds = {soundex(part) for part in surname.split("-") if part} - {""}
+        for locality in localities:
+            for sound in sounds:
+                for initial in name_initials(given[0]):
+                    yield f"pname:{sound}:{initial}:{locality}"
     if n.get("url"):
         yield f"url:{n['url']}"
 
@@ -83,21 +101,28 @@ def _block_id(key: str) -> str:
     return key.split(":", 1)[0] + ":" + hashlib.sha1(key.encode()).hexdigest()[:10]
 
 
-def generate_candidates(normalized: dict[str, dict], max_block_size: int) -> tuple[dict[tuple[str, str], list[str]], dict]:
+def generate_candidates(normalized: dict[str, dict], max_block_size: int, person: bool = False) -> tuple[dict[tuple[str, str], list[str]], dict]:
     blocks: dict[str, list[str]] = defaultdict(list)
     for row_id, n in normalized.items():
-        for key in set(_block_keys(n)):
+        for key in set(_block_keys(n, person)):
             blocks[key].append(row_id)
     pairs: dict[tuple[str, str], list[str]] = defaultdict(list)
     oversized: list[dict] = []
     for key, members in blocks.items():
         if len(members) < 2:
             continue
-        if len(members) > max_block_size:
+        # Name groups exist for records without a phone or email; records that have one are already
+        # paired through it, so only pairs involving a sparse record are needed (linear, not quadratic).
+        sparse = [row_id for row_id in members if not (normalized[row_id]["phone"] or normalized[row_id]["email"])] if key.startswith("pname:") else members
+        if len(sparse) > max_block_size:
             # Never compare quadratically; report so the user can add a stronger field.
             oversized.append({"block_id": _block_id(key), "kind": key.split(":", 1)[0], "size": len(members)})
             continue
-        for left, right in combinations(sorted(members), 2):
+        if sparse is members:
+            block_pairs = combinations(sorted(members), 2)
+        else:
+            block_pairs = {tuple(sorted((left, right))) for left in sparse for right in members if left != right}
+        for left, right in block_pairs:
             pairs[(left, right)].append(_block_id(key))
     metrics = {
         "blocks": sum(1 for members in blocks.values() if len(members) >= 2),
@@ -113,8 +138,42 @@ def _ratio(a: str, b: str) -> float:
     return fuzz.token_sort_ratio(a, b) / 100.0
 
 
-def compare(left: dict, right: dict) -> tuple[list[dict], float, int]:
-    """Field-level evidence. Returns (evidence, weighted score over comparable fields, comparable count)."""
+# An initial alone cannot tell a person from a relative sharing their phone, so it counts for less.
+_GIVEN_FACTOR = {"same": 1.0, "nickname": 0.97, "similar": 0.95, "initial": 0.75}
+_GIVEN_LABEL = {"same": "same first name", "nickname": "first name is a nickname or short form", "similar": "first name differs by a typo", "initial": "first initial agrees"}
+
+
+def _swapped(left: tuple, right: tuple) -> bool:
+    """"Smith John" against "John Smith": the same name with the order swapped."""
+    (left_given, left_surname), (right_given, right_surname) = left, right
+    return given_relation(left_given, (right_surname,)) != "different" and given_relation((left_surname,), right_given) != "different"
+
+
+def _different_people(left: tuple, right: tuple) -> bool:
+    return given_relation(left[0], right[0]) == "different" and not _swapped(left, right)
+
+
+def _person_name_evidence(left: dict, right: dict) -> tuple[float, str, str] | None:
+    """(similarity, strength, explanation) for two people's names, or None when either name is a single word."""
+    if not (left.get("person") and right.get("person")):
+        return None
+    (left_given, left_surname), (right_given, right_surname) = left["person"], right["person"]
+    relation = given_relation(left_given, right_given)
+    surname = JaroWinkler.similarity(left_surname, right_surname)
+    if relation == "different":
+        if _swapped(left["person"], right["person"]):
+            return 0.95, "supporting", "Name: same name with first and last swapped"
+        # Household members share phones, addresses, and surnames; a different first name is a different person.
+        return 0.0, "guard", "Different first names"
+    similarity = surname * _GIVEN_FACTOR[relation]
+    return similarity, "supporting", f"Name: {_GIVEN_LABEL[relation]}, surname similarity {surname:.2f}"
+
+
+def compare(left: dict, right: dict, person: bool = False) -> tuple[list[dict], float, int]:
+    """Field-level evidence. Returns (evidence, weighted score over comparable fields, comparable count).
+
+    With person=True, names are compared as given names and surname (nicknames, initials, typos), and
+    different first names contradict a merge unless the records share an email address."""
     evidence: list[dict] = []
     weighted = total = 0.0
 
@@ -154,9 +213,18 @@ def compare(left: dict, right: dict) -> tuple[list[dict], float, int]:
             add(field, similarity, result, "strong" if strong else "supporting", f"{label}: {detail}")
 
     if left.get("name") and right.get("name"):
-        similarity = _ratio(left["name"], right["name"])
-        result = "exact" if similarity == 1.0 else "similar" if similarity >= 0.8 else "different"
-        add("name", similarity, result, "supporting", f"Name similarity {similarity:.2f}")
+        person_evidence = _person_name_evidence(left, right) if person else None
+        if person_evidence is None:
+            similarity = _ratio(left["name"], right["name"])
+            result = "exact" if similarity == 1.0 else "similar" if similarity >= 0.8 else "different"
+            add("name", similarity, result, "supporting", f"Name similarity {similarity:.2f}")
+        else:
+            similarity, strength, explanation = person_evidence
+            if strength == "guard" and left["email"] & right["email"]:
+                # A shared mailbox outweighs the name difference enough for a person to decide.
+                strength, explanation = "none", "Different first names despite a shared email"
+            result = "conflict" if strength == "guard" else "exact" if similarity == 1.0 else "similar" if similarity >= 0.8 else "different"
+            add("name", similarity, result, strength, explanation)
 
     locality_comparisons = []
     for field, label in (("postal_code", "Postal code"), ("city", "City"), ("county", "County"), ("region", "State or region"), ("country_code", "Country code"), ("country", "Country")):
@@ -201,10 +269,12 @@ def cluster(
     decisions: list[dict],
     constraints: list[dict],
     locked_groups: list[list[str]] = (),
+    person: bool = False,
 ) -> tuple[list[dict], list[str], dict]:
     """Constrained union-find. Returns (clusters, decision ids of rejected bridges, metrics).
 
-    A locked group is kept together and can neither gain nor lose members automatically.
+    A locked group is kept together and can neither gain nor lose members automatically. With person=True,
+    an automatic union never puts people with different first names in one group; a reviewer's merge may.
     """
     must_not = defaultdict(set)
     must_link: list[tuple[str, str]] = []
@@ -242,7 +312,7 @@ def cluster(
             x = parent[x]
         return x
 
-    def compatible(ra: str, rb: str) -> bool:
+    def compatible(ra: str, rb: str, names: bool = True) -> bool:
         ids: dict[str, set] = defaultdict(set)
         houses: set[str] = set()
         for row_id in members[ra] + members[rb]:
@@ -255,6 +325,11 @@ def cluster(
             return False
         if len({lock_of.get(row_id) for row_id in members[ra] + members[rb]}) > 1:
             return False
+        if person and names:
+            left_people = {normalized[row_id]["person"] for row_id in members[ra] if normalized[row_id].get("person")}
+            right_people = {normalized[row_id]["person"] for row_id in members[rb] if normalized[row_id].get("person")}
+            if any(_different_people(a, b) for a in left_people for b in right_people):
+                return False
         small, large = sorted((ra, rb), key=lambda r: len(members[r]))
         large_set = set(members[large])
         return not any(must_not[row_id] & large_set for row_id in members[small])
@@ -271,7 +346,7 @@ def cluster(
     for a, b in must_link:
         ra, rb = find(a), find(b)
         same_lock = a in lock_of and lock_of.get(a) == lock_of.get(b)
-        if ra != rb and (same_lock or compatible(ra, rb)):
+        if ra != rb and (same_lock or compatible(ra, rb, names=False)):
             union(ra, rb, 1.0)
         elif ra != rb:
             incompatible += 1
@@ -389,6 +464,8 @@ def run(request: dict, progress: Callable[[str, dict], None] = lambda s, d: None
         stage_started = now
 
     mappings = request.get("mappings") or {"default": request["mapping"]}
+    # People are compared by given name and surname; companies, properties, and products by the whole name.
+    person = request.get("entity_type") == "person" or any(role in ("first_name", "last_name") for m in mappings.values() for role in m.values())
     active = {name: {col: role for col, role in m.items() if role not in ("other", "ignore")} for name, m in mappings.items()}
     rows = {row["id"]: row for row in request["rows"]}
     row_order = [row["id"] for row in request["rows"]]
@@ -401,7 +478,7 @@ def run(request: dict, progress: Callable[[str, dict], None] = lambda s, d: None
         return {"stopped_at": "normalizing"}
 
     progress("finding_candidates", {})
-    pairs, block_metrics = generate_candidates(normalized, int(settings["max_block_size"]))
+    pairs, block_metrics = generate_candidates(normalized, int(settings["max_block_size"]), person)
     progress("finding_candidates", {"candidate_pairs": len(pairs)})
     if should_stop():
         return {"stopped_at": "finding_candidates"}
@@ -412,7 +489,7 @@ def run(request: dict, progress: Callable[[str, dict], None] = lambda s, d: None
     for index, ((left, right), block_ids) in enumerate(sorted(pairs.items())):
         if index % 5000 == 0 and should_stop():
             return {"stopped_at": "evaluating_evidence"}
-        evidence, score, comparable = compare(normalized[left], normalized[right])
+        evidence, score, comparable = compare(normalized[left], normalized[right], person)
         decision, reason = decide(evidence, score, comparable, settings["strictness"])
         decisions.append({
             "id": "d_" + hashlib.sha1(f"{left}|{right}".encode()).hexdigest()[:16],
@@ -422,7 +499,7 @@ def run(request: dict, progress: Callable[[str, dict], None] = lambda s, d: None
 
     mark("evaluating_evidence")
     progress("building_groups", {})
-    clusters, bridges, cluster_metrics = cluster(row_order, normalized, decisions, request.get("constraints") or [], request.get("locked_groups") or [])
+    clusters, bridges, cluster_metrics = cluster(row_order, normalized, decisions, request.get("constraints") or [], request.get("locked_groups") or [], person)
     bridge_set = set(bridges)
     for d in decisions:
         if d["id"] in bridge_set:
