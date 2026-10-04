@@ -46,7 +46,7 @@ test("request variables get defaults, hints, and typed payloads", () => {
 });
 
 test("built-in website fallback covers every supported site group", () => {
-  assert.equal(BUILT_IN_SITE_CATALOG.length, 38);
+  assert.equal(BUILT_IN_SITE_CATALOG.length, 54);
   assert.deepEqual(
     [...new Set(BUILT_IN_SITE_CATALOG.map((site) => site.site_category))].sort(),
     ["community", "content", "developer", "jobs", "local", "marketplace", "media", "real_estate"],
