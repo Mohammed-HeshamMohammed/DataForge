@@ -57,7 +57,7 @@ Command names match `^[a-z_]+\.[a-z_]+$` (enforced by the host). Unknown additiv
 
 `match.results` also returns `compare_dataset_id`, `review_turnaround`, and `mapping_flags`. Its metrics include `stage_seconds`, `rows_per_second`, `cluster_size_distribution`, `decisions_by_scope`, and `survivor_sources`. `match.clusters` items include `canonical_values`, `field_provenance`, and `conflicts`. Machine-checked JSON schemas for these responses live in `packages/contracts/`.
 
-Studio bridge actions also include `scrollStep` and `links(css)` for infinite scroll and detail links, and `html()` (read-only page snapshot, capped at 5 MB) for structured-data detection.
+Studio bridge actions also include `scrollStep` and `links(css)` for infinite scroll and detail links, and `html()` (read-only page snapshot, capped at 5 MB) for structured-data detection. `networkData()` returns inline `application/json` scripts (such as `__NEXT_DATA__`) and same-origin JSON responses that contain a list of objects, up to 8 MB each, 50 responses, and 20 MB in total; the oldest responses are dropped first.
 
 ### Scraping expansion (schema_version 1, additive)
 

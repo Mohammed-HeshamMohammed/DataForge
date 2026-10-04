@@ -7,6 +7,9 @@
   const SAFE_ATTRIBUTES = ["href", "src", "alt", "title", "datetime", "aria-label", "data-testid"];
   const SECRET_VALUE = /(token|session|auth|password|secret|sig=|key=)/i;
   const CHALLENGE = ["g-recaptcha", "h-captcha", "cf-challenge", "challenge-platform", "captcha-delivery"];
+  // Search APIs answer with megabytes of listings (Zillow's search state with 500 map pins is over 1 MB), so one
+  // response may be large. When the buffer is full the oldest responses go first, keeping the newest data.
+  const CAPTURE_LIMITS = { responses: 50, responseBytes: 8000000, totalBytes: 20000000 };
   let mode = "none";
   let recordRoot = null;
   let picks = [];
@@ -54,15 +57,29 @@
     }
   }
 
+  /** Whether a JSON document holds a list of objects anywhere; beacons and settings do not, and are not kept. */
+  function hasRecordList(value, depth = 0) {
+    if (depth > 12 || !value || typeof value !== "object") return false;
+    if (Array.isArray(value)) {
+      return value.some((item) => item && typeof item === "object" && !Array.isArray(item)) || value.slice(0, 50).some((item) => hasRecordList(item, depth + 1));
+    }
+    return Object.values(value).some((item) => hasRecordList(item, depth + 1));
+  }
+
   function rememberJson(rawUrl, text) {
     const url = safeUrl(rawUrl);
-    if (!url || typeof text !== "string" || text.length > 1000000 || networkResponses.length >= 50 || networkBytes + text.length > 5000000) return;
+    if (!url || typeof text !== "string" || text.length > CAPTURE_LIMITS.responseBytes) return;
+    let data;
     try {
-      const data = JSON.parse(text);
-      networkResponses.push({ url, data });
-      networkBytes += text.length;
+      data = JSON.parse(text);
     } catch {
-      // Only valid JSON is retained.
+      return; // Only valid JSON is retained.
+    }
+    if (!hasRecordList(data)) return;
+    networkResponses.push({ url, data, bytes: text.length });
+    networkBytes += text.length;
+    while (networkResponses.length > CAPTURE_LIMITS.responses || networkBytes > CAPTURE_LIMITS.totalBytes) {
+      networkBytes -= networkResponses.shift().bytes;
     }
   }
 
@@ -1435,7 +1452,23 @@
       }
     },
     networkData() {
-      return { responses: networkResponses.slice(0, 50), error: null };
+      // JSON the page shipped inline (for example Next.js __NEXT_DATA__) is data it already loaded, too.
+      const page = safeUrl(location.href);
+      const inline = [];
+      let bytes = 0;
+      [...document.querySelectorAll("script[type='application/json']")].slice(0, 50).forEach((script, index) => {
+        const text = (script.textContent || "").trim().replace(/^<!--/, "").replace(/-->$/, "");
+        if (!page || !text || text.length > CAPTURE_LIMITS.responseBytes || bytes + text.length > CAPTURE_LIMITS.totalBytes) return;
+        try {
+          const data = JSON.parse(text);
+          if (!hasRecordList(data)) return;
+          inline.push({ url: `${page}#${/^[\w-]{1,60}$/.test(script.id) ? script.id : `script-${index + 1}`}`, data });
+          bytes += text.length;
+        } catch {
+          // Not valid JSON; ignored.
+        }
+      });
+      return { responses: [...inline, ...networkResponses.map(({ url, data }) => ({ url, data }))], error: null };
     },
     listings() {
       try {
