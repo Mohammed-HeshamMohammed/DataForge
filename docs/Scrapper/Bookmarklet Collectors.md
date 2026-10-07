@@ -184,7 +184,8 @@ Notes:
 
 #### Decided so far
 
-- **Sites:** Zillow and Amazon only for now. Each gets a site preset, and those two presets are the allow-list for the built-in view.
+- **Focus:** real-estate sites. Amazon stays as it is (its bookmarklet keeps working, with no extension work).
+- **Sites:** Zillow first, then other real-estate sites. Each gets a site preset, and those presets are the allow-list for the built-in view.
 - **Split:** any number of parts, not only 2.
 
 #### Multi-split
@@ -224,6 +225,28 @@ Browsers do not let a desktop app add an extension silently. What DataForge can 
 - **Later (store):** publish it on the Chrome Web Store (it can be unlisted). The button then opens the store page and the install is one click, with automatic updates. Edge has its own store.
 - **Firefox:** a separate port and Mozilla signing. Not planned.
 - DataForge can also show whether the extension is connected, once the link between the two exists.
+
+#### Candidate improvements (not decided)
+
+Coverage:
+
+1. **Self-dividing tiles.** If a tile comes back at Zillow's limit (about 500 pins), cut that tile into four and collect again, until every tile is under the limit. Dense areas get small tiles and empty areas stay large, with no guessing a grid size.
+2. **One adapter per site.** A small file per real-estate site that says how to read its address, how to cut its area and how to read its listings. Adding HAR or Trulia then does not touch the rest.
+
+Reliability:
+
+3. **Saved queue and resume.** The list of parts lives in the extension's storage, so a closed browser or a challenge page resumes where it stopped.
+4. **Save as they arrive.** Listings go to the DataForge dataset during the run, not at the end, so a crash loses nothing.
+5. **Pacing that adjusts.** Slow down when the site answers slowly, and after a challenge page resume at a slower pace, not the same one.
+6. **Pacing driven by the extension, not the page.** Chrome slows timers in tabs that are not in front, so waits inside the page can stretch. The extension's background worker should keep time.
+7. **Its own Chrome window.** Collection tabs open in a separate window, reused across parts, so your normal tabs stay clear.
+
+In Studio:
+
+8. **Live view.** The tile grid over the map, each tile's state (waiting, collecting, done, stopped), listings per tab and time left.
+9. **Saved searches and re-runs.** Run the same area again later and mark what is new, gone or changed in price.
+10. **Clean up at save.** Drop repeats by listing ID when the dataset is saved, and show how many fields were filled.
+11. **Details only where wanted.** Filter the listings first, then collect full details for the ones that pass.
 
 Open points:
 
