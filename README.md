@@ -24,7 +24,7 @@ React + TypeScript Desktop UI
        │                 │
 Scraping Worker    Matching Worker
        │                 │
-Child WebView      Polars + RapidFuzz
+Child WebView      RapidFuzz
        │                 │
         SQLite + local artifact storage
              │

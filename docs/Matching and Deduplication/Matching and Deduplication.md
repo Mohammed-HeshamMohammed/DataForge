@@ -54,7 +54,7 @@ flowchart TD
 | Area | Recommended choice | Why |
 | --- | --- | --- |
 | Application/service | Python 3.11+ with FastAPI or an internal worker API | Fits the existing DataForge ecosystem and supports worker isolation. |
-| Tabular processing | Polars | Fast, memory-efficient column operations for import, normalization, and block generation. |
+| Tabular processing | Plain Python structures today; Polars deferred | Measured fast enough at current volumes (see [D3](../decisions.md#d3-no-polars-yet)). Adopt Polars when jobs above ~100k rows or memory pressure are measured. |
 | Persistent metadata | SQLite for desktop-first; PostgreSQL for shared/server deployment | Stores datasets, mappings, job events, candidates, clusters, review decisions, and audit records. |
 | Raw/import artifacts | Local project storage, with content hashes | Keeps original files immutable and traceable without storing duplicate copies. |
 | String similarity | RapidFuzz | Fast, deterministic, local fuzzy matching. |
@@ -64,7 +64,7 @@ flowchart TD
 | Optional ML | scikit-learn gradient boosting/logistic calibration model | Small, explainable feature vector and simple local model lifecycle. |
 | Job execution | Existing DataForge worker/job service | Supports cancellation, progress, retries, artifacts, and a desktop/CLI/API front end. |
 
-Use `Polars` and `RapidFuzz` first. Do not introduce a graph database, distributed stream processor, or vector database for the desktop product. Revisit only when job volumes, concurrent users, or a networked deployment justify them.
+Use `RapidFuzz` first, adding `Polars` only when measured volumes justify it. Do not introduce a graph database, distributed stream processor, or vector database for the desktop product. Revisit only when job volumes, concurrent users, or a networked deployment justify them.
 
 ## Data Contract
 
@@ -283,7 +283,7 @@ The desktop UI uses the same job contract through Tauri IPC or the selected loca
 
 ### Scale Path
 
-The first local implementation targets roughly 100,000 records per job on a typical desktop, using Polars and bounded candidate blocks. Above that scale, shard blocks by deterministic hash and process them in workers, then merge only compatible cluster summaries. Move metadata/artifact coordination to PostgreSQL/object storage only when DataForge becomes multi-user or remote.
+The first local implementation targets roughly 100,000 records per job on a typical desktop, using bounded candidate blocks (Polars deferred; see [D3](../decisions.md#d3-no-polars-yet)). Above that scale, shard blocks by deterministic hash and process them in workers, then merge only compatible cluster summaries. Move metadata/artifact coordination to PostgreSQL/object storage only when DataForge becomes multi-user or remote.
 
 ## Changes from the Student Draft
 

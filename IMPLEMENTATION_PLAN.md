@@ -84,7 +84,7 @@ Services own orchestration and project-state mutation:
 ### Workers
 
 - Scraping worker: Python, Scrapy/HTTPX, Parsel/lxml or Selectolax, and embedded-WebView bridge integration.
-- Matching worker: Python, Polars, RapidFuzz, and optional later scikit-learn model support.
+- Matching worker: Python and RapidFuzz (Polars deferred; see docs/decisions.md D3), and optional later scikit-learn model support.
 - Workers communicate using versioned request/result schemas and durable job state.
 
 ### Infrastructure
@@ -583,7 +583,7 @@ A user can select a repeated record and fields from a permitted rendered page, r
 
 ## 11. Phase 5 - Deterministic Matching Backend
 
-Use Polars for tabular operations and RapidFuzz for deterministic similarity.
+Use RapidFuzz for deterministic similarity. Polars for tabular operations is deferred until measured workloads need it (see docs/decisions.md D3).
 
 ### Import and normalization
 
@@ -733,7 +733,7 @@ Capture:
 
 ### Performance target
 
-The initial local implementation should target approximately 100,000 records per matching job using Polars and bounded blocks. Introduce sharding only after measured workloads justify it.
+The initial local implementation should target approximately 100,000 records per matching job using bounded blocks (Polars deferred; see docs/decisions.md D3). Introduce sharding only after measured workloads justify it.
 
 ## 15. Phase 9 - Curated Presets and Preset Operations
 

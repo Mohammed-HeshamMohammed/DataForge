@@ -49,7 +49,7 @@ flowchart TB
 
     subgraph W[Domain Workers]
         W1[Scraping Worker\nPython / HTTP + parsing\nChild WebView bridge]
-        W2[Matching Worker\nPython / Polars + RapidFuzz\nOptional ML ranking]
+        W2[Matching Worker\nPython / RapidFuzz\nOptional ML ranking]
         W3[Desktop Host\nRust / Tauri\nFilesystem + updater + keychain]
     end
 
@@ -159,7 +159,7 @@ Workers communicate through typed request/result schemas and durable job state. 
 #### Matching Worker
 
 - Import mapping, role-aware normalization, multi-pass blocking, pair evidence, constrained clustering, canonicalization, and audit creation.
-- Uses Polars for tabular operations and RapidFuzz for deterministic text similarity.
+- Uses plain Python structures for blocking and RapidFuzz for deterministic text similarity. Polars is deferred until measured workloads need it (see [D3](decisions.md#d3-no-polars-yet)).
 - Provides optional ML ranking only after a model meets evaluation gates; deterministic guards always remain authoritative.
 - Returns possible matches to a review queue rather than merging them automatically.
 
