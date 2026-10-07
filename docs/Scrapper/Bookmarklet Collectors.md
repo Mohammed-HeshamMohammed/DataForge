@@ -231,7 +231,7 @@ Browsers do not let a desktop app add an extension silently. What DataForge can 
 Coverage:
 
 1. **Self-dividing tiles.** If a tile comes back at Zillow's limit (about 500 pins), cut that tile into four and collect again, until every tile is under the limit. Dense areas get small tiles and empty areas stay large, with no guessing a grid size.
-2. **One adapter per site.** A small file per real-estate site that says how to read its address, how to cut its area and how to read its listings. Adding HAR or Trulia then does not touch the rest.
+2. **One preset per site, held by the app.** Each real-estate site's preset says how to read its address, how to cut its area and how to read its listings. Adding HAR or Trulia does not touch the extension (see "The extension is universal").
 
 Reliability:
 
@@ -268,7 +268,28 @@ Ease of use:
 15. **Speed as three choices.** Careful, Normal and Fast set the tabs and delays together. The raw numbers stay under Advanced.
 16. **Extension status in Studio.** Shows not installed, installed but not connected, connected, or out of date, each with the button that fixes it.
 17. **Tell me when it ends.** A Windows notification when a run finishes or stops, and the computer stays awake during a run.
-18. **Several areas in one run.** A list of ZIP codes or cities is queued and collected one after another into one dataset.
+18. **Several areas in one run.** A list of ZIP codes or cities is queued and collected one after another into one dataset. *Not needed for now.*
+
+Items 12 to 17 are the ones to focus on.
+
+#### The extension is universal (decided)
+
+The extension is not built for Zillow. It knows no site. It runs the job the app gives it.
+
+- **The app holds the site knowledge.** Each site preset in DataForge says where the listings are, how the area is cut, how pages advance and which fields to read.
+- **The job is data, not code.** The app sends a description, and the extension follows it with a fixed set of abilities. Chrome does not let an extension run program code that arrives from outside, and a description also keeps a later store release possible.
+- **Abilities the extension offers:**
+  - open an address in a tab, wait, scroll;
+  - read listing data embedded in the page;
+  - capture the data a site loads while the page is used (how Zillow's map pins arrive);
+  - read repeated cards by selectors;
+  - find listings without a recipe (the method the Real Estate Collector uses today: structured data, then repeated cards with a price and a link);
+  - go to the next page;
+  - cut an area into tiles from an address pattern;
+  - report progress, stop on a challenge page.
+- **Adding a site** means writing a preset in the app. The extension is not reinstalled.
+- **Order of work:** build the engine with the Zillow preset as the first proof, then add the next real-estate site to check that it needed no extension change.
+- **Limit:** a site that needs something outside these abilities needs a new ability added to the extension once. After that every preset can use it.
 
 Open points:
 
