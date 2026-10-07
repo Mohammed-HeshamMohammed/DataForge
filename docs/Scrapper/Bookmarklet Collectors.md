@@ -260,6 +260,16 @@ In Studio:
 10. **Clean up at save.** Drop repeats by listing ID when the dataset is saved, and show how many fields were filled.
 11. **Details only where wanted.** Filter the listings first, then collect full details for the ones that pass.
 
+Ease of use:
+
+12. **Estimate before starting.** After the area is confirmed, show the listing count the site reports, the number of parts and a rough time. A job that is too big can be shrunk before it runs.
+13. **Sample first.** Collect one tile and show a few listings with their fields. The full run starts after that looks right. This also meets the preset spec's rule of a test run before a full run.
+14. **Stop reasons in plain words, with the next step.** For example: "Zillow asked for a check in tab 2. Complete it there, then press Resume," with a button that brings that tab to the front.
+15. **Speed as three choices.** Careful, Normal and Fast set the tabs and delays together. The raw numbers stay under Advanced.
+16. **Extension status in Studio.** Shows not installed, installed but not connected, connected, or out of date, each with the button that fixes it.
+17. **Tell me when it ends.** A Windows notification when a run finishes or stops, and the computer stays awake during a run.
+18. **Several areas in one run.** A list of ZIP codes or cities is queued and collected one after another into one dataset.
+
 Open points:
 
 - **Link between the app and the extension.** The two candidates are Chrome Native Messaging (the extension talks to a small DataForge helper program) and a local port on `127.0.0.1` in the app that the extension's background worker calls.
