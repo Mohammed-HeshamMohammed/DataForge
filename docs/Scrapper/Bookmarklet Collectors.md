@@ -251,6 +251,11 @@ In Studio:
      - In Studio, each collected listing appears as a dot at its coordinates as it arrives, colored by the tab that fetched it, with tiles shading in as they finish.
      - In Chrome, listing cards in the results list get an outline once collected. Zillow's own map pins are not marked, because Zillow draws them and its markup changes.
      - Listings with full details collected get a second mark, so it is clear which ones are complete.
+   - **Highlighting the covered area (Studio map):**
+     - The confirmed search area has an outline.
+     - Each tile is filled by state: done is solid, collecting is outlined in its tab's color, waiting is empty, stopped is marked as a problem.
+     - A tile that hit the pin limit and was cut into four shows the smaller tiles inside it.
+     - A coverage figure shows how much of the area is done.
 9. **Saved searches and re-runs.** Run the same area again later and mark what is new, gone or changed in price.
 10. **Clean up at save.** Drop repeats by listing ID when the dataset is saved, and show how many fields were filled.
 11. **Details only where wanted.** Filter the listings first, then collect full details for the ones that pass.
