@@ -247,6 +247,10 @@ In Studio:
    - **Studio (full view):** the tile grid over the map, each tile's state (waiting, collecting, done, stopped), listings per tab and time left.
    - **Chrome (small view):** a small panel in each collecting tab with that tab's part, its listing count, its pace and a Stop button, plus the total on the extension's toolbar icon.
    - Stop works from either place and stops every tab.
+   - **Highlighting what was fetched:**
+     - In Studio, each collected listing appears as a dot at its coordinates as it arrives, colored by the tab that fetched it, with tiles shading in as they finish.
+     - In Chrome, listing cards in the results list get an outline once collected. Zillow's own map pins are not marked, because Zillow draws them and its markup changes.
+     - Listings with full details collected get a second mark, so it is clear which ones are complete.
 9. **Saved searches and re-runs.** Run the same area again later and mark what is new, gone or changed in price.
 10. **Clean up at save.** Drop repeats by listing ID when the dataset is saved, and show how many fields were filled.
 11. **Details only where wanted.** Filter the listings first, then collect full details for the ones that pass.
