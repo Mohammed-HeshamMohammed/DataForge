@@ -182,6 +182,30 @@ Notes:
 - This works for sites that keep the search in the address. Sites that keep it in page state only would need another way to hand over the job.
 - In-app collecting (the Listing Collector panel and the collector presets) would be removed. The element picker and the row-driven workflows are still undecided.
 
+#### Decided so far
+
+- **Sites:** Zillow and Amazon only for now. Each gets a site preset, and those two presets are the allow-list for the built-in view.
+- **Split:** any number of parts, not only 2.
+
+#### Multi-split
+
+Two separate settings:
+
+- **Parts:** how many pieces the job is cut into.
+- **Tabs at once:** how many pieces are collected at the same time. The rest wait in a queue.
+
+How each site is cut:
+
+- **Zillow:** the map bounds become a grid of tiles (2x2, 3x3 and so on). Each tile is its own address. Zillow shows about 500 pins per view, so more tiles means more listings found, even with one tab.
+- **Amazon:** the result pages are dealt out in ranges, and the product list for details is cut into equal chunks.
+
+Limits:
+
+- Tabs at once starts at 2, with a hard cap to be agreed. More tabs means more requests to the same site at once and a higher chance of a challenge page.
+- Tabs open a few seconds apart, not all together.
+- A challenge page in any tab stops every tab and keeps the queue, so the run can resume.
+- Duplicates are accepted. Listings on tile edges repeat.
+
 Open points:
 
 - **Link between the app and the extension.** The two candidates are Chrome Native Messaging (the extension talks to a small DataForge helper program) and a local port on `127.0.0.1` in the app that the extension's background worker calls.
