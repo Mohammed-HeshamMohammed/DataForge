@@ -135,7 +135,38 @@ python scripts/amazon_creators_export.py --from-collector "%USERPROFILE%\Downloa
 
 ## Plan: the DataForge Collector extension
 
-Status: plan only. Nothing here is built. Items marked **Proposed** are my recommendation and still need a yes.
+Status: the first build of the extension exists (see "Build status"). The link to the app and the Studio side are not built. Items marked **Proposed** are my recommendation and still need a yes.
+
+### Build status (7 October 2026)
+
+Decision: all three ways of splitting Zillow are built, to be compared in real use.
+
+Built, in `extensions/dataforge-collector/`:
+
+- The universal engine: a queue of parts, several tabs each at its own pace, stop on a challenge page or an error answer, saved queue and resume, slower pace after a stop.
+- The Zillow preset (`presets/zillow.listings.json`), with the same listing fields as the bookmarklet.
+- The three ways to split:
+  - **By ZIP code:** automatic, several tabs, addresses the site allows, no filters.
+  - **Guided tiles:** a grid over the map area, one press of Next tile per tile, filters kept.
+  - **Automatic tiles:** the grid collected without pressing, filters kept, a tile at the limit cut into four. `robots.txt` is checked and disallowed tiles are skipped unless a switch on the control page is turned on. On Zillow nothing is collected with the switch off.
+- The control page (opens from the toolbar icon): choose the area, split, speed, Prepare with an estimate, Sample, Start, Stop, Resume, CSV download, and the live map with covered parts and listing dots.
+- The small panel in each collection tab, the outline on collected cards, the total on the toolbar icon, a notification at the end or on a stop, and keeping the computer awake during a run.
+- Speed choices: Careful, Normal and Fast, with Fast (1 s, 1.5 s, 2 s) as the default, and a cap of 4 tabs.
+
+Checked:
+
+- 18 automated tests of the helpers and of the engine against a stand-in for Chrome and a stand-in site.
+- The in-tab functions and the control page in a real browser, with made-up data.
+
+Not checked: a run against Zillow itself. That is the next step, by loading the unpacked extension in Chrome.
+
+Different from the plan below:
+
+- Each collection tab gets its own cascaded window, not one shared window, because a site may hold back data in a tab that is not showing.
+- The control page inside the extension stands in for Scrape Studio until the link exists.
+- Reading repeated cards by selectors is built. Finding listings with no recipe is not.
+
+Not built yet: the link to the app, the Install button and extension status in Studio, choosing the area in Studio's built-in view, saving into a DataForge dataset, and the second site.
 
 ### 1. Goal
 
