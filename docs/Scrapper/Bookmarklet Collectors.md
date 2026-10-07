@@ -131,6 +131,48 @@ python scripts/amazon_creators_export.py --from-collector "%USERPROFILE%\Downloa
 - Works on 23 regional domains (amazon.com, .co.uk, .eg, .ae, .sa, .ca, .de and others).
 - If Amazon returns anything other than a normal page, collection stops at once. Wait, open the site normally, then resume.
 
+## Idea: split collection with a Chrome extension (not built)
+
+Goal: start a search once, confirm the listings found, then split the job across two tabs so each collects half.
+
+Why an extension: a bookmarklet in one tab cannot inject code into a tab on another site, and needs a click in every tab. An extension can run the collector in the tabs it opens, with no clicks, and site Content-Security-Policy does not block it.
+
+Parts:
+
+- **Hub page (the script).** The search form, live listing counts per tab, a **Split in 2** button and **Download CSV**. It lives inside the extension and opens from the toolbar icon. It never touches the site directly.
+- **Extension.** Opens the tabs the hub asks for, runs the existing collector code in them, and passes the listings back to the hub.
+
+Flow (Zillow first):
+
+1. Type the search in the hub and press Open. The extension opens Zillow with that search and starts the collector in that tab.
+2. Pan and zoom until the area is right. The hub shows the listings gathered.
+3. Press **Split in 2**. The extension opens two tabs with the same search, with the confirmed map area cut in half (east/west by default, north/south as a toggle).
+4. Each tab collects its half. The hub merges the results and exports one CSV.
+
+Rules:
+
+- The collector runs only in tabs the hub opened, not whenever Zillow is browsed.
+- Duplicates are accepted. Listings on the seam between halves appear twice.
+- At most 2 tabs per site.
+- No background requests for filtered Zillow searches (`robots.txt` blocks them).
+- A "Press & Hold" page or an error in any tab stops all tabs.
+- Installed by hand through `chrome://extensions` (Developer mode, Load unpacked). Not published to the Chrome Web Store.
+- Planned location: `extensions/dataforge-collector/`. The Real Estate and Amazon collectors can join later.
+
+### Under discussion: driving it from Scrape Studio
+
+Idea: Scrape Studio stays the place where you set up the job and where the dataset lands, while Chrome and the extension do the collecting.
+
+- Studio defines the search, the site and the split, and sends the job to the extension.
+- The extension collects in Chrome and sends the listings back.
+- Studio saves them as a dataset, so Clean & Combine and the Excel export work as they do now.
+
+Open points:
+
+- **Link between the app and the extension.** The two candidates are Chrome Native Messaging (the extension talks to a small DataForge helper program) and a local port on `127.0.0.1` in the app that the extension's background worker calls.
+- **Conflict with the preset spec.** The Website Preset Specification says never to launch a separate browser window or automation process. This idea needs that rule changed or an explicit exception.
+- **Session difference.** Studio's built-in view is incognito, with no stored cookies or logins. Chrome is your real profile, so sites see your normal session.
+
 ## Open items
 
 - Rerun the sweep when a site changes. The test date is October 2026.
