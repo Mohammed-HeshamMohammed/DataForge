@@ -206,6 +206,23 @@ Limits:
 - A challenge page in any tab stops every tab and keeps the queue, so the run can resume.
 - Duplicates are accepted. Listings on tile edges repeat.
 
+#### Per-tab speed
+
+Each tab collects at its own pace, so the tabs never fire together.
+
+- Each site has a base delay (today: Zillow 10 s for pages and 15 s for details, Amazon 8 s and 10 s).
+- Each tab multiplies it: tab 1 x1.0, tab 2 x1.3, tab 3 x1.6 and so on, plus a small random variation on every wait.
+- The base delay is a setting. Whether it drops below today's values is undecided: what the site sees is the combined rate of all tabs.
+
+#### Installing the extension from DataForge
+
+Browsers do not let a desktop app add an extension silently. What DataForge can do:
+
+- **Now (unpacked):** an "Install extension" button puts the extension folder on disk, copies its path, and opens the browser's extensions page with three steps shown: turn on Developer mode, press Load unpacked, pick the folder. Chrome, Edge and Brave take the same folder.
+- **Later (store):** publish it on the Chrome Web Store (it can be unlisted). The button then opens the store page and the install is one click, with automatic updates. Edge has its own store.
+- **Firefox:** a separate port and Mozilla signing. Not planned.
+- DataForge can also show whether the extension is connected, once the link between the two exists.
+
 Open points:
 
 - **Link between the app and the extension.** The two candidates are Chrome Native Messaging (the extension talks to a small DataForge helper program) and a local port on `127.0.0.1` in the app that the extension's background worker calls.
