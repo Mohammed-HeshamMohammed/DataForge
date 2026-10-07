@@ -135,38 +135,69 @@ python scripts/amazon_creators_export.py --from-collector "%USERPROFILE%\Downloa
 
 ## Plan: the DataForge Collector extension
 
-Status: the first build of the extension exists (see "Build status"). The link to the app and the Studio side are not built. Items marked **Proposed** are my recommendation and still need a yes.
+Status: built and connected (see "Build status"). It has not yet been run against a live site in a real browser. Items marked **Proposed** further down were my recommendations at planning time; "Build status" says what was actually done.
 
 ### Build status (7 October 2026)
 
-Decision: all three ways of splitting Zillow are built, to be compared in real use.
+**Built and connected**
 
-Built, in `extensions/dataforge-collector/`:
+- **The extension** (`extensions/dataforge-collector/`): the universal engine, the Zillow preset, the three ways to split, the control page, the small panel in each tab, notifications, and keeping the computer awake.
+- **The link** between the app and the extension: the app listens on `127.0.0.1`, the extension calls it with a token and its fixed extension ID. Commands go one way, the run's state and the listings go the other. If the app is closed mid-run, the extension keeps collecting and hands the listings over when the app is back.
+- **Install from DataForge:** a button in Scrape Studio copies the extension to the app's data folder, pairs it, and shows the three steps to load it. Studio shows the extension's status (not installed, not connected, out of date, connected) with the action that fixes each.
+- **Scrape Studio panel:** on a site with a collector preset (Zillow), Studio shows the extension collector in place of the built-in one. You move the map in the built-in view, press "Use the area on screen", choose the split and speed, then Prepare, Sample, Start, Next tile, Stop, Resume. It shows the estimate, the progress figures, the map with covered parts and listing dots, the tabs, and stop reasons in plain words.
+- **Listings in DataForge:** kept in a file as they arrive, so a crash loses nothing. A finished run is saved as a dataset by itself, with repeats dropped and provenance on every row. A stopped run can be saved with a button.
+- **Rules and documents:** the preset specification, the IPC contract, the decisions record (D34), the development guide and the README are updated. Collector site presets have a schema (`packages/contracts/collector-preset.schema.json`).
 
-- The universal engine: a queue of parts, several tabs each at its own pace, stop on a challenge page or an error answer, saved queue and resume, slower pace after a stop.
-- The Zillow preset (`presets/zillow.listings.json`), with the same listing fields as the bookmarklet.
-- The three ways to split:
-  - **By ZIP code:** automatic, several tabs, addresses the site allows, no filters.
-  - **Guided tiles:** a grid over the map area, one press of Next tile per tile, filters kept.
-  - **Automatic tiles:** the grid collected without pressing, filters kept, a tile at the limit cut into four. `robots.txt` is checked and disallowed tiles are skipped unless a switch on the control page is turned on. On Zillow nothing is collected with the switch off.
-- The control page (opens from the toolbar icon): choose the area, split, speed, Prepare with an estimate, Sample, Start, Stop, Resume, CSV download, and the live map with covered parts and listing dots.
-- The small panel in each collection tab, the outline on collected cards, the total on the toolbar icon, a notification at the end or on a stop, and keeping the computer awake during a run.
-- Speed choices: Careful, Normal and Fast, with Fast (1 s, 1.5 s, 2 s) as the default, and a cap of 4 tabs.
+**How the three ways to split behave**
 
-Checked:
+- **By ZIP code:** automatic, several tabs, addresses the site allows, no filters. The ZIP codes are filled in from the listings on the page you are viewing.
+- **Guided tiles:** a grid over the map area, one press of Next tile per tile, filters kept.
+- **Automatic tiles:** the grid collected without pressing, filters kept, a tile at the site's limit cut into four. `robots.txt` is checked and disallowed tiles are skipped unless a switch is turned on for that run. On Zillow nothing is collected with the switch off.
 
-- 18 automated tests of the helpers and of the engine against a stand-in for Chrome and a stand-in site.
-- The in-tab functions and the control page in a real browser, with made-up data.
+**Checked**
 
-Not checked: a run against Zillow itself. That is the next step, by loading the unpacked extension in Chrome.
+- 21 tests of the extension against a stand-in for Chrome and a stand-in site, including a second, made-up site that runs from its preset alone.
+- 128 service tests, 13 of them for the collector. One completes a whole run with the real service and the real extension code talking over the local port, ending in a dataset.
+- 84 interface tests, 12 of them for the Studio panel.
+- All of these pass.
+- The in-tab functions and the control page in a real browser with made-up data, and the install and pairing against the real service process.
 
-Different from the plan below:
+**Not checked**
 
-- Each collection tab gets its own cascaded window, not one shared window, because a site may hold back data in a tab that is not showing.
-- The control page inside the extension stands in for Scrape Studio until the link exists.
-- Reading repeated cards by selectors is built. Finding listings with no recipe is not.
+- A run against Zillow itself, in Chrome, with the extension loaded. Nothing above touches a live site.
+- How the Studio panel looks inside the desktop window. Its behavior is tested; its appearance has not been looked at.
 
-Not built yet: the link to the app, the Install button and extension status in Studio, choosing the area in Studio's built-in view, saving into a DataForge dataset, and the second site.
+**Decisions taken while building**
+
+| Topic | What was done |
+| --- | --- |
+| The link | A local port with a token. Native Messaging was not used. |
+| Hard cap on tabs | 4. |
+| Default speed | Fast (1 s, 1.5 s, 2 s), the values chosen earlier. Careful and Normal are one press away. |
+| Windows | One cascaded window per collection tab, because a site may hold back data in a tab that is not showing. |
+| Permission | The extension is allowed on all sites, so one extension serves any preset without asking each time. It only touches tabs it opened, on the hosts of the run's preset. |
+| Extension version | Its own number in its manifest, compared with the copy the app ships to tell when it is out of date. |
+
+**Left as it was, on purpose**
+
+- **The built-in collector stays for every site without a collector preset,** which includes Amazon and the other real-estate sites. Removing it would take away the in-app Amazon collector, which was to be left as it is. Each site moves to the extension when it gets a preset.
+- **The built-in view still opens any site.** Limiting it to sites with a preset would switch off the element picker and the site catalog for everything except Zillow, so that limit is not applied. The extension itself is limited to preset hosts.
+- **The element picker and the row-driven workflows** are unchanged.
+
+**Not built**
+
+- **A second real site.** HAR refused automated access from here (a 403 check page), and its pages must be looked at in a browser to write its preset. The engine is ready for it: a made-up second site runs from its preset alone in the tests.
+- **Finding listings with no recipe** (the Real Estate Collector's method). A preset must say where the listings are.
+- **Opening the browser's extensions page from the app.** Studio shows the address with a copy button.
+- **Full details per listing** (price history, schools). Zillow loads them from an address its `robots.txt` disallows.
+- **Later items:** store release, saved searches and re-runs, several areas in one run.
+
+**To try it**
+
+1. Start DataForge, open Scrape Studio, and open Zillow.
+2. Press **Install the extension** and follow the three steps shown.
+3. Move the map, press **Use the area on screen**, then **Prepare** and **Sample one part**.
+4. Start with By ZIP code at Careful speed to confirm the fields, then compare the tile modes.
 
 ### 1. Goal
 
@@ -447,14 +478,16 @@ Each phase ends with something that can be checked.
 | Local port misuse by another program | Fake jobs or data | Local-only, token, extension ID check |
 | The account or address gets limited by a site | Collection blocked for a while | Conservative defaults, hard cap on tabs, immediate stop |
 
-### 17. Still to decide
+### 17. Decided since the plan was written
 
-1. **Section 3:** keep the `robots.txt` rule and cut Zillow by ZIP (**Proposed**), or change the rule.
-2. **The link:** local port (**Proposed**) or Native Messaging.
-3. **Hard cap on tabs:** 4 (**Proposed**).
-4. **Default speed choice:** Normal (**Proposed**) or Fast.
-5. **The element picker** in the built-in view: keep for building presets (**Proposed**) or remove.
-6. **Row-driven workflows:** leave as they are (**Proposed**) or move to the extension later.
+1. **Zillow and `robots.txt`:** all three ways to split were built, to be compared in use. By ZIP code stays inside the rule; automatic tiles need the per-run switch.
+2. **The link:** local port.
+3. **Hard cap on tabs:** 4.
+4. **Default speed:** Fast.
+5. **The element picker:** kept.
+6. **Row-driven workflows:** left as they are.
+
+Still open: which of the three ways becomes the default for Zillow once they have been compared, and which real-estate site gets the next preset.
 
 ### 18. Later
 
