@@ -167,6 +167,21 @@ Idea: Scrape Studio stays the place where you set up the job and where the datas
 - The extension collects in Chrome and sends the listings back.
 - Studio saves them as a dataset, so Clean & Combine and the Excel export work as they do now.
 
+#### Refinement: the built-in view picks the area, the extension collects
+
+The built-in view stays, but only for choosing what to collect. It stops collecting.
+
+1. Open the site in Studio's built-in view and move the map or set filters.
+2. On Zillow the address changes as the map moves. It carries the full search (`searchQueryState`: map bounds, zoom, filters), so the address alone describes the job.
+3. Studio reads that address and sends it to the extension.
+4. The extension opens it in Chrome and collects. For a split, Studio halves the map bounds in the address and sends two addresses.
+
+Notes:
+
+- The built-in view opens only allowed sites. The allow-list needs a source: today's presets are generic and open-data, and Zillow is only in the site catalog, so either the catalog is the list or each site gets its own preset.
+- This works for sites that keep the search in the address. Sites that keep it in page state only would need another way to hand over the job.
+- In-app collecting (the Listing Collector panel and the collector presets) would be removed. The element picker and the row-driven workflows are still undecided.
+
 Open points:
 
 - **Link between the app and the extension.** The two candidates are Chrome Native Messaging (the extension talks to a small DataForge helper program) and a local port on `127.0.0.1` in the app that the extension's background worker calls.
