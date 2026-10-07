@@ -210,14 +210,16 @@ Limits:
 
 Each tab collects at its own pace, so the tabs never fire together.
 
-- Each site has a base delay (today: Zillow 10 s for pages and 15 s for details, Amazon 8 s and 10 s).
-- Each tab multiplies it: tab 1 x1.0, tab 2 x1.3, tab 3 x1.6 and so on, plus a small random variation on every wait.
-- The base delay is a setting. Whether it drops below today's values is undecided: what the site sees is the combined rate of all tabs.
+- Starting values: tab 1 waits 1 s, tab 2 waits 1.5 s, tab 3 waits 2 s, and each further tab adds 0.5 s. Every wait also gets a small random variation.
+- These are settings, per site, so they can be raised without a code change.
+- Risk to watch: this is much faster than the bookmarklets (8 to 15 s). Three tabs together send about 2 requests a second. If challenge pages appear, raise the delays first.
+- A challenge page still stops every tab at once.
 
 #### Installing the extension from DataForge
 
 Browsers do not let a desktop app add an extension silently. What DataForge can do:
 
+- **Decision:** the unpacked install is the one to build. The store install stays in the plan for later.
 - **Now (unpacked):** an "Install extension" button puts the extension folder on disk, copies its path, and opens the browser's extensions page with three steps shown: turn on Developer mode, press Load unpacked, pick the folder. Chrome, Edge and Brave take the same folder.
 - **Later (store):** publish it on the Chrome Web Store (it can be unlisted). The button then opens the store page and the install is one click, with automatic updates. Edge has its own store.
 - **Firefox:** a separate port and Mozilla signing. Not planned.
