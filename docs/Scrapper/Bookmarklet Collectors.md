@@ -1,0 +1,138 @@
+# Bookmarklet Collectors
+
+Working notes on the browser bookmarklets we built to collect data. Each one is a self-contained HTML page in `scripts/`. The page shows a draggable button whose `javascript:` URL is the collector. Save it to the bookmarks bar (`Ctrl+Shift+B` shows the bar), open a results page, and click it. A panel appears in the page, collects the listings, and exports a CSV.
+
+If the bookmark does not run, open the page, press `F12`, paste the collector code into the Console and press Enter. Each install page shows the code to copy.
+
+## The three collectors
+
+| Collector | File | Sites |
+| --- | --- | --- |
+| Real Estate Collector | `scripts/real_estate_collector.html` | Many US real-estate sites (below) |
+| Zillow Collector | `scripts/zillow_search_collector.html` | Zillow only |
+| Amazon Collector | `scripts/amazon_search_collector.html` | Amazon only, across its regional domains |
+
+## Shared behavior
+
+- Runs in your own browser tab, on the page you opened.
+- Pace between background fetches: 8 to 15 seconds per page or item, depending on the collector.
+- Stops at once on a CAPTCHA, a "verify you are human" page or an error. It never tries to get past one.
+- Respects `robots.txt` for background fetches. Anything the site blocks there is read only from a page you open yourself.
+- Agent names, phones and emails are not collected.
+- Export is a CSV (opens in Excel). `scripts/collector_csv_to_excel.py` turns a CSV into a formatted workbook. `scripts/amazon_creators_export.py` does the same for Amazon.
+
+## Real Estate Collector
+
+One collector for US real-estate sites. It finds the listings on any results page, collects further result pages and each home's details, and exports a CSV.
+
+How to use:
+
+1. Open a search results page on any site and click the bookmark. It adds the homes on that page.
+2. From then on it follows you: each page you open, filter you change or map move adds what the site loaded. If a page does a full reload (like HAR), click the bookmark again. Homes accumulate per site.
+3. **Collect pages** fetches the next pages itself (10 s apart) where `robots.txt` allows it and the page has the data.
+4. **Collect details** opens each home in the background (12 s apart) for description, photos, year built, HOA and MLS number.
+5. **Download CSV**, then optionally convert to a formatted workbook:
+
+```bash
+python scripts/collector_csv_to_excel.py "%USERPROFILE%\Downloads\real_estate_trulia_com_400_listings.csv"
+```
+
+### Sites tested (Houston search, October 2026)
+
+The number is the homes found on one results page.
+
+**For sale**
+
+| Site | Homes per page | Collect pages | Notes |
+| --- | --- | --- | --- |
+| HAR.com | 120 | Works (3 pages = 326) | Year built, lot, status, type and brokerage come from the cards |
+| Trulia | 40 | Works | Details tested: year built, HOA, MLS, facts |
+| Coldwell Banker | 24 | Works | |
+| Weichert | 21 | Works | MLS number and year built |
+| Estately | 15 | Works | Brokerage and lot size |
+| Opendoor | 30 plus map points | Works | Map points have no link |
+| StreetEasy (New York) | 38 | Works | |
+| Windermere (Seattle) | 10 | No | Office pages |
+| RE/MAX | 24 | First page only | The site loads later pages inside the browser; open them yourself with the collector running |
+| Douglas Elliman, BHGRE, ERA, @properties, United Country | 0 to 2 | No | They build results in the browser; browse and the collector adds what loads |
+
+**For rent**
+
+| Site | Homes per page | Collect pages | Notes |
+| --- | --- | --- | --- |
+| HotPads | 40 | Works | Rent from/to |
+| ApartmentGuide | 50 | Works | Few photos (the site loads them late) |
+| ApartmentFinder | 74 | Works | |
+| Trulia rentals | 39 | Works | |
+| Craigslist | 349 | No, by design | Its terms forbid automated collection, so only pages you open are read, with no details |
+
+**Land, commercial, auctions, new homes**
+
+| Site | Homes per page | Collect pages | Notes |
+| --- | --- | --- | --- |
+| LandWatch | 25 | Works | |
+| RealtyTrac | 18 | Works | No bedroom count |
+| Showcase (commercial rent) | 22 | Works | Price is per sq ft per year |
+| NewHomeSource | 83 | Sometimes | Occasionally returns a 403 protection page, and collection stops |
+| VRM Properties (VA homes) | 8 in Houston | Works | VA-owned homes for sale |
+| Craigslist real estate by owner | 277 | No, by design | Same rule as above |
+| USDA REO | 16 | n/a | 16 homes nationwide (7 states, none in Texas) |
+| Fclosure | n/a | n/a | Paid service; subscribe and export from your account |
+
+### Count
+
+- **Fully working (14 sites):** HAR, Trulia (sale and rentals), Coldwell Banker, Weichert, Estately, Opendoor, StreetEasy, HotPads, ApartmentGuide, ApartmentFinder, LandWatch, RealtyTrac, Showcase, VRM.
+- **Partial (3 sites):** Windermere, RE/MAX, NewHomeSource.
+- **Browse-and-collect only (5 sites):** Douglas Elliman, BHGRE, ERA, @properties, United Country.
+- **Page-only by design:** Craigslist.
+- **Minimal:** USDA REO.
+- **Roughly 25 sites tested in total.**
+
+### Not tested
+
+These refused the automated test (Cloudflare or a verification page). They may still work on a page open in your normal Chrome, because the collector reads the page in front of you and adds what the site loads while you browse:
+
+Redfin, Realtor.com, Homes.com, Apartments.com, Movoto, Compass, Zumper, PadMapper, Rent.com, Apartment List, RentCafe, Rentals.com, ForRent, LoopNet, Crexi, CommercialCafe, LandSearch, Land.com, LandFlip, Point2Homes, Keller Williams, eXp, Berkshire Hathaway, Realty.com, Howard Hanna, Long & Foster, Sotheby's, Hubzu, Foreclosure.com, HomeFinder, Avail, Furnished Finder, ForSaleByOwner.
+
+### Not available
+
+- **Xome** blocks visits from outside the US.
+- **Century 21 and HUD Home Store** disallow search pages in `robots.txt`. Only the page you open is read.
+- **Zillow** has its own collector (below).
+
+### Public records (not a bookmarklet)
+
+Harris County tax sales, County Clerk foreclosure notices and HCAD appraisal data run through `scripts/public_records.py` (5 s between requests, honors `robots.txt`), not the bookmark. It writes a CSV and a formatted Excel file to Downloads.
+
+## Zillow Collector
+
+Open a Zillow search and click the bookmark once. It then follows the search.
+
+- **Filtered search or after moving the map** (the link has `searchQueryState`): it sends no requests. Each results page you open, map move or filter change adds what Zillow showed: 41 homes in the list and up to about 500 from the map in each view. Pan or zoom across the area to collect more.
+- **Plain area link** (like `zillow.com/houston-tx/` or `zillow.com/77019/`): **Collect pages** also fetches the 20 pages itself, 10 s apart. Background fetching does not work with filters because Zillow's `robots.txt` blocks those links.
+- **Collect details** opens each home in the background (15 s apart) for year built, lot, price per sq ft, HOA, tax rate, views, MLS number, listing type, description, available facts and all photos.
+- **Full details** (complete Facts and features, Price history, Public tax history, Nearby schools) load from `/graphql/`, which `robots.txt` blocks, so they are not fetched in the background. Open the home yourself and click the bookmark; it scrolls the page and saves everything that appears.
+- All homes from every area and filter go into one file without duplicates. The CSV has a column per shared fact (for example `Fact: Heating`).
+- Stops at once on "Press & Hold" or any error. Agent names, phones and emails are not collected.
+- Export: `python scripts/collector_csv_to_excel.py "%USERPROFILE%\Downloads\zillow_houston-tx_820_homes.csv"`
+
+## Amazon Collector
+
+Open an Amazon search results page and click the bookmark. A box appears at the bottom right.
+
+1. **Collect pages:** set a Target count and it fetches result pages itself, 8 s apart.
+2. **Collect details:** opens each product in the background (10 s apart) and reads Product details, About this item, Features and specs, Product description, extra details, seller and images. 1,000 products take about 3 hours; keep the tab open. If you close it or press **Stop**, click the bookmark and **Collect details** again to resume where it stopped. If you open a product page yourself and click the bookmark, it saves that product.
+3. **Download CSV**, or export a formatted Excel with a column per specification (Material, Color and so on):
+
+```bash
+python scripts/amazon_creators_export.py --from-collector "%USERPROFILE%\Downloads\amazon_eg_1008_products_details.csv"
+```
+
+- Works on 23 regional domains (amazon.com, .co.uk, .eg, .ae, .sa, .ca, .de and others).
+- If Amazon returns anything other than a normal page, collection stops at once. Wait, open the site normally, then resume.
+
+## Open items
+
+- Rerun the sweep when a site changes. The test date is October 2026.
+- Decide whether the untested sites deserve a trial in a normal Chrome profile.
+- Decide whether any of this should become an in-app preset instead of a bookmark.
