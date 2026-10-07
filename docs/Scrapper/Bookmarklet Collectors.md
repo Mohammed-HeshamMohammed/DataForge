@@ -190,6 +190,21 @@ Limits of this route on Zillow:
 
 The other choice is to change the rule and let the extension open disallowed addresses. I do not recommend it, and it would need the preset spec's policy section rewritten, not an exception.
 
+#### Observation: moving the map changes only the bounds
+
+Two addresses taken before and after dragging the Houston map (7 October 2026) differ only in `mapBounds`. The region (`regionId` 39051), the zoom (12), the filters and the sort are identical.
+
+| | West | East | South | North |
+| --- | --- | --- | --- | --- |
+| First view | -95.5757 | -95.3371 | 29.7698 | 29.9303 |
+| Second view | -95.7179 | -95.4792 | 29.7048 | 29.8654 |
+
+- The view keeps its size: about 0.2386 degrees wide and 0.1605 degrees tall at zoom 12.
+- So any tile's address can be written by arithmetic: copy the address and replace the four bounds. Nothing has to be read from the page.
+- This makes map tiles easy to build. It does not change the `robots.txt` point above, because every one of these addresses contains `searchQueryState`.
+
+A middle route, **Proposed** for discussion: **guided tiles.** Studio works out the grid and shows it. A "Next tile" button moves the map to the next tile, one press per tile, and the extension records what Zillow shows, as the bookmarklet does today when you drag the map. No queue runs unattended. Each page is opened by your own press, which is close to dragging the map by hand, though it is still a judgement call under the rule.
+
 ### 4. How a run works
 
 1. **Check.** Studio shows the extension status. If it is not connected, the button that fixes it is shown.
