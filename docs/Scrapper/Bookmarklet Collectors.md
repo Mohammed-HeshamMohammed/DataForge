@@ -1,6 +1,8 @@
 # Bookmarklet Collectors
 
-Working notes on the browser bookmarklets we built to collect data, followed by the plan for the DataForge Collector extension that builds on them. Each one is a self-contained HTML page in `scripts/`. The page shows a draggable button whose `javascript:` URL is the collector. Save it to the bookmarks bar (`Ctrl+Shift+B` shows the bar), open a results page, and click it. A panel appears in the page, collects the listings, and exports a CSV.
+This file has two parts: the browser bookmarklets we built to collect data, and the plan for the DataForge Collector extension that builds on them.
+
+Each bookmarklet is a self-contained HTML page in `scripts/`. The page shows a draggable button whose `javascript:` URL is the collector. Save it to the bookmarks bar (`Ctrl+Shift+B` shows the bar), open a results page, and click it. A panel appears in the page, collects the listings, and exports a CSV.
 
 If the bookmark does not run, open the page, press `F12`, paste the collector code into the Console and press Enter. Each install page shows the code to copy.
 
